@@ -13,11 +13,10 @@ storage, records file sizes, and provides tools for exploring disk utilization.
 
 ## Components
 
-1. **MCP Server**: a Bun native HTTP service built with the
-   [Model Context Protocol TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk).
-   This server exposes endpoints and MCP resources for indexing and querying
-   disk space information.  Following the SDK examples, the service can be
-   launched via `McpServer` with a simple CLI entry point.
+1. **MCP Server**: a Bun native service implemented using
+   [FastMCP](https://github.com/punkpeye/fastmcp). The framework simplifies
+   exposing tools and resources over MCP. The server defines tools for
+   indexing paths, computing disk usage and visualising directory trees.
 2. **Filesystem Crawler**: a TypeScript module that performs DFS on a given
    directory, gathering path, size, and type (file or folder).
 3. **Database**: the built‑in Bun SQLite wrapper will store metadata (path,

@@ -18,3 +18,11 @@ A simple HTTP server is available via:
 ```bash
 bun src/server.ts
 ```
+
+### MCP Server
+
+To start the FastMCP server with tools for indexing and querying the disk database:
+
+```bash
+bun src/mcp.ts
+```
