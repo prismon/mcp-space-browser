@@ -73,7 +73,8 @@ export class DiskDB {
         `DELETE FROM entries WHERE (path = ? OR path LIKE ?) AND last_scanned < ?`
       )
       .run(root, `${root}/%`, runId);
-    logger.info({ root, deletedCount: this.db.changes }, 'Stale entries deleted');
+    const deletedCount = (this.db as any).changes;
+    logger.info({ root, deletedCount }, 'Stale entries deleted');
   }
 
   computeAggregates(root: string) {
