@@ -1,0 +1,13 @@
+{
+  "name": "mcp-space-browser",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun src/cli.ts",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.18",
+    "@types/node": "^24.0.14"
+  }
+}
