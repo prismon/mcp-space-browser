@@ -5,6 +5,16 @@ import { createChildLogger } from './logger';
 
 const logger = createChildLogger('cli');
 
+function printUsage() {
+  console.log(`Usage: bun run <command> <path>
+
+Commands:
+  disk-index <path>  Index the path
+  disk-du <path>     Display disk usage of path
+  disk-tree <path>   Display a tree of path contents
+  disk-info <path>   Show database info for path`);
+}
+
 async function diskIndex(target: string) {
   logger.info({ command: 'disk-index', target }, 'Executing command');
   const db = new DiskDB();
@@ -56,13 +66,27 @@ function diskTree(target: string, indent = '', isRoot = true, db?: DiskDB) {
   }
 }
 
+function diskInfo(target: string) {
+  logger.info({ command: 'disk-info', target }, 'Executing command');
+  const db = new DiskDB();
+  const abs = path.resolve(target);
+  const entry = db.get(abs);
+  if (!entry) {
+    logger.warn({ command: 'disk-info', target }, 'Path not found in database');
+    console.error(`Error: Path '${target}' not found in database. Run 'disk-index ${target}' first.`);
+    process.exit(1);
+  }
+  logger.info({ command: 'disk-info', target }, 'Entry fetched');
+  console.log(JSON.stringify(entry, null, 2));
+}
+
 async function main() {
   const [cmd, arg] = process.argv.slice(2);
   logger.info({ command: cmd, argument: arg }, 'CLI started');
   
   if (!cmd || !arg) {
     logger.error('Missing command or argument');
-    console.log('Usage: disk-index|disk-du|disk-tree <path>');
+    printUsage();
     process.exit(1);
   }
   
@@ -73,9 +97,11 @@ async function main() {
       diskDu(arg);
     } else if (cmd === 'disk-tree') {
       diskTree(arg);
+    } else if (cmd === 'disk-info') {
+      diskInfo(arg);
     } else {
       logger.error({ command: cmd }, 'Unknown command');
-      console.log('Unknown command');
+      printUsage();
       process.exit(1);
     }
   } catch (error) {
