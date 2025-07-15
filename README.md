@@ -18,3 +18,14 @@ A simple HTTP server is available via:
 ```bash
 bun src/server.ts
 ```
+
+## MCP Server
+
+You can also run the project as an
+[FastMCP](https://github.com/punkpeye/fastmcp) server. This exposes each CLI
+command as an MCP tool:
+
+```bash
+bun src/mcp.ts                   # stdio transport
+bun src/mcp.ts --http-stream     # HTTP streaming on port 8080
+```
