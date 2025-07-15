@@ -1,4 +1,7 @@
 import { Database } from 'bun:sqlite';
+import { createChildLogger } from './logger';
+
+const logger = createChildLogger('db');
 
 export interface Entry {
   id?: number;
@@ -15,11 +18,13 @@ export class DiskDB {
   db: Database;
 
   constructor(path: string = 'disk.db') {
+    logger.info({ path }, 'Initializing database');
     this.db = new Database(path);
     this.init();
   }
 
   private init() {
+    logger.debug('Creating tables and indexes');
     this.db.run(`CREATE TABLE IF NOT EXISTS entries (
       id INTEGER PRIMARY KEY,
       path TEXT UNIQUE NOT NULL,
@@ -32,9 +37,11 @@ export class DiskDB {
       dirty INTEGER DEFAULT 0
     )`);
     this.db.run('CREATE INDEX IF NOT EXISTS idx_parent ON entries(parent)');
+    logger.debug('Database initialization complete');
   }
 
   insertOrUpdate(entry: Entry): void {
+    logger.trace({ path: entry.path, kind: entry.kind, size: entry.size }, 'Inserting/updating entry');
     const stmt = this.db.prepare(`
       INSERT INTO entries
         (path, parent, size, kind, ctime, mtime, last_scanned, dirty)
@@ -60,37 +67,52 @@ export class DiskDB {
   }
 
   deleteStale(root: string, runId: number) {
-    this.db
+    logger.debug({ root, runId }, 'Deleting stale entries');
+    const result = this.db
       .query(
         `DELETE FROM entries WHERE (path = ? OR path LIKE ?) AND last_scanned < ?`
       )
       .run(root, `${root}/%`, runId);
+    logger.info({ root, deletedCount: this.db.changes }, 'Stale entries deleted');
   }
 
   computeAggregates(root: string) {
+    logger.debug({ root }, 'Computing aggregate sizes');
     const dirs = this.db
       .query(
         `SELECT path FROM entries WHERE kind = 'directory' AND (path = ? OR path LIKE ?) ORDER BY length(path) DESC`
       )
       .all(root, `${root}/%`) as { path: string }[];
+    
+    logger.debug({ directoryCount: dirs.length }, 'Processing directories for aggregation');
+    
     for (const d of dirs) {
       const row = this.db
         .query(`SELECT SUM(size) as total FROM entries WHERE parent = ?`)
         .get(d.path) as { total: number } | undefined;
       const total = row?.total ?? 0;
       this.db.query(`UPDATE entries SET size = ? WHERE path = ?`).run(total, d.path);
+      logger.trace({ path: d.path, aggregateSize: total }, 'Updated directory size');
     }
+    
+    logger.info({ root, directoriesProcessed: dirs.length }, 'Aggregate computation complete');
   }
 
   children(parent: string): Entry[] {
-    return this.db
+    logger.trace({ parent }, 'Fetching children');
+    const results = this.db
       .query(`SELECT * FROM entries WHERE parent = ?`)
       .all(parent) as Entry[];
+    logger.trace({ parent, childCount: results.length }, 'Children fetched');
+    return results;
   }
 
   get(path: string): Entry | undefined {
-    return this.db
+    logger.trace({ path }, 'Fetching entry');
+    const result = this.db
       .query(`SELECT * FROM entries WHERE path = ?`)
       .get(path) as Entry | undefined;
+    logger.trace({ path, found: !!result }, 'Entry fetch complete');
+    return result;
   }
 }

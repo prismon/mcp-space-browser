@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bun src/cli.ts:*)",
+      "Bash(bun test:*)",
+      "Bash(bunx tsc:*)"
+    ],
+    "deny": []
+  }
+}
