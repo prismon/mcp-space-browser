@@ -1,60 +1,13 @@
-import { FastMCP, Context } from 'fastmcp';
+import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 import { DiskDB } from './db';
 import { index as indexFs } from './crawler';
 import * as path from 'path';
-import * as http from 'http';
 
-// Define session authentication type
-type SessionAuth = {
-  userId?: string;
-  workingDirectory?: string;
-  preferences?: {
-    maxResults?: number;
-    sortBy?: 'size' | 'name' | 'mtime';
-  };
-};
-
-// Session state storage
-const sessionStates = new Map<string, {
-  lastQuery?: string;
-  currentSelectionSet?: string;
-  history: string[];
-}>();
-
-const server = new FastMCP<SessionAuth>({
+const server = new FastMCP({
   name: 'mcp-space-browser',
   version: '0.1.0',
-  // Optional authentication function
-  authenticate: async (request: http.IncomingMessage): Promise<SessionAuth> => {
-    // Extract session info from headers or query params
-    const authHeader = request.headers.authorization;
-    const userId = authHeader?.split(' ')[1] || 'anonymous';
-    
-    return {
-      userId,
-      workingDirectory: process.cwd(),
-      preferences: {
-        maxResults: 100,
-        sortBy: 'size'
-      }
-    };
-  }
-});
-
-// Add session event listeners
-server.on('connect', ({ session }) => {
-  console.log(`Session connected: ${session.server.clientCapabilities?.clientInfo?.name || 'unknown'}`);
-  // Initialize session state
-  const auth = (session as any).auth as SessionAuth | undefined;
-  const userId = auth?.userId || 'anonymous';
-  if (!sessionStates.has(userId)) {
-    sessionStates.set(userId, { history: [] });
-  }
-});
-
-server.on('disconnect', ({ session }) => {
-  console.log('Session disconnected');
+  instructions: 'File system browser with saved queries and selection sets. Use query-execute to run saved queries like "all_log_files". Use query-list to see available queries.'
 });
 
 const PathParam = z.object({
@@ -79,11 +32,9 @@ server.addTool({
   name: 'disk-index',
   description: 'Index the specified path',
   parameters: PathParam,
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
-    const workingDir = context.session?.workingDirectory || process.cwd();
-    const targetPath = path.resolve(workingDir, args.path);
-    await indexFs(targetPath, db);
+    await indexFs(args.path, db);
     return 'OK';
   },
 });
@@ -92,11 +43,10 @@ server.addTool({
   name: 'disk-du',
   description: 'Get disk usage for a path',
   parameters: PathParam,
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
     // Use session's working directory if available
-    const workingDir = context.session?.workingDirectory || process.cwd();
-    const abs = path.resolve(workingDir, args.path);
+    const abs = path.resolve(args.path);
     
     // Log query to session history
     if (context.session?.userId) {
@@ -121,10 +71,9 @@ server.addTool({
   name: 'disk-tree',
   description: 'Return a JSON tree of directories and file sizes',
   parameters: TreeParam,
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
-    const workingDir = context.session?.workingDirectory || process.cwd();
-    const abs = path.resolve(workingDir, args.path);
+    const abs = path.resolve(args.path);
     const maxDepth = args.maxDepth ?? Infinity;
     const minSize = args.minSize ?? 0;
     const limit = args.limit ?? context.session?.preferences?.maxResults ?? Infinity;
@@ -288,10 +237,9 @@ server.addTool({
   name: 'disk-time-range',
   description: 'Get the oldest and newest files in a directory tree',
   parameters: TimeRangeParam,
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
-    const workingDir = context.session?.workingDirectory || process.cwd();
-    const abs = path.resolve(workingDir, args.path);
+    const abs = path.resolve(args.path);
     const count = args.count ?? 10;
     const minSize = args.minSize ?? 0;
     
@@ -364,7 +312,7 @@ server.addTool({
   name: 'selection-set-create',
   description: 'Create a new selection set, optionally populated from tool results',
   parameters: CreateSelectionSetParam,
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
     
     // Track session's current selection set
@@ -487,7 +435,7 @@ server.addTool({
   name: 'selection-set-list',
   description: 'List all selection sets',
   parameters: z.object({}),
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
     const sets = db.listSelectionSets();
     
@@ -511,9 +459,9 @@ server.addTool({
 
 server.addTool({
   name: 'selection-set-get',
-  description: 'Get files in a selection set',
+  description: 'Get all files in a named selection set (e.g., "log_files") to see what files are included',
   parameters: SelectionSetParam,
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
     const entries = db.getSelectionSetEntries(args.name);
     const stats = db.getSelectionSetStats(args.name);
@@ -543,7 +491,7 @@ server.addTool({
   name: 'selection-set-modify',
   description: 'Add or remove paths from a selection set',
   parameters: ModifySelectionSetParam,
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
     
     if (args.operation === 'add') {
@@ -567,7 +515,7 @@ server.addTool({
   name: 'selection-set-delete',
   description: 'Delete a selection set',
   parameters: SelectionSetParam,
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
     db.deleteSelectionSet(args.name);
     
@@ -584,7 +532,7 @@ server.addTool({
   name: 'session-info',
   description: 'Get information about the current session',
   parameters: z.object({}),
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const userId = context.session?.userId || 'anonymous';
     const state = sessionStates.get(userId);
     
@@ -606,7 +554,7 @@ server.addTool({
     maxResults: z.number().optional().describe('Maximum results to return'),
     sortBy: z.enum(['size', 'name', 'mtime']).optional().describe('Default sort order')
   }),
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     if (!context.session) {
       return 'No active session';
     }
@@ -656,7 +604,7 @@ server.addTool({
   name: 'query-create',
   description: 'Create a persistent query that can be executed on demand',
   parameters: CreateQueryParam,
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
     
     const queryId = db.createQuery({
@@ -678,11 +626,11 @@ server.addTool({
 
 server.addTool({
   name: 'query-execute',
-  description: 'Execute a saved query and update its target selection set',
+  description: 'Execute a saved file search query by name (e.g., "all_log_files") to find matching files and update the associated selection set',
   parameters: z.object({
-    name: z.string().describe('Name of the query to execute')
+    name: z.string().describe('Name of the saved query to execute (e.g., "all_log_files", "recent_files", "source_code")')
   }),
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
     
     try {
@@ -717,9 +665,9 @@ server.addTool({
 
 server.addTool({
   name: 'query-list',
-  description: 'List all saved queries',
+  description: 'List all saved file search queries that can be executed (shows available query names like "all_log_files")',
   parameters: z.object({}),
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
     const queries = db.listQueries();
     
@@ -744,7 +692,7 @@ server.addTool({
   parameters: z.object({
     name: z.string().describe('Name of the query')
   }),
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
     const query = db.getQuery(args.name);
     
@@ -798,7 +746,7 @@ server.addTool({
     targetSelectionSet: z.string().optional().describe('New target selection set'),
     updateMode: z.enum(['replace', 'append', 'merge']).optional().describe('New update mode')
   }),
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
     
     const updates: any = {};
@@ -822,7 +770,7 @@ server.addTool({
   parameters: z.object({
     name: z.string().describe('Name of the query to delete')
   }),
-  execute: async (args, context: Context<SessionAuth>) => {
+  execute: async (args) => {
     const db = new DiskDB();
     db.deleteQuery(args.name);
     
