@@ -6,7 +6,9 @@
       "Bash(bunx tsc:*)",
       "mcp__size__disk-tree",
       "Bash(ls:*)",
-      "mcp__size__disk-time-range"
+      "mcp__size__disk-time-range",
+      "Bash(pkill:*)",
+      "Bash(true)"
     ],
     "deny": []
   }
