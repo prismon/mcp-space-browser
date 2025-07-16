@@ -3,7 +3,10 @@
     "allow": [
       "Bash(bun src/cli.ts:*)",
       "Bash(bun test:*)",
-      "Bash(bunx tsc:*)"
+      "Bash(bunx tsc:*)",
+      "mcp__size__disk-tree",
+      "Bash(ls:*)",
+      "mcp__size__disk-time-range"
     ],
     "deny": []
   }

@@ -46,6 +46,8 @@ test('aggregated size updates when file deleted', async () => {
     expect(db.get(dir)!.size).toBe(5);
 
     await fs.rm(f2);
+    // Add a small delay to ensure different timestamp for the second index run
+    await new Promise(resolve => setTimeout(resolve, 10));
     await index(dir, db);
     expect(db.get(dir)!.size).toBe(2);
   });

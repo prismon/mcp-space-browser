@@ -16,11 +16,13 @@ export interface Entry {
 
 export class DiskDB {
   db: Database;
+  private insertStmt: any;
 
   constructor(path: string = 'disk.db') {
     logger.info({ path }, 'Initializing database');
     this.db = new Database(path);
     this.init();
+    this.prepareStatements();
   }
 
   private init() {
@@ -37,12 +39,12 @@ export class DiskDB {
       dirty INTEGER DEFAULT 0
     )`);
     this.db.run('CREATE INDEX IF NOT EXISTS idx_parent ON entries(parent)');
+    this.db.run('CREATE INDEX IF NOT EXISTS idx_mtime ON entries(mtime)');
     logger.debug('Database initialization complete');
   }
 
-  insertOrUpdate(entry: Entry): void {
-    logger.trace({ path: entry.path, kind: entry.kind, size: entry.size }, 'Inserting/updating entry');
-    const stmt = this.db.prepare(`
+  private prepareStatements() {
+    this.insertStmt = this.db.prepare(`
       INSERT INTO entries
         (path, parent, size, kind, ctime, mtime, last_scanned, dirty)
       VALUES (?, ?, ?, ?, ?, ?, ?, 0)
@@ -55,7 +57,13 @@ export class DiskDB {
         last_scanned=excluded.last_scanned,
         dirty=0
     `);
-    stmt.run(
+  }
+
+  insertOrUpdate(entry: Entry): void {
+    if (logger.isLevelEnabled('trace')) {
+      logger.trace({ path: entry.path, kind: entry.kind, size: entry.size }, 'Inserting/updating entry');
+    }
+    this.insertStmt.run(
       entry.path,
       entry.parent,
       entry.size,
@@ -87,33 +95,59 @@ export class DiskDB {
     
     logger.debug({ directoryCount: dirs.length }, 'Processing directories for aggregation');
     
-    for (const d of dirs) {
-      const row = this.db
-        .query(`SELECT SUM(size) as total FROM entries WHERE parent = ?`)
-        .get(d.path) as { total: number } | undefined;
-      const total = row?.total ?? 0;
-      this.db.query(`UPDATE entries SET size = ? WHERE path = ?`).run(total, d.path);
-      logger.trace({ path: d.path, aggregateSize: total }, 'Updated directory size');
-    }
+    // Use prepared statements and transactions for better performance
+    const updateStmt = this.db.prepare(`UPDATE entries SET size = ? WHERE path = ?`);
+    const sumStmt = this.db.prepare(`SELECT SUM(size) as total FROM entries WHERE parent = ?`);
+    
+    this.db.transaction(() => {
+      for (const d of dirs) {
+        const row = sumStmt.get(d.path) as { total: number } | undefined;
+        const total = row?.total ?? 0;
+        updateStmt.run(total, d.path);
+        if (logger.isLevelEnabled('trace')) {
+          logger.trace({ path: d.path, aggregateSize: total }, 'Updated directory size');
+        }
+      }
+    })();
     
     logger.info({ root, directoriesProcessed: dirs.length }, 'Aggregate computation complete');
   }
 
   children(parent: string): Entry[] {
-    logger.trace({ parent }, 'Fetching children');
+    if (logger.isLevelEnabled('trace')) {
+      logger.trace({ parent }, 'Fetching children');
+    }
     const results = this.db
       .query(`SELECT * FROM entries WHERE parent = ?`)
       .all(parent) as Entry[];
-    logger.trace({ parent, childCount: results.length }, 'Children fetched');
+    if (logger.isLevelEnabled('trace')) {
+      logger.trace({ parent, childCount: results.length }, 'Children fetched');
+    }
     return results;
   }
 
   get(path: string): Entry | undefined {
-    logger.trace({ path }, 'Fetching entry');
+    if (logger.isLevelEnabled('trace')) {
+      logger.trace({ path }, 'Fetching entry');
+    }
     const result = this.db
       .query(`SELECT * FROM entries WHERE path = ?`)
       .get(path) as Entry | undefined;
-    logger.trace({ path, found: !!result }, 'Entry fetch complete');
+    if (logger.isLevelEnabled('trace')) {
+      logger.trace({ path, found: !!result }, 'Entry fetch complete');
+    }
     return result;
+  }
+
+  beginTransaction() {
+    this.db.run('BEGIN');
+  }
+
+  commitTransaction() {
+    this.db.run('COMMIT');
+  }
+
+  rollbackTransaction() {
+    this.db.run('ROLLBACK');
   }
 }

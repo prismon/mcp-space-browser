@@ -31,7 +31,14 @@ function diskDu(target: string) {
   console.log(size);
 }
 
-function diskTree(target: string, indent = '', isRoot = true, db?: DiskDB) {
+interface TreeOptions {
+  sortBy?: 'size' | 'mtime' | 'name';
+  ascending?: boolean;
+  minDate?: Date;
+  maxDate?: Date;
+}
+
+function diskTree(target: string, indent = '', isRoot = true, db?: DiskDB, options?: TreeOptions) {
   if (isRoot) {
     logger.info({ command: 'disk-tree', target }, 'Executing command');
     db = new DiskDB();
@@ -45,11 +52,53 @@ function diskTree(target: string, indent = '', isRoot = true, db?: DiskDB) {
     logger.warn({ path: abs }, 'Entry not found');
     return;
   }
-  console.log(`${indent}${path.basename(abs)} (${entry.size})`);
-  const children = db.children(abs);
+  
+  // Apply date filtering (but always show root)
+  if (!isRoot) {
+    if (options?.minDate && entry.mtime < options.minDate.getTime() / 1000) {
+      return;
+    }
+    if (options?.maxDate && entry.mtime > options.maxDate.getTime() / 1000) {
+      return;
+    }
+  }
+  
+  const mtimeStr = new Date(entry.mtime * 1000).toISOString().split('T')[0];
+  console.log(`${indent}${path.basename(abs)} (${entry.size}) [${mtimeStr}]`);
+  
+  let children = db.children(abs);
+  
+  // Apply date filtering to children
+  if (options?.minDate || options?.maxDate) {
+    children = children.filter(child => {
+      if (options.minDate && child.mtime < options.minDate.getTime() / 1000) return false;
+      if (options.maxDate && child.mtime > options.maxDate.getTime() / 1000) return false;
+      return true;
+    });
+  }
+  
+  // Sort children
+  if (options?.sortBy) {
+    children.sort((a, b) => {
+      let comparison = 0;
+      switch (options.sortBy) {
+        case 'size':
+          comparison = a.size - b.size;
+          break;
+        case 'mtime':
+          comparison = a.mtime - b.mtime;
+          break;
+        case 'name':
+          comparison = path.basename(a.path).localeCompare(path.basename(b.path));
+          break;
+      }
+      return options.ascending ? comparison : -comparison;
+    });
+  }
+  
   logger.trace({ path: abs, childCount: children.length }, 'Processing children for tree');
   for (const child of children) {
-    diskTree(child.path, indent + '  ', false, db);
+    diskTree(child.path, indent + '  ', false, db, options);
   }
   if (isRoot) {
     logger.info({ command: 'disk-tree', target }, 'Tree display completed');
@@ -57,22 +106,51 @@ function diskTree(target: string, indent = '', isRoot = true, db?: DiskDB) {
 }
 
 async function main() {
-  const [cmd, arg] = process.argv.slice(2);
-  logger.info({ command: cmd, argument: arg }, 'CLI started');
+  const args = process.argv.slice(2);
+  const cmd = args[0];
+  const target = args[1];
   
-  if (!cmd || !arg) {
+  logger.info({ command: cmd, argument: target }, 'CLI started');
+  
+  if (!cmd || !target) {
     logger.error('Missing command or argument');
-    console.log('Usage: disk-index|disk-du|disk-tree <path>');
+    console.log('Usage: disk-index|disk-du|disk-tree <path> [options]');
+    console.log('Options for disk-tree:');
+    console.log('  --sort-by=<size|mtime|name>  Sort by size, modification time, or name');
+    console.log('  --ascending                  Sort in ascending order (default: descending)');
+    console.log('  --min-date=<YYYY-MM-DD>      Filter files modified after this date');
+    console.log('  --max-date=<YYYY-MM-DD>      Filter files modified before this date');
     process.exit(1);
   }
   
   try {
     if (cmd === 'disk-index') {
-      await diskIndex(arg);
+      await diskIndex(target);
     } else if (cmd === 'disk-du') {
-      diskDu(arg);
+      diskDu(target);
     } else if (cmd === 'disk-tree') {
-      diskTree(arg);
+      // Parse options
+      const options: TreeOptions = {};
+      
+      for (let i = 2; i < args.length; i++) {
+        const arg = args[i];
+        if (arg.startsWith('--sort-by=')) {
+          const sortBy = arg.split('=')[1];
+          if (['size', 'mtime', 'name'].includes(sortBy)) {
+            options.sortBy = sortBy as 'size' | 'mtime' | 'name';
+          }
+        } else if (arg === '--ascending') {
+          options.ascending = true;
+        } else if (arg.startsWith('--min-date=')) {
+          const dateStr = arg.split('=')[1];
+          options.minDate = new Date(dateStr);
+        } else if (arg.startsWith('--max-date=')) {
+          const dateStr = arg.split('=')[1];
+          options.maxDate = new Date(dateStr);
+        }
+      }
+      
+      diskTree(target, '', true, undefined, options);
     } else {
       logger.error({ command: cmd }, 'Unknown command');
       console.log('Unknown command');
