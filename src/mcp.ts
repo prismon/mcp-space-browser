@@ -45,18 +45,8 @@ server.addTool({
   parameters: PathParam,
   execute: async (args) => {
     const db = new DiskDB();
-    // Use session's working directory if available
     const abs = path.resolve(args.path);
-    
-    // Log query to session history
-    if (context.session?.userId) {
-      const state = sessionStates.get(context.session.userId);
-      if (state) {
-        state.history.push(`disk-du: ${args.path}`);
-        if (state.history.length > 50) state.history.shift();
-      }
-    }
-    
+
     const row = db.db
       .query('SELECT size FROM entries WHERE path = ?')
       .get(abs) as { size: number } | undefined;
@@ -76,8 +66,8 @@ server.addTool({
     const abs = path.resolve(args.path);
     const maxDepth = args.maxDepth ?? Infinity;
     const minSize = args.minSize ?? 0;
-    const limit = args.limit ?? context.session?.preferences?.maxResults ?? Infinity;
-    const sortBy = args.sortBy ?? context.session?.preferences?.sortBy ?? 'size';
+    const limit = args.limit ?? Infinity;
+    const sortBy = args.sortBy ?? 'size';
     const descendingSort = args.descendingSort ?? (sortBy === 'size');
     const groupBy = args.groupBy ?? 'none';
     const minDate = args.minDate ? new Date(args.minDate).getTime() / 1000 : undefined;
@@ -303,7 +293,7 @@ const CreateSelectionSetParam = z.object({
   description: z.string().optional().describe('Description of the selection set'),
   fromTool: z.object({
     tool: z.string().describe('Tool name to execute for getting files'),
-    params: z.record(z.any()).describe('Parameters to pass to the tool'),
+    params: z.record(z.string(), z.any()).describe('Parameters to pass to the tool'),
     limit: z.number().optional().describe('Maximum number of files to add (default: 100)')
   }).optional().describe('Create set from tool results')
 });
@@ -314,15 +304,7 @@ server.addTool({
   parameters: CreateSelectionSetParam,
   execute: async (args) => {
     const db = new DiskDB();
-    
-    // Track session's current selection set
-    if (context.session?.userId) {
-      const state = sessionStates.get(context.session.userId);
-      if (state) {
-        state.currentSelectionSet = args.name;
-      }
-    }
-    
+
     // Create the selection set
     const setId = db.createSelectionSet({
       name: args.name,
@@ -330,17 +312,17 @@ server.addTool({
       criteria_type: args.fromTool ? 'tool_query' : 'user_selected',
       criteria_json: args.fromTool ? JSON.stringify(args.fromTool) : undefined
     });
-    
+
     let addedCount = 0;
-    
+
     // If fromTool is specified, execute the tool and add results
     if (args.fromTool) {
       const limit = args.fromTool.limit || 100;
-      
+
       if (args.fromTool.tool === 'disk-time-range') {
         // Special handling for disk-time-range
         const count = args.fromTool.params.count || 10;
-        const workingDir = context.session?.workingDirectory || process.cwd();
+        const workingDir = process.cwd();
         const abs = path.resolve(workingDir, args.fromTool.params.path || '.');
         const minSize = args.fromTool.params.minSize || 0;
         
@@ -375,9 +357,9 @@ server.addTool({
         }
       } else if (args.fromTool.tool === 'disk-tree') {
         // Handle disk-tree results
-        const workingDir = context.session?.workingDirectory || process.cwd();
+        const workingDir = process.cwd();
         const abs = path.resolve(workingDir, args.fromTool.params.path || '.');
-        const sortBy = args.fromTool.params.sortBy || context.session?.preferences?.sortBy || 'size';
+        const sortBy = args.fromTool.params.sortBy || 'size';
         const descendingSort = args.fromTool.params.descendingSort ?? (sortBy === 'size');
         const minSize = args.fromTool.params.minSize || 0;
         
@@ -526,56 +508,7 @@ server.addTool({
   },
 });
 
-// Session-specific tools
-
-server.addTool({
-  name: 'session-info',
-  description: 'Get information about the current session',
-  parameters: z.object({}),
-  execute: async (args) => {
-    const userId = context.session?.userId || 'anonymous';
-    const state = sessionStates.get(userId);
-    
-    return JSON.stringify({
-      userId,
-      workingDirectory: context.session?.workingDirectory || process.cwd(),
-      preferences: context.session?.preferences,
-      currentSelectionSet: state?.currentSelectionSet,
-      historyCount: state?.history.length || 0,
-      recentHistory: state?.history.slice(-10) || []
-    }, null, 2);
-  },
-});
-
-server.addTool({
-  name: 'session-set-preferences',
-  description: 'Update session preferences',
-  parameters: z.object({
-    maxResults: z.number().optional().describe('Maximum results to return'),
-    sortBy: z.enum(['size', 'name', 'mtime']).optional().describe('Default sort order')
-  }),
-  execute: async (args) => {
-    if (!context.session) {
-      return 'No active session';
-    }
-    
-    if (!context.session.preferences) {
-      context.session.preferences = {};
-    }
-    
-    if (args.maxResults !== undefined) {
-      context.session.preferences.maxResults = args.maxResults;
-    }
-    if (args.sortBy !== undefined) {
-      context.session.preferences.sortBy = args.sortBy;
-    }
-    
-    return JSON.stringify({
-      updated: true,
-      preferences: context.session.preferences
-    }, null, 2);
-  },
-});
+// Session-specific tools have been removed due to lack of session support in current FastMCP version
 
 // Query Management Tools
 
@@ -632,20 +565,11 @@ server.addTool({
   }),
   execute: async (args) => {
     const db = new DiskDB();
-    
+
     try {
       const result = db.executeQuery(args.name);
       const query = db.getQuery(args.name);
-      
-      // Track in session history
-      if (context.session?.userId) {
-        const state = sessionStates.get(context.session.userId);
-        if (state) {
-          state.history.push(`query-execute: ${args.name}`);
-          if (state.history.length > 50) state.history.shift();
-        }
-      }
-      
+
       return JSON.stringify({
         query: args.name,
         executed: true,

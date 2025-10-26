@@ -302,21 +302,23 @@ export class DiskDB {
     if (!set || !set.id) {
       throw new Error(`Selection set '${setName}' not found`);
     }
-    
+
+    const setId = set.id;
+
     const stmt = this.db.prepare(`
       INSERT OR IGNORE INTO selection_set_entries (set_id, entry_path)
       VALUES (?, ?)
     `);
-    
+
     this.db.transaction(() => {
       for (const path of paths) {
-        stmt.run(set.id, path);
+        stmt.run(setId, path);
       }
     })();
-    
+
     // Update the set's updated_at timestamp
-    this.db.query(`UPDATE selection_sets SET updated_at = strftime('%s', 'now') WHERE id = ?`).run(set.id);
-    
+    this.db.query(`UPDATE selection_sets SET updated_at = strftime('%s', 'now') WHERE id = ?`).run(setId);
+
     logger.info({ setName, count: paths.length }, 'Added entries to selection set');
   }
 
@@ -325,20 +327,22 @@ export class DiskDB {
     if (!set || !set.id) {
       throw new Error(`Selection set '${setName}' not found`);
     }
-    
+
+    const setId = set.id;
+
     const stmt = this.db.prepare(`
       DELETE FROM selection_set_entries WHERE set_id = ? AND entry_path = ?
     `);
-    
+
     this.db.transaction(() => {
       for (const path of paths) {
-        stmt.run(set.id, path);
+        stmt.run(setId, path);
       }
     })();
-    
+
     // Update the set's updated_at timestamp
-    this.db.query(`UPDATE selection_sets SET updated_at = strftime('%s', 'now') WHERE id = ?`).run(set.id);
-    
+    this.db.query(`UPDATE selection_sets SET updated_at = strftime('%s', 'now') WHERE id = ?`).run(setId);
+
     logger.info({ setName, count: paths.length }, 'Removed entries from selection set');
   }
 
@@ -447,26 +451,28 @@ export class DiskDB {
 
   executeQuery(name: string): { selectionSet: string; filesMatched: number } {
     const query = this.getQuery(name);
-    if (!query) {
+    if (!query || !query.id) {
       throw new Error(`Query '${name}' not found`);
     }
-    
+
+    const queryId = query.id;
+
     const startTime = Date.now();
     let error: string | null = null;
     let filesMatched = 0;
-    
+
     try {
       // Parse the query
       const filter = JSON.parse(query.query_json) as FileFilter;
-      
+
       // Execute the file filter
       const matchedFiles = this.executeFileFilter(filter);
       filesMatched = matchedFiles.length;
-      
+
       // Update or create the selection set
       if (query.target_selection_set) {
         const existingSet = this.getSelectionSet(query.target_selection_set);
-        
+
         if (!existingSet) {
           // Create new selection set
           this.createSelectionSet({
@@ -476,7 +482,7 @@ export class DiskDB {
             criteria_json: JSON.stringify({ query: query.name })
           });
         }
-        
+
         // Update the selection set based on update_mode
         if (query.update_mode === 'replace') {
           // Clear existing entries and add new ones
@@ -492,37 +498,37 @@ export class DiskDB {
           this.addToSelectionSet(query.target_selection_set, matchedFiles);
         }
       }
-      
+
       // Update query metadata
       this.db.query(`
-        UPDATE queries 
-        SET last_executed = strftime('%s', 'now'), 
-            execution_count = execution_count + 1 
+        UPDATE queries
+        SET last_executed = strftime('%s', 'now'),
+            execution_count = execution_count + 1
         WHERE id = ?
-      `).run(query.id);
-      
+      `).run(queryId);
+
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       logger.error({ query: name, error }, 'Query execution failed');
     }
-    
+
     // Record execution
     const duration = Date.now() - startTime;
     this.db.query(`
       INSERT INTO query_executions (query_id, duration_ms, files_matched, status, error_message)
       VALUES (?, ?, ?, ?, ?)
     `).run(
-      query.id,
+      queryId,
       duration,
       filesMatched,
       error ? 'error' : 'success',
       error
     );
-    
+
     if (error) {
       throw new Error(error);
     }
-    
+
     return {
       selectionSet: query.target_selection_set || '',
       filesMatched
@@ -531,7 +537,7 @@ export class DiskDB {
 
   private executeFileFilter(filter: FileFilter): string[] {
     const matchedPaths: string[] = [];
-    const rootPath = filter.path ? path.resolve(filter.path) : '/home/josh/Projects/mcp-space-browser';
+    const rootPath = filter.path ? path.resolve(filter.path) : process.cwd();
     
     const minDate = filter.minDate ? new Date(filter.minDate).getTime() / 1000 : undefined;
     const maxDate = filter.maxDate ? new Date(filter.maxDate).getTime() / 1000 : undefined;
