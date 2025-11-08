@@ -1,0 +1,109 @@
+package models
+
+import "time"
+
+// Entry represents a filesystem entry (file or directory)
+type Entry struct {
+	ID          int64  `db:"id" json:"id,omitempty"`
+	Path        string `db:"path" json:"path"`
+	Parent      *string `db:"parent" json:"parent"`
+	Size        int64  `db:"size" json:"size"`
+	Kind        string `db:"kind" json:"kind"` // "file" or "directory"
+	Ctime       int64  `db:"ctime" json:"ctime"` // Unix timestamp in seconds
+	Mtime       int64  `db:"mtime" json:"mtime"` // Unix timestamp in seconds
+	LastScanned int64  `db:"last_scanned" json:"last_scanned"`
+	Dirty       int    `db:"dirty" json:"dirty,omitempty"`
+}
+
+// SelectionSet represents a named group of files
+type SelectionSet struct {
+	ID           int64   `db:"id" json:"id,omitempty"`
+	Name         string  `db:"name" json:"name"`
+	Description  *string `db:"description" json:"description,omitempty"`
+	CriteriaType string  `db:"criteria_type" json:"criteria_type"` // "user_selected" or "tool_query"
+	CriteriaJSON *string `db:"criteria_json" json:"criteria_json,omitempty"`
+	CreatedAt    int64   `db:"created_at" json:"created_at"`
+	UpdatedAt    int64   `db:"updated_at" json:"updated_at"`
+}
+
+// SelectionCriteria defines the criteria for selecting files
+type SelectionCriteria struct {
+	Tool   string                 `json:"tool"`
+	Params map[string]interface{} `json:"params"`
+	Limit  *int                   `json:"limit,omitempty"`
+}
+
+// Query represents a saved file filter query
+type Query struct {
+	ID                 int64   `db:"id" json:"id,omitempty"`
+	Name               string  `db:"name" json:"name"`
+	Description        *string `db:"description" json:"description,omitempty"`
+	QueryType          string  `db:"query_type" json:"query_type"` // "file_filter" or "custom_script"
+	QueryJSON          string  `db:"query_json" json:"query_json"`
+	TargetSelectionSet *string `db:"target_selection_set" json:"target_selection_set,omitempty"`
+	UpdateMode         *string `db:"update_mode" json:"update_mode,omitempty"` // "replace", "append", "merge"
+	CreatedAt          int64   `db:"created_at" json:"created_at"`
+	UpdatedAt          int64   `db:"updated_at" json:"updated_at"`
+	LastExecuted       *int64  `db:"last_executed" json:"last_executed,omitempty"`
+	ExecutionCount     int     `db:"execution_count" json:"execution_count"`
+}
+
+// FileFilter represents filtering criteria for files
+type FileFilter struct {
+	Path           *string  `json:"path,omitempty"`
+	Pattern        *string  `json:"pattern,omitempty"`
+	Extensions     []string `json:"extensions,omitempty"`
+	MinSize        *int64   `json:"minSize,omitempty"`
+	MaxSize        *int64   `json:"maxSize,omitempty"`
+	MinDate        *string  `json:"minDate,omitempty"` // YYYY-MM-DD format
+	MaxDate        *string  `json:"maxDate,omitempty"` // YYYY-MM-DD format
+	NameContains   *string  `json:"nameContains,omitempty"`
+	PathContains   *string  `json:"pathContains,omitempty"`
+	SortBy         *string  `json:"sortBy,omitempty"` // "size", "name", "mtime"
+	DescendingSort *bool    `json:"descendingSort,omitempty"`
+	Limit          *int     `json:"limit,omitempty"`
+}
+
+// QueryExecution tracks query execution history
+type QueryExecution struct {
+	ID           int64   `db:"id" json:"id,omitempty"`
+	QueryID      int64   `db:"query_id" json:"query_id"`
+	ExecutedAt   int64   `db:"executed_at" json:"executed_at"`
+	DurationMs   *int    `db:"duration_ms" json:"duration_ms,omitempty"`
+	FilesMatched *int    `db:"files_matched" json:"files_matched,omitempty"`
+	Status       string  `db:"status" json:"status"` // "success" or "error"
+	ErrorMessage *string `db:"error_message" json:"error_message,omitempty"`
+}
+
+// SessionPreferences stores user preferences
+type SessionPreferences struct {
+	DefaultLimit         int    `json:"default_limit"`
+	DefaultSortBy        string `json:"default_sort_by"`
+	DefaultDescending    bool   `json:"default_descending"`
+	PreferredSizeUnits   string `json:"preferred_size_units"` // "bytes", "kb", "mb", "gb"
+	PreferredDateFormat  string `json:"preferred_date_format"`
+}
+
+// TreeNode represents a node in a file tree (for disk-tree command)
+type TreeNode struct {
+	Name     string      `json:"name"`
+	Path     string      `json:"path"`
+	Size     int64       `json:"size"`
+	Kind     string      `json:"kind"`
+	Mtime    time.Time   `json:"mtime"`
+	Children []*TreeNode `json:"children,omitempty"`
+}
+
+// DiskUsageSummary represents disk usage summary (for disk-du command)
+type DiskUsageSummary struct {
+	Path             string `json:"path"`
+	TotalSize        int64  `json:"total_size"`
+	FileCount        int    `json:"file_count"`
+	DirectoryCount   int    `json:"directory_count"`
+	LargestFile      string `json:"largest_file,omitempty"`
+	LargestFileSize  int64  `json:"largest_file_size"`
+	OldestFile       string `json:"oldest_file,omitempty"`
+	OldestFileTime   int64  `json:"oldest_file_time"`
+	NewestFile       string `json:"newest_file,omitempty"`
+	NewestFileTime   int64  `json:"newest_file_time"`
+}
