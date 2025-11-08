@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -20,6 +21,10 @@ var (
 	log   *logrus.Entry
 	db    *database.DiskDB
 	dbPath = "disk.db"
+
+	// Server configuration flags
+	host = flag.String("host", "0.0.0.0", "Host address to bind the server to")
+	port = flag.String("port", "8080", "Port to bind the server to")
 )
 
 func init() {
@@ -27,6 +32,12 @@ func init() {
 }
 
 func main() {
+	// Parse command-line flags
+	flag.Parse()
+
+	// Build server address
+	addr := fmt.Sprintf("%s:%s", *host, *port)
+
 	// Initialize database
 	var err error
 	db, err = database.NewDiskDB(dbPath)
@@ -45,10 +56,20 @@ func main() {
 	// Register all tools
 	registerTools(s)
 
-	log.Info("Starting MCP server")
+	log.WithFields(logrus.Fields{
+		"host": *host,
+		"port": *port,
+		"addr": addr,
+	}).Info("Starting MCP server with streamable HTTP transport")
 
-	// Start server with stdio transport
-	if err := server.ServeStdio(s); err != nil {
+	// Create streamable HTTP server with stateless mode
+	httpServer := server.NewStreamableHTTPServer(
+		s,
+		server.WithStateLess(true), // Enable stateless mode for simpler session management
+	)
+
+	// Start server (accessible at http://<host>:<port>/mcp)
+	if err := httpServer.Start(addr); err != nil {
 		log.WithError(err).Fatal("Server failed")
 	}
 }
