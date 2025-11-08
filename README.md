@@ -5,7 +5,7 @@ See [docs/disk_agent_design.md](docs/disk_agent_design.md) for the design.
 
 ## Usage
 
-Install [Bun](https://bun.sh/) and run one of the CLI commands:
+Install [Bun](https://bun.sh/) (Node.js alone is insufficient because we depend on Bun-native modules such as `bun:sqlite`) and run one of the CLI commands:
 
 ```bash
 bun src/cli.ts disk-index /path/to/scan
