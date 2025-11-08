@@ -8,7 +8,12 @@
       "Bash(ls:*)",
       "mcp__size__disk-time-range",
       "Bash(pkill:*)",
-      "Bash(true)"
+      "Bash(true)",
+      "Bash(bun:*)",
+      "Bash(ss:*)",
+      "Bash(curl:*)",
+      "Bash(ip addr:*)",
+      "Bash(python3:*)"
     ],
     "deny": []
   }

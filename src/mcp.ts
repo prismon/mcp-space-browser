@@ -4,6 +4,12 @@ import { DiskDB } from './db';
 import { index as indexFs } from './crawler';
 import * as path from 'path';
 
+// Session state management
+const sessionStates = new Map<string, {
+  currentSelectionSet?: string;
+  history: string[];
+}>();
+
 const server = new FastMCP({
   name: 'mcp-space-browser',
   version: '0.1.0',
@@ -32,7 +38,7 @@ server.addTool({
   name: 'disk-index',
   description: 'Index the specified path',
   parameters: PathParam,
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     await indexFs(args.path, db);
     return 'OK';
@@ -43,11 +49,11 @@ server.addTool({
   name: 'disk-du',
   description: 'Get disk usage for a path',
   parameters: PathParam,
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     // Use session's working directory if available
     const abs = path.resolve(args.path);
-    
+
     // Log query to session history
     if (context.session?.userId) {
       const state = sessionStates.get(context.session.userId);
@@ -71,7 +77,7 @@ server.addTool({
   name: 'disk-tree',
   description: 'Return a JSON tree of directories and file sizes',
   parameters: TreeParam,
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     const abs = path.resolve(args.path);
     const maxDepth = args.maxDepth ?? Infinity;
@@ -229,7 +235,7 @@ server.addTool({
 
 const TimeRangeParam = z.object({
   path: z.string().describe('File or directory path'),
-  count: z.number().default(10).describe('Number of oldest and newest files to return (default: 10)'),
+  count: z.number().optional().describe('Number of oldest and newest files to return (default: 10)'),
   minSize: z.number().optional().describe('Minimum file size to include in bytes (default: 0)'),
 });
 
@@ -237,7 +243,7 @@ server.addTool({
   name: 'disk-time-range',
   description: 'Get the oldest and newest files in a directory tree',
   parameters: TimeRangeParam,
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     const abs = path.resolve(args.path);
     const count = args.count ?? 10;
@@ -303,7 +309,7 @@ const CreateSelectionSetParam = z.object({
   description: z.string().optional().describe('Description of the selection set'),
   fromTool: z.object({
     tool: z.string().describe('Tool name to execute for getting files'),
-    params: z.record(z.any()).describe('Parameters to pass to the tool'),
+    params: z.record(z.unknown()).describe('Parameters to pass to the tool'),
     limit: z.number().optional().describe('Maximum number of files to add (default: 100)')
   }).optional().describe('Create set from tool results')
 });
@@ -312,7 +318,7 @@ server.addTool({
   name: 'selection-set-create',
   description: 'Create a new selection set, optionally populated from tool results',
   parameters: CreateSelectionSetParam,
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     
     // Track session's current selection set
@@ -435,7 +441,7 @@ server.addTool({
   name: 'selection-set-list',
   description: 'List all selection sets',
   parameters: z.object({}),
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     const sets = db.listSelectionSets();
     
@@ -461,7 +467,7 @@ server.addTool({
   name: 'selection-set-get',
   description: 'Get all files in a named selection set (e.g., "log_files") to see what files are included',
   parameters: SelectionSetParam,
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     const entries = db.getSelectionSetEntries(args.name);
     const stats = db.getSelectionSetStats(args.name);
@@ -491,7 +497,7 @@ server.addTool({
   name: 'selection-set-modify',
   description: 'Add or remove paths from a selection set',
   parameters: ModifySelectionSetParam,
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     
     if (args.operation === 'add') {
@@ -515,7 +521,7 @@ server.addTool({
   name: 'selection-set-delete',
   description: 'Delete a selection set',
   parameters: SelectionSetParam,
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     db.deleteSelectionSet(args.name);
     
@@ -532,7 +538,7 @@ server.addTool({
   name: 'session-info',
   description: 'Get information about the current session',
   parameters: z.object({}),
-  execute: async (args) => {
+  execute: async (args, context) => {
     const userId = context.session?.userId || 'anonymous';
     const state = sessionStates.get(userId);
     
@@ -554,7 +560,7 @@ server.addTool({
     maxResults: z.number().optional().describe('Maximum results to return'),
     sortBy: z.enum(['size', 'name', 'mtime']).optional().describe('Default sort order')
   }),
-  execute: async (args) => {
+  execute: async (args, context) => {
     if (!context.session) {
       return 'No active session';
     }
@@ -604,7 +610,7 @@ server.addTool({
   name: 'query-create',
   description: 'Create a persistent query that can be executed on demand',
   parameters: CreateQueryParam,
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     
     const queryId = db.createQuery({
@@ -630,7 +636,7 @@ server.addTool({
   parameters: z.object({
     name: z.string().describe('Name of the saved query to execute (e.g., "all_log_files", "recent_files", "source_code")')
   }),
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     
     try {
@@ -667,7 +673,7 @@ server.addTool({
   name: 'query-list',
   description: 'List all saved file search queries that can be executed (shows available query names like "all_log_files")',
   parameters: z.object({}),
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     const queries = db.listQueries();
     
@@ -692,7 +698,7 @@ server.addTool({
   parameters: z.object({
     name: z.string().describe('Name of the query')
   }),
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     const query = db.getQuery(args.name);
     
@@ -746,7 +752,7 @@ server.addTool({
     targetSelectionSet: z.string().optional().describe('New target selection set'),
     updateMode: z.enum(['replace', 'append', 'merge']).optional().describe('New update mode')
   }),
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     
     const updates: any = {};
@@ -770,7 +776,7 @@ server.addTool({
   parameters: z.object({
     name: z.string().describe('Name of the query to delete')
   }),
-  execute: async (args) => {
+  execute: async (args, context) => {
     const db = new DiskDB();
     db.deleteQuery(args.name);
     
@@ -807,11 +813,12 @@ const transportType = process.argv.includes('--http-stream') ? 'httpStream' : 's
 
 if (transportType === 'httpStream') {
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
+  const host = process.env.HOST || '0.0.0.0';
   server.start({
     transportType: 'httpStream',
-    httpStream: { port },
+    httpStream: { port, host, stateless: true },
   });
-  console.log(`HTTP Stream MCP server running at http://localhost:${port}/mcp`);
+  console.log(`HTTP Stream MCP server running at http://${host}:${port}/mcp`);
 } else {
   server.start({ transportType: 'stdio' });
 }

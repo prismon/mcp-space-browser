@@ -114,7 +114,17 @@ async function main() {
   
   if (!cmd || !target) {
     logger.error('Missing command or argument');
-    console.log('Usage: disk-index|disk-du|disk-tree <path> [options]');
+    console.log('mcp-space-browser - Disk space indexing and analysis tool');
+    console.log('');
+    console.log('For MCP server mode (recommended):');
+    console.log('  bun src/mcp.ts              Start MCP server with stdio transport');
+    console.log('  bun src/mcp.ts --http-stream  Start MCP server with HTTP transport');
+    console.log('');
+    console.log('CLI Commands:');
+    console.log('  disk-index <path>           Index a directory tree');
+    console.log('  disk-du <path>              Show disk usage for a path');
+    console.log('  disk-tree <path> [options]  Display tree view with sizes');
+    console.log('');
     console.log('Options for disk-tree:');
     console.log('  --sort-by=<size|mtime|name>  Sort by size, modification time, or name');
     console.log('  --ascending                  Sort in ascending order (default: descending)');
