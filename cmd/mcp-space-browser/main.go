@@ -30,6 +30,12 @@ var (
 
 	// Database path
 	dbPath string
+
+	// Index command options
+	parallel    bool
+	workerCount int
+	queueSize   int
+	batchSize   int
 )
 
 func init() {
@@ -56,6 +62,11 @@ exploring disk utilization (similar to Baobab/WinDirStat).`,
 		Args:  cobra.ExactArgs(1),
 		Run:   runDiskIndex,
 	}
+
+	diskIndexCmd.Flags().BoolVar(&parallel, "parallel", false, "Use parallel indexing with worker pool")
+	diskIndexCmd.Flags().IntVar(&workerCount, "workers", 8, "Number of parallel workers (only with --parallel)")
+	diskIndexCmd.Flags().IntVar(&queueSize, "queue-size", 10000, "Size of job queue (only with --parallel)")
+	diskIndexCmd.Flags().IntVar(&batchSize, "batch-size", 1000, "Database write batch size (only with --parallel)")
 
 	// disk-du command
 	var diskDuCmd = &cobra.Command{
@@ -87,7 +98,22 @@ exploring disk utilization (similar to Baobab/WinDirStat).`,
 
 	serverCmd.Flags().IntVar(&port, "port", 3000, "Port to listen on")
 
-	rootCmd.AddCommand(diskIndexCmd, diskDuCmd, diskTreeCmd, serverCmd)
+	// job-list command
+	var jobListCmd = &cobra.Command{
+		Use:   "job-list",
+		Short: "List all indexing jobs",
+		Run:   runJobList,
+	}
+
+	// job-status command
+	var jobStatusCmd = &cobra.Command{
+		Use:   "job-status <job-id>",
+		Short: "Get status of an indexing job",
+		Args:  cobra.ExactArgs(1),
+		Run:   runJobStatus,
+	}
+
+	rootCmd.AddCommand(diskIndexCmd, diskDuCmd, diskTreeCmd, serverCmd, jobListCmd, jobStatusCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
@@ -98,8 +124,9 @@ exploring disk utilization (similar to Baobab/WinDirStat).`,
 func runDiskIndex(cmd *cobra.Command, args []string) {
 	target := args[0]
 	log.WithFields(logrus.Fields{
-		"command": "disk-index",
-		"target":  target,
+		"command":  "disk-index",
+		"target":   target,
+		"parallel": parallel,
 	}).Info("Executing command")
 
 	db, err := database.NewDiskDB(dbPath)
@@ -110,10 +137,32 @@ func runDiskIndex(cmd *cobra.Command, args []string) {
 	}
 	defer db.Close()
 
-	if err := crawler.Index(target, db); err != nil {
-		log.WithError(err).Error("Failed to index directory")
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	if parallel {
+		// Use parallel indexing
+		opts := &crawler.ParallelIndexOptions{
+			WorkerCount: workerCount,
+			QueueSize:   queueSize,
+			BatchSize:   batchSize,
+		}
+
+		log.WithFields(logrus.Fields{
+			"workerCount": opts.WorkerCount,
+			"queueSize":   opts.QueueSize,
+			"batchSize":   opts.BatchSize,
+		}).Info("Starting parallel indexing")
+
+		if err := crawler.IndexParallel(target, db, opts); err != nil {
+			log.WithError(err).Error("Failed to index directory")
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		// Use sequential indexing
+		if err := crawler.Index(target, db); err != nil {
+			log.WithError(err).Error("Failed to index directory")
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	log.WithFields(logrus.Fields{
@@ -328,4 +377,113 @@ func runServer(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func runJobList(cmd *cobra.Command, args []string) {
+	log.Info("Listing indexing jobs")
+
+	db, err := database.NewDiskDB(dbPath)
+	if err != nil {
+		log.WithError(err).Error("Failed to open database")
+		fmt.Fprintf(os.Stderr, "Error: Failed to open database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	jobs, err := db.ListIndexJobs(nil, 50)
+	if err != nil {
+		log.WithError(err).Error("Failed to list jobs")
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(jobs) == 0 {
+		fmt.Println("No indexing jobs found")
+		return
+	}
+
+	fmt.Printf("%-5s %-50s %-12s %-8s %-20s\n", "ID", "Path", "Status", "Progress", "Created")
+	fmt.Println("--------------------------------------------------------------------------------")
+
+	for _, job := range jobs {
+		createdAt := time.Unix(job.CreatedAt, 0).Format("2006-01-02 15:04:05")
+		fmt.Printf("%-5d %-50s %-12s %-7d%% %-20s\n",
+			job.ID,
+			truncateString(job.RootPath, 50),
+			job.Status,
+			job.Progress,
+			createdAt,
+		)
+	}
+}
+
+func runJobStatus(cmd *cobra.Command, args []string) {
+	jobIDStr := args[0]
+	jobID, err := parseInt64(jobIDStr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Invalid job ID: %v\n", err)
+		os.Exit(1)
+	}
+
+	log.WithField("jobID", jobID).Info("Getting job status")
+
+	db, err := database.NewDiskDB(dbPath)
+	if err != nil {
+		log.WithError(err).Error("Failed to open database")
+		fmt.Fprintf(os.Stderr, "Error: Failed to open database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	job, err := db.GetIndexJob(jobID)
+	if err != nil {
+		log.WithError(err).Error("Failed to get job")
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if job == nil {
+		fmt.Fprintf(os.Stderr, "Error: Job %d not found\n", jobID)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Job ID: %d\n", job.ID)
+	fmt.Printf("Root Path: %s\n", job.RootPath)
+	fmt.Printf("Status: %s\n", job.Status)
+	fmt.Printf("Progress: %d%%\n", job.Progress)
+	fmt.Printf("Created: %s\n", time.Unix(job.CreatedAt, 0).Format("2006-01-02 15:04:05"))
+
+	if job.StartedAt != nil {
+		fmt.Printf("Started: %s\n", time.Unix(*job.StartedAt, 0).Format("2006-01-02 15:04:05"))
+	}
+
+	if job.CompletedAt != nil {
+		fmt.Printf("Completed: %s\n", time.Unix(*job.CompletedAt, 0).Format("2006-01-02 15:04:05"))
+
+		if job.StartedAt != nil {
+			duration := time.Unix(*job.CompletedAt, 0).Sub(time.Unix(*job.StartedAt, 0))
+			fmt.Printf("Duration: %s\n", duration)
+		}
+	}
+
+	if job.Error != nil {
+		fmt.Printf("Error: %s\n", *job.Error)
+	}
+
+	if job.Metadata != nil {
+		fmt.Printf("\nMetadata:\n%s\n", *job.Metadata)
+	}
+}
+
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}
+
+func parseInt64(s string) (int64, error) {
+	var i int64
+	_, err := fmt.Sscanf(s, "%d", &i)
+	return i, err
 }
