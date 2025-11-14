@@ -20,8 +20,7 @@ This is a complete replatforming of mcp-space-browser from Bun/TypeScript to Go 
 ```
 .
 ├── cmd/
-│   ├── mcp-space-browser/    # CLI application (disk-index, disk-du, disk-tree, server)
-│   └── mcp-server/            # DEPRECATED: Standalone MCP server (use unified server instead)
+│   └── mcp-space-browser/    # CLI application and unified server (REST API + MCP)
 ├── pkg/
 │   ├── logger/                # Structured logging with logrus
 │   ├── database/              # SQLite abstraction layer
@@ -64,8 +63,6 @@ cd mcp-space-browser
 
 # Build the unified CLI and server
 go build -o mcp-space-browser ./cmd/mcp-space-browser
-
-# Note: cmd/mcp-server is deprecated - use the unified server instead
 ```
 
 ## Usage
@@ -181,8 +178,6 @@ These tools are accessible via Claude Desktop, Claude Code, or any other MCP-com
 **Session Tools (2):**
 16. `session-info`: Get session information
 17. `session-set-preferences`: Set session preferences
-
-**Note:** The standalone `cmd/mcp-server` is deprecated. All MCP functionality is now available through the unified server at `http://localhost:3000/mcp` (when running on default port).
 
 ## Configuration
 

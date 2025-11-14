@@ -29,8 +29,6 @@ The Go implementation provides:
 ```bash
 # Build unified CLI and server
 go build -o mcp-space-browser ./cmd/mcp-space-browser
-
-# Note: cmd/mcp-server is deprecated - use unified server instead
 ```
 
 #### Development
@@ -75,8 +73,7 @@ bun test test/agent.test.ts          # Run specific test file
 ```
 .
 ├── cmd/
-│   ├── mcp-space-browser/    # CLI application and unified server
-│   └── mcp-server/            # DEPRECATED: Standalone MCP server
+│   └── mcp-space-browser/    # CLI application and unified server (REST API + MCP)
 ├── pkg/
 │   ├── logger/                # Structured logging (logrus)
 │   ├── database/              # SQLite abstraction
