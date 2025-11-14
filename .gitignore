@@ -140,3 +140,6 @@ vite.config.ts.timestamp-*
 disk.db
 
 .claude/
+
+# Go binaries
+mcp-space-browser
