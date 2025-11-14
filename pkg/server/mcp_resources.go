@@ -21,6 +21,13 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	registerQueriesResource(s, db)
 	registerIndexJobsResource(s, db)
 
+	// Register job queue resources
+	registerJobQueuePendingResource(s, db)
+	registerJobQueueRunningResource(s, db)
+	registerJobQueueCompletedResource(s, db)
+	registerJobQueueFailedResource(s, db)
+	registerJobQueueActiveResource(s, db)
+
 	// Register resource templates
 	registerEntryTemplate(s, db)
 	registerSelectionSetTemplate(s, db)
@@ -138,6 +145,164 @@ func registerIndexJobsResource(s *server.MCPServer, db *database.DiskDB) {
 		data, err := json.MarshalIndent(jobs, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal index jobs: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+// Job Queue Resources
+
+func registerJobQueuePendingResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"disk://jobs/pending",
+		"Pending Jobs",
+		mcp.WithResourceDescription("List of pending indexing jobs waiting to be started"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		status := "pending"
+		jobs, err := db.ListIndexJobs(&status, 100)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch pending jobs: %w", err)
+		}
+
+		data, err := json.MarshalIndent(jobs, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal jobs: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerJobQueueRunningResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"disk://jobs/running",
+		"Running Jobs",
+		mcp.WithResourceDescription("List of currently running indexing jobs"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		status := "running"
+		jobs, err := db.ListIndexJobs(&status, 100)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch running jobs: %w", err)
+		}
+
+		data, err := json.MarshalIndent(jobs, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal jobs: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerJobQueueCompletedResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"disk://jobs/completed",
+		"Completed Jobs",
+		mcp.WithResourceDescription("List of successfully completed indexing jobs"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		status := "completed"
+		jobs, err := db.ListIndexJobs(&status, 100)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch completed jobs: %w", err)
+		}
+
+		data, err := json.MarshalIndent(jobs, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal jobs: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerJobQueueFailedResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"disk://jobs/failed",
+		"Failed Jobs",
+		mcp.WithResourceDescription("List of failed indexing jobs with error details"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		status := "failed"
+		jobs, err := db.ListIndexJobs(&status, 100)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch failed jobs: %w", err)
+		}
+
+		data, err := json.MarshalIndent(jobs, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal jobs: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerJobQueueActiveResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"disk://jobs/active",
+		"Active Jobs",
+		mcp.WithResourceDescription("List of all active jobs (pending, running, and paused)"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Get jobs for each active status
+		allActiveJobs := make([]*database.IndexJob, 0)
+
+		for _, status := range []string{"pending", "running", "paused"} {
+			statusCopy := status
+			jobs, err := db.ListIndexJobs(&statusCopy, 100)
+			if err != nil {
+				return nil, fmt.Errorf("failed to fetch %s jobs: %w", status, err)
+			}
+			allActiveJobs = append(allActiveJobs, jobs...)
+		}
+
+		data, err := json.MarshalIndent(allActiveJobs, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal jobs: %w", err)
 		}
 
 		return []mcp.ResourceContents{
