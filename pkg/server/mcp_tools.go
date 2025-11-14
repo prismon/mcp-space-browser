@@ -1,9 +1,8 @@
-package main
+package server
 
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -13,97 +12,39 @@ import (
 	"github.com/prismon/mcp-space-browser/internal/models"
 	"github.com/prismon/mcp-space-browser/pkg/crawler"
 	"github.com/prismon/mcp-space-browser/pkg/database"
-	"github.com/prismon/mcp-space-browser/pkg/logger"
-	"github.com/sirupsen/logrus"
 )
 
-var (
-	log   *logrus.Entry
-	db    *database.DiskDB
-	dbPath = "disk.db"
-
-	// Server configuration flags
-	host = flag.String("host", "0.0.0.0", "Host address to bind the server to")
-	port = flag.String("port", "8080", "Port to bind the server to")
-)
-
-func init() {
-	log = logger.WithName("mcp")
-}
-
-func main() {
-	// Parse command-line flags
-	flag.Parse()
-
-	// Build server address
-	addr := fmt.Sprintf("%s:%s", *host, *port)
-
-	// Initialize database
-	var err error
-	db, err = database.NewDiskDB(dbPath)
-	if err != nil {
-		log.WithError(err).Fatal("Failed to initialize database")
-	}
-	defer db.Close()
-
-	// Create MCP server
-	s := server.NewMCPServer(
-		"mcp-space-browser",
-		"0.1.0",
-		server.WithToolCapabilities(true),
-	)
-
-	// Register all tools
-	registerTools(s)
-
-	log.WithFields(logrus.Fields{
-		"host": *host,
-		"port": *port,
-		"addr": addr,
-	}).Info("Starting MCP server with streamable HTTP transport")
-
-	// Create streamable HTTP server with stateless mode
-	httpServer := server.NewStreamableHTTPServer(
-		s,
-		server.WithStateLess(true), // Enable stateless mode for simpler session management
-	)
-
-	// Start server (accessible at http://<host>:<port>/mcp)
-	if err := httpServer.Start(addr); err != nil {
-		log.WithError(err).Fatal("Server failed")
-	}
-}
-
-func registerTools(s *server.MCPServer) {
+// registerMCPTools registers all MCP tools with the server
+func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 	// Core disk tools
-	registerDiskIndexTool(s)
-	registerDiskDuTool(s)
-	registerDiskTreeTool(s)
-	registerDiskTimeRangeTool(s)
+	registerDiskIndexTool(s, db)
+	registerDiskDuTool(s, db)
+	registerDiskTreeTool(s, db)
+	registerDiskTimeRangeTool(s, db)
 
 	// Selection set tools
-	registerSelectionSetCreate(s)
-	registerSelectionSetList(s)
-	registerSelectionSetGet(s)
-	registerSelectionSetModify(s)
-	registerSelectionSetDelete(s)
+	registerSelectionSetCreate(s, db)
+	registerSelectionSetList(s, db)
+	registerSelectionSetGet(s, db)
+	registerSelectionSetModify(s, db)
+	registerSelectionSetDelete(s, db)
 
 	// Query tools
-	registerQueryCreate(s)
-	registerQueryExecute(s)
-	registerQueryList(s)
-	registerQueryGet(s)
-	registerQueryUpdate(s)
-	registerQueryDelete(s)
+	registerQueryCreate(s, db)
+	registerQueryExecute(s, db)
+	registerQueryList(s, db)
+	registerQueryGet(s, db)
+	registerQueryUpdate(s, db)
+	registerQueryDelete(s, db)
 
 	// Session tools
-	registerSessionInfo(s)
-	registerSessionSetPreferences(s)
+	registerSessionInfo(s, db, dbPath)
+	registerSessionSetPreferences(s, db)
 }
 
 // Disk Tools
 
-func registerDiskIndexTool(s *server.MCPServer) {
+func registerDiskIndexTool(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("disk-index",
 		mcp.WithDescription("Index the specified path"),
 		mcp.WithString("path",
@@ -121,7 +62,7 @@ func registerDiskIndexTool(s *server.MCPServer) {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		log.WithField("path", args.Path).Info("Executing disk-index")
+		log.WithField("path", args.Path).Info("Executing disk-index via MCP")
 
 		if err := crawler.Index(args.Path, db); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Indexing failed: %v", err)), nil
@@ -131,7 +72,7 @@ func registerDiskIndexTool(s *server.MCPServer) {
 	})
 }
 
-func registerDiskDuTool(s *server.MCPServer) {
+func registerDiskDuTool(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("disk-du",
 		mcp.WithDescription("Get disk usage for a path"),
 		mcp.WithString("path",
@@ -167,7 +108,7 @@ func registerDiskDuTool(s *server.MCPServer) {
 	})
 }
 
-func registerDiskTreeTool(s *server.MCPServer) {
+func registerDiskTreeTool(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("disk-tree",
 		mcp.WithDescription("Return a JSON tree of directories and file sizes"),
 		mcp.WithString("path",
@@ -232,7 +173,7 @@ func registerDiskTreeTool(s *server.MCPServer) {
 	})
 }
 
-func registerDiskTimeRangeTool(s *server.MCPServer) {
+func registerDiskTimeRangeTool(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("disk-time-range",
 		mcp.WithDescription("Find files modified within a date range"),
 		mcp.WithString("startDate",
@@ -275,7 +216,7 @@ func registerDiskTimeRangeTool(s *server.MCPServer) {
 
 // Selection Set Tools
 
-func registerSelectionSetCreate(s *server.MCPServer) {
+func registerSelectionSetCreate(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("selection-set-create",
 		mcp.WithDescription("Create a new selection set"),
 		mcp.WithString("name",
@@ -319,7 +260,7 @@ func registerSelectionSetCreate(s *server.MCPServer) {
 	})
 }
 
-func registerSelectionSetList(s *server.MCPServer) {
+func registerSelectionSetList(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("selection-set-list",
 		mcp.WithDescription("List all selection sets"),
 	)
@@ -339,7 +280,7 @@ func registerSelectionSetList(s *server.MCPServer) {
 	})
 }
 
-func registerSelectionSetGet(s *server.MCPServer) {
+func registerSelectionSetGet(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("selection-set-get",
 		mcp.WithDescription("Get entries in a selection set"),
 		mcp.WithString("name",
@@ -371,7 +312,7 @@ func registerSelectionSetGet(s *server.MCPServer) {
 	})
 }
 
-func registerSelectionSetModify(s *server.MCPServer) {
+func registerSelectionSetModify(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("selection-set-modify",
 		mcp.WithDescription("Add or remove entries from a selection set"),
 		mcp.WithString("name",
@@ -424,7 +365,7 @@ func registerSelectionSetModify(s *server.MCPServer) {
 	})
 }
 
-func registerSelectionSetDelete(s *server.MCPServer) {
+func registerSelectionSetDelete(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("selection-set-delete",
 		mcp.WithDescription("Delete a selection set"),
 		mcp.WithString("name",
@@ -452,7 +393,7 @@ func registerSelectionSetDelete(s *server.MCPServer) {
 
 // Query Tools
 
-func registerQueryCreate(s *server.MCPServer) {
+func registerQueryCreate(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("query-create",
 		mcp.WithDescription("Create a new saved query"),
 		mcp.WithString("name",
@@ -502,7 +443,7 @@ func registerQueryCreate(s *server.MCPServer) {
 	})
 }
 
-func registerQueryExecute(s *server.MCPServer) {
+func registerQueryExecute(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("query-execute",
 		mcp.WithDescription("Execute a saved query"),
 		mcp.WithString("name",
@@ -534,7 +475,7 @@ func registerQueryExecute(s *server.MCPServer) {
 	})
 }
 
-func registerQueryList(s *server.MCPServer) {
+func registerQueryList(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("query-list",
 		mcp.WithDescription("List all saved queries"),
 	)
@@ -554,7 +495,7 @@ func registerQueryList(s *server.MCPServer) {
 	})
 }
 
-func registerQueryGet(s *server.MCPServer) {
+func registerQueryGet(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("query-get",
 		mcp.WithDescription("Get details of a saved query"),
 		mcp.WithString("name",
@@ -590,7 +531,7 @@ func registerQueryGet(s *server.MCPServer) {
 	})
 }
 
-func registerQueryUpdate(s *server.MCPServer) {
+func registerQueryUpdate(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("query-update",
 		mcp.WithDescription("Update a saved query"),
 		mcp.WithString("name",
@@ -640,7 +581,7 @@ func registerQueryUpdate(s *server.MCPServer) {
 	})
 }
 
-func registerQueryDelete(s *server.MCPServer) {
+func registerQueryDelete(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("query-delete",
 		mcp.WithDescription("Delete a saved query"),
 		mcp.WithString("name",
@@ -668,7 +609,7 @@ func registerQueryDelete(s *server.MCPServer) {
 
 // Session Tools
 
-func registerSessionInfo(s *server.MCPServer) {
+func registerSessionInfo(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 	tool := mcp.NewTool("session-info",
 		mcp.WithDescription("Get session information"),
 	)
@@ -689,7 +630,7 @@ func registerSessionInfo(s *server.MCPServer) {
 	})
 }
 
-func registerSessionSetPreferences(s *server.MCPServer) {
+func registerSessionSetPreferences(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("session-set-preferences",
 		mcp.WithDescription("Set session preferences"),
 		mcp.WithString("preferences",

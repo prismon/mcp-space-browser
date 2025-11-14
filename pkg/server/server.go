@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mark3labs/mcp-go/server"
 	"github.com/prismon/mcp-space-browser/pkg/crawler"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
@@ -19,8 +20,8 @@ func init() {
 	log = logger.WithName("server")
 }
 
-// Start starts the HTTP server
-func Start(port int, db *database.DiskDB) error {
+// Start starts the unified HTTP server with both REST API and MCP endpoints
+func Start(port int, db *database.DiskDB, dbPath string) error {
 	// Set gin to release mode in production
 	gin.SetMode(gin.ReleaseMode)
 
@@ -49,7 +50,7 @@ func Start(port int, db *database.DiskDB) error {
 		}).Info("Request completed")
 	})
 
-	// API endpoints
+	// REST API endpoints
 	router.GET("/api/index", func(c *gin.Context) {
 		handleIndex(c, db)
 	})
@@ -58,8 +59,31 @@ func Start(port int, db *database.DiskDB) error {
 		handleTree(c, db)
 	})
 
+	// Create and configure MCP server
+	mcpServer := server.NewMCPServer(
+		"mcp-space-browser",
+		"0.1.0",
+		server.WithToolCapabilities(true),
+	)
+
+	// Register all MCP tools
+	registerMCPTools(mcpServer, db, dbPath)
+
+	// Create streamable HTTP server with stateless mode
+	mcpHTTPServer := server.NewStreamableHTTPServer(
+		mcpServer,
+		server.WithStateLess(true),
+	)
+
+	// Mount MCP endpoint at /mcp using Gin's Any method to handle all HTTP methods
+	router.Any("/mcp", gin.WrapH(mcpHTTPServer))
+
 	addr := fmt.Sprintf(":%d", port)
-	log.WithField("port", port).Info("HTTP server starting")
+	log.WithFields(logrus.Fields{
+		"port":          port,
+		"rest_api":      "/api/*",
+		"mcp_endpoint":  "/mcp",
+	}).Info("Unified HTTP server starting with REST API and MCP support")
 
 	return router.Run(addr)
 }

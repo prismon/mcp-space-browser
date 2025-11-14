@@ -20,13 +20,12 @@ This is a complete replatforming of mcp-space-browser from Bun/TypeScript to Go 
 ```
 .
 ├── cmd/
-│   ├── mcp-space-browser/    # CLI application (disk-index, disk-du, disk-tree, server)
-│   └── mcp-server/            # MCP server with 17 tools
+│   └── mcp-space-browser/    # CLI application and unified server (REST API + MCP)
 ├── pkg/
 │   ├── logger/                # Structured logging with logrus
 │   ├── database/              # SQLite abstraction layer
 │   ├── crawler/               # Filesystem DFS traversal
-│   └── server/                # HTTP REST API server
+│   └── server/                # Unified HTTP server (REST API + MCP)
 ├── internal/
 │   └── models/                # Shared data structures
 └── test/
@@ -43,8 +42,10 @@ This is a complete replatforming of mcp-space-browser from Bun/TypeScript to Go 
    - Query execution and filtering
 3. **Crawler** (`pkg/crawler`): Stack-based DFS filesystem traversal
 4. **CLI** (`cmd/mcp-space-browser`): Command-line interface
-5. **Server** (`pkg/server`): HTTP REST API (Gin framework)
-6. **MCP** (`cmd/mcp-server`): Model Context Protocol server
+5. **Unified Server** (`pkg/server`): Single HTTP server providing:
+   - REST API endpoints (`/api/*`)
+   - MCP protocol endpoint (`/mcp`)
+   - 17 MCP tools for disk space analysis
 
 ## Installation
 
@@ -60,11 +61,8 @@ This is a complete replatforming of mcp-space-browser from Bun/TypeScript to Go 
 git clone https://github.com/prismon/mcp-space-browser.git
 cd mcp-space-browser
 
-# Build the CLI
+# Build the unified CLI and server
 go build -o mcp-space-browser ./cmd/mcp-space-browser
-
-# Build the MCP server
-go build -o mcp-server ./cmd/mcp-server
 ```
 
 ## Usage
@@ -117,42 +115,59 @@ Displays a hierarchical tree view with sizes and modification dates.
 ./mcp-space-browser disk-tree /home/user --sort-by=size --min-date=2024-01-01
 ```
 
-#### 4. Start HTTP Server
+#### 4. Start Unified HTTP Server
 
 ```bash
 ./mcp-space-browser server --port=3000
 ```
 
-Starts an HTTP server with REST API endpoints.
+Starts a unified HTTP server providing both REST API and MCP endpoints.
 
-**Endpoints:**
+**REST API Endpoints:**
 - `GET /api/index?path=<path>`: Trigger indexing
 - `GET /api/tree?path=<path>`: Get tree structure as JSON
 
-### MCP Server
+**MCP Endpoint:**
+- `POST /mcp`: Model Context Protocol endpoint (for Claude and other AI tools)
 
-The MCP server provides 17 tools for disk space analysis through the Model Context Protocol.
+**Example Usage:**
 
 ```bash
-./mcp-server
+# Start the server
+./mcp-space-browser server --port=3000
+
+# Test REST API
+curl "http://localhost:3000/api/index?path=/home/user/projects"
+curl "http://localhost:3000/api/tree?path=/home/user/projects"
+
+# Test MCP endpoint
+curl -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}'
 ```
 
-#### Available MCP Tools
+### MCP Tools
 
-**Core Tools:**
+The unified server exposes 17 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
+
+These tools are accessible via Claude Desktop, Claude Code, or any other MCP-compatible client when the server is running.
+
+#### Available MCP Tools (17 Total)
+
+**Core Tools (4):**
 1. `disk-index`: Index a directory tree
 2. `disk-du`: Get disk usage for a path
 3. `disk-tree`: Get hierarchical tree structure
 4. `disk-time-range`: Find files modified within a date range
 
-**Selection Set Tools:**
+**Selection Set Tools (5):**
 5. `selection-set-create`: Create a named file grouping
 6. `selection-set-list`: List all selection sets
 7. `selection-set-get`: Get entries in a selection set
 8. `selection-set-modify`: Add/remove entries from a set
 9. `selection-set-delete`: Delete a selection set
 
-**Query Tools:**
+**Query Tools (6):**
 10. `query-create`: Create a saved file filter query
 11. `query-execute`: Execute a saved query
 12. `query-list`: List all saved queries
@@ -160,7 +175,7 @@ The MCP server provides 17 tools for disk space analysis through the Model Conte
 14. `query-update`: Update a query
 15. `query-delete`: Delete a query
 
-**Session Tools:**
+**Session Tools (2):**
 16. `session-info`: Get session information
 17. `session-set-preferences`: Set session preferences
 
