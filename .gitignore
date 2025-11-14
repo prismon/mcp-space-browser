@@ -141,5 +141,5 @@ disk.db
 
 .claude/
 
-# Go binaries
+# Go build artifacts
 mcp-space-browser
