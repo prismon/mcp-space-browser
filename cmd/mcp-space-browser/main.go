@@ -362,7 +362,7 @@ func diskTree(db *database.DiskDB, target string, indent string, isRoot bool, op
 }
 
 func runServer(cmd *cobra.Command, args []string) {
-	log.WithField("port", port).Info("Starting HTTP server")
+	log.WithField("port", port).Info("Starting unified HTTP server")
 
 	db, err := database.NewDiskDB(dbPath)
 	if err != nil {
@@ -372,7 +372,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 	defer db.Close()
 
-	if err := server.Start(port, db); err != nil {
+	if err := server.Start(port, db, dbPath); err != nil {
 		log.WithError(err).Error("Server failed")
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
