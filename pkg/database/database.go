@@ -1098,6 +1098,59 @@ func (d *DiskDB) RecordQueryExecution(exec *models.QueryExecution) error {
 	return err
 }
 
+// GetQueryExecutions retrieves executions for a query
+func (d *DiskDB) GetQueryExecutions(queryID int64, limit int) ([]*models.QueryExecution, error) {
+	query := `
+		SELECT id, query_id, executed_at, duration_ms, files_matched, status, error_message
+		FROM query_executions
+		WHERE query_id = ?
+		ORDER BY executed_at DESC
+	`
+
+	args := []interface{}{queryID}
+
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+
+	rows, err := d.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var executions []*models.QueryExecution
+	for rows.Next() {
+		var exec models.QueryExecution
+		var durationMs, filesMatched sql.NullInt64
+		var errorMsg sql.NullString
+
+		if err := rows.Scan(
+			&exec.ID, &exec.QueryID, &exec.ExecutedAt,
+			&durationMs, &filesMatched, &exec.Status, &errorMsg,
+		); err != nil {
+			return nil, err
+		}
+
+		if durationMs.Valid {
+			dm := int(durationMs.Int64)
+			exec.DurationMs = &dm
+		}
+		if filesMatched.Valid {
+			fm := int(filesMatched.Int64)
+			exec.FilesMatched = &fm
+		}
+		if errorMsg.Valid {
+			exec.ErrorMessage = &errorMsg.String
+		}
+
+		executions = append(executions, &exec)
+	}
+
+	return executions, rows.Err()
+}
+
 // DeleteQuery deletes a query
 func (d *DiskDB) DeleteQuery(name string) error {
 	log.WithField("name", name).Info("Deleting query")

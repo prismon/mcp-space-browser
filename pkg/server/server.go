@@ -64,10 +64,14 @@ func Start(port int, db *database.DiskDB, dbPath string) error {
 		"mcp-space-browser",
 		"0.1.0",
 		server.WithToolCapabilities(true),
+		server.WithResourceCapabilities(false, true), // subscribe=false, listChanged=true
 	)
 
 	// Register all MCP tools
 	registerMCPTools(mcpServer, db, dbPath)
+
+	// Register all MCP resources
+	registerMCPResources(mcpServer, db)
 
 	// Create streamable HTTP server with stateless mode
 	mcpHTTPServer := server.NewStreamableHTTPServer(
