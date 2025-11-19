@@ -1,3 +1,26 @@
+// Package server provides the unified HTTP server with REST API and MCP endpoints
+//
+// @title MCP Space Browser API
+// @version 0.1.0
+// @description Disk space indexing agent with REST API and MCP tools for exploring filesystem utilization
+// @description
+// @description This API provides endpoints for indexing filesystems and retrieving hierarchical disk space data.
+// @description The server also exposes MCP (Model Context Protocol) tools at /mcp for advanced disk space analysis.
+//
+// @contact.name API Support
+// @contact.url https://github.com/prismon/mcp-space-browser
+//
+// @license.name MIT
+//
+// @host localhost:3000
+// @BasePath /
+// @schemes http https
+//
+// @tag.name Index
+// @tag.description Filesystem indexing operations
+//
+// @tag.name Tree
+// @tag.description Hierarchical disk space data retrieval
 package server
 
 import (
@@ -12,6 +35,10 @@ import (
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
 	"github.com/sirupsen/logrus"
+	ginSwagger "github.com/swaggo/gin-swagger"
+	swaggerFiles "github.com/swaggo/files"
+
+	_ "github.com/prismon/mcp-space-browser/docs" // Import generated docs
 )
 
 var log *logrus.Entry
@@ -50,6 +77,9 @@ func Start(port int, db *database.DiskDB, dbPath string) error {
 		}).Info("Request completed")
 	})
 
+	// Swagger documentation endpoint
+	router.GET("/docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
 	// REST API endpoints
 	router.GET("/api/index", func(c *gin.Context) {
 		handleIndex(c, db)
@@ -87,11 +117,34 @@ func Start(port int, db *database.DiskDB, dbPath string) error {
 		"port":          port,
 		"rest_api":      "/api/*",
 		"mcp_endpoint":  "/mcp",
-	}).Info("Unified HTTP server starting with REST API and MCP support")
+		"swagger_docs":  "/docs/index.html",
+		"openapi_spec":  "/docs/swagger.json",
+	}).Info("Unified HTTP server starting with REST API, MCP support, and OpenAPI documentation")
 
 	return router.Run(addr)
 }
 
+// IndexResponse represents the response from the index endpoint
+type IndexResponse struct {
+	Message string `json:"message" example:"OK"`
+}
+
+// ErrorResponse represents an error response
+type ErrorResponse struct {
+	Error string `json:"error" example:"path required"`
+}
+
+// handleIndex godoc
+//
+// @Summary Index a filesystem path
+// @Description Triggers asynchronous indexing of the specified filesystem path. The indexing process crawls the directory tree and stores metadata in the database.
+// @Tags Index
+// @Accept json
+// @Produce plain
+// @Param path query string true "Filesystem path to index" example("/home/user/Documents")
+// @Success 200 {string} string "OK"
+// @Failure 400 {string} string "path required"
+// @Router /api/index [get]
 func handleIndex(c *gin.Context, db *database.DiskDB) {
 	path := c.Query("path")
 	if path == "" {
@@ -122,12 +175,28 @@ func handleIndex(c *gin.Context, db *database.DiskDB) {
 	c.String(http.StatusOK, "OK")
 }
 
-type treeNode struct {
-	Path     string      `json:"path"`
-	Size     int64       `json:"size"`
-	Children []*treeNode `json:"children"`
+// TreeNode represents a node in the hierarchical directory tree
+type TreeNode struct {
+	Path     string      `json:"path" example:"/home/user/Documents"`
+	Size     int64       `json:"size" example:"1048576"`
+	Children []*TreeNode `json:"children"`
 }
 
+// Legacy type alias for backwards compatibility
+type treeNode = TreeNode
+
+// handleTree godoc
+//
+// @Summary Get hierarchical directory tree
+// @Description Returns a hierarchical JSON tree structure showing disk space usage for the specified path and all subdirectories
+// @Tags Tree
+// @Accept json
+// @Produce json
+// @Param path query string false "Filesystem path to analyze (defaults to current directory)" example("/home/user/Documents")
+// @Success 200 {object} TreeNode
+// @Failure 400 {string} string "invalid path"
+// @Failure 500 {string} string "failed to build tree"
+// @Router /api/tree [get]
 func handleTree(c *gin.Context, db *database.DiskDB) {
 	path := c.Query("path")
 	if path == "" {

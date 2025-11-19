@@ -1,0 +1,97 @@
+basePath: /
+definitions:
+  pkg_server.TreeNode:
+    properties:
+      children:
+        items:
+          $ref: '#/definitions/pkg_server.TreeNode'
+        type: array
+      path:
+        example: /home/user/Documents
+        type: string
+      size:
+        example: 1048576
+        type: integer
+    type: object
+host: localhost:3000
+info:
+  contact:
+    name: API Support
+    url: https://github.com/prismon/mcp-space-browser
+  description: |-
+    Disk space indexing agent with REST API and MCP tools for exploring filesystem utilization
+
+    This API provides endpoints for indexing filesystems and retrieving hierarchical disk space data.
+    The server also exposes MCP (Model Context Protocol) tools at /mcp for advanced disk space analysis.
+  license:
+    name: MIT
+  title: MCP Space Browser API
+  version: 0.1.0
+paths:
+  /api/index:
+    get:
+      consumes:
+      - application/json
+      description: Triggers asynchronous indexing of the specified filesystem path.
+        The indexing process crawls the directory tree and stores metadata in the
+        database.
+      parameters:
+      - description: Filesystem path to index
+        example: '"/home/user/Documents"'
+        in: query
+        name: path
+        required: true
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "400":
+          description: path required
+          schema:
+            type: string
+      summary: Index a filesystem path
+      tags:
+      - Index
+  /api/tree:
+    get:
+      consumes:
+      - application/json
+      description: Returns a hierarchical JSON tree structure showing disk space usage
+        for the specified path and all subdirectories
+      parameters:
+      - description: Filesystem path to analyze (defaults to current directory)
+        example: '"/home/user/Documents"'
+        in: query
+        name: path
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/pkg_server.TreeNode'
+        "400":
+          description: invalid path
+          schema:
+            type: string
+        "500":
+          description: failed to build tree
+          schema:
+            type: string
+      summary: Get hierarchical directory tree
+      tags:
+      - Tree
+schemes:
+- http
+- https
+swagger: "2.0"
+tags:
+- description: Filesystem indexing operations
+  name: Index
+- description: Hierarchical disk space data retrieval
+  name: Tree

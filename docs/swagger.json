@@ -1,0 +1,137 @@
+{
+    "schemes": [
+        "http",
+        "https"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "Disk space indexing agent with REST API and MCP tools for exploring filesystem utilization\n\nThis API provides endpoints for indexing filesystems and retrieving hierarchical disk space data.\nThe server also exposes MCP (Model Context Protocol) tools at /mcp for advanced disk space analysis.",
+        "title": "MCP Space Browser API",
+        "contact": {
+            "name": "API Support",
+            "url": "https://github.com/prismon/mcp-space-browser"
+        },
+        "license": {
+            "name": "MIT"
+        },
+        "version": "0.1.0"
+    },
+    "host": "localhost:3000",
+    "basePath": "/",
+    "paths": {
+        "/api/index": {
+            "get": {
+                "description": "Triggers asynchronous indexing of the specified filesystem path. The indexing process crawls the directory tree and stores metadata in the database.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "Index"
+                ],
+                "summary": "Index a filesystem path",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "\"/home/user/Documents\"",
+                        "description": "Filesystem path to index",
+                        "name": "path",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "path required",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/tree": {
+            "get": {
+                "description": "Returns a hierarchical JSON tree structure showing disk space usage for the specified path and all subdirectories",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tree"
+                ],
+                "summary": "Get hierarchical directory tree",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "\"/home/user/Documents\"",
+                        "description": "Filesystem path to analyze (defaults to current directory)",
+                        "name": "path",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/pkg_server.TreeNode"
+                        }
+                    },
+                    "400": {
+                        "description": "invalid path",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "failed to build tree",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "pkg_server.TreeNode": {
+            "type": "object",
+            "properties": {
+                "children": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/pkg_server.TreeNode"
+                    }
+                },
+                "path": {
+                    "type": "string",
+                    "example": "/home/user/Documents"
+                },
+                "size": {
+                    "type": "integer",
+                    "example": 1048576
+                }
+            }
+        }
+    },
+    "tags": [
+        {
+            "description": "Filesystem indexing operations",
+            "name": "Index"
+        },
+        {
+            "description": "Hierarchical disk space data retrieval",
+            "name": "Tree"
+        }
+    ]
+}
