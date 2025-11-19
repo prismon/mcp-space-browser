@@ -29,9 +29,15 @@ type IndexStats struct {
 	EndTime              time.Time
 }
 
+// ProgressCallback is a callback function for progress updates during indexing
+// stats: current statistics
+// remaining: number of items remaining in queue
+type ProgressCallback func(stats *IndexStats, remaining int)
+
 // Index performs filesystem indexing using stack-based DFS traversal
 // If jobID is provided (non-zero), it will update job progress in the database
-func Index(root string, db *database.DiskDB, jobID int64) (*IndexStats, error) {
+// If progressCallback is provided, it will be called with progress updates
+func Index(root string, db *database.DiskDB, jobID int64, progressCallback ProgressCallback) (*IndexStats, error) {
 	startTime := time.Now()
 
 	abs, err := filepath.Abs(root)
@@ -169,6 +175,12 @@ func Index(root string, db *database.DiskDB, jobID int64) (*IndexStats, error) {
 				"directoriesProcessed": stats.DirectoriesProcessed,
 				"remaining":            len(stack),
 			}).Info("Index progress")
+
+			// Call progress callback if provided
+			if progressCallback != nil {
+				progressCallback(stats, len(stack))
+			}
+
 			lastProgressLog = now
 		}
 
@@ -210,6 +222,11 @@ func Index(root string, db *database.DiskDB, jobID int64) (*IndexStats, error) {
 		"errors":               stats.Errors,
 		"runID":                runID,
 	}).Info("Filesystem scan complete")
+
+	// Call progress callback after scan complete
+	if progressCallback != nil {
+		progressCallback(stats, 0)
+	}
 
 	log.WithFields(logrus.Fields{
 		"root":  abs,

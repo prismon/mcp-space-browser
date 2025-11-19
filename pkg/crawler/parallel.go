@@ -43,9 +43,10 @@ type ParallelIndexer struct {
 
 // ParallelIndexOptions configures the parallel indexer
 type ParallelIndexOptions struct {
-	WorkerCount int  // Number of parallel workers (default: number of CPUs)
-	QueueSize   int  // Size of job queue (default: 10000)
-	BatchSize   int  // Number of entries to batch before writing to DB (default: 1000)
+	WorkerCount      int               // Number of parallel workers (default: number of CPUs)
+	QueueSize        int               // Size of job queue (default: 10000)
+	BatchSize        int               // Number of entries to batch before writing to DB (default: 1000)
+	ProgressCallback ProgressCallback  // Optional progress callback
 }
 
 // DefaultParallelIndexOptions returns default options
@@ -231,26 +232,37 @@ func (pi *ParallelIndexer) reportProgress(stop chan struct{}) {
 	for {
 		select {
 		case <-ticker.C:
-			stats := pi.pool.Stats()
+			poolStats := pi.pool.Stats()
 			filesProcessed := pi.filesProcessed.Load()
 			directoriesProcessed := pi.directoriesProcessed.Load()
 
 			log.WithFields(logrus.Fields{
 				"filesProcessed":       filesProcessed,
 				"directoriesProcessed": directoriesProcessed,
-				"jobsQueued":           stats.JobsQueued,
-				"jobsProcessed":        stats.JobsProcessed,
-				"jobsFailed":           stats.JobsFailed,
+				"jobsQueued":           poolStats.JobsQueued,
+				"jobsProcessed":        poolStats.JobsProcessed,
+				"jobsFailed":           poolStats.JobsFailed,
 			}).Info("Index progress")
+
+			// Call progress callback if provided
+			if pi.opts.ProgressCallback != nil {
+				indexStats := &IndexStats{
+					FilesProcessed:       int(filesProcessed),
+					DirectoriesProcessed: int(directoriesProcessed),
+					TotalSize:            pi.totalSize.Load(),
+					Errors:               int(pi.errors.Load()),
+				}
+				pi.opts.ProgressCallback(indexStats, int(poolStats.JobsQueued))
+			}
 
 			// Calculate progress based on worker pool activity
 			// Progress is estimated as: (jobs completed / (jobs completed + jobs queued)) * 90
 			// We cap at 90% because final steps (cleanup, aggregation) aren't tracked
 			progress := 10 // Start at 10% (indexing started)
-			totalJobs := stats.JobsProcessed + stats.JobsQueued
+			totalJobs := poolStats.JobsProcessed + poolStats.JobsQueued
 			if totalJobs > 0 {
 				// Progress from 10% to 90% based on job completion
-				completionRatio := float64(stats.JobsProcessed) / float64(totalJobs)
+				completionRatio := float64(poolStats.JobsProcessed) / float64(totalJobs)
 				progress = 10 + int(completionRatio*80)
 			}
 
