@@ -20,10 +20,12 @@ var (
 	log *logrus.Entry
 
 	// Tree command options
-	sortBy    string
-	ascending bool
-	minDate   string
-	maxDate   string
+	sortBy        string
+	ascending     bool
+	minDate       string
+	maxDate       string
+	summaryOffset int
+	summaryLimit  int
 
 	// Server command options
 	port int
@@ -88,6 +90,8 @@ exploring disk utilization (similar to Baobab/WinDirStat).`,
 	diskTreeCmd.Flags().BoolVar(&ascending, "ascending", false, "Sort in ascending order (default: descending)")
 	diskTreeCmd.Flags().StringVar(&minDate, "min-date", "", "Filter files modified after this date (YYYY-MM-DD)")
 	diskTreeCmd.Flags().StringVar(&maxDate, "max-date", "", "Filter files modified before this date (YYYY-MM-DD)")
+	diskTreeCmd.Flags().IntVar(&summaryOffset, "summary-offset", 0, "Offset for paginated summary children (e.g., 50 to see 51st-60th items)")
+	diskTreeCmd.Flags().IntVar(&summaryLimit, "summary-limit", 10, "Limit for summary children per page")
 
 	// server command
 	var serverCmd = &cobra.Command{
@@ -239,10 +243,12 @@ func runDiskDu(cmd *cobra.Command, args []string) {
 }
 
 type treeOptions struct {
-	sortBy    string
-	ascending bool
-	minDate   *time.Time
-	maxDate   *time.Time
+	sortBy        string
+	ascending     bool
+	minDate       *time.Time
+	maxDate       *time.Time
+	summaryOffset int
+	summaryLimit  int
 }
 
 func runDiskTree(cmd *cobra.Command, args []string) {
@@ -261,8 +267,10 @@ func runDiskTree(cmd *cobra.Command, args []string) {
 	defer db.Close()
 
 	opts := &treeOptions{
-		sortBy:    sortBy,
-		ascending: ascending,
+		sortBy:        sortBy,
+		ascending:     ascending,
+		summaryOffset: summaryOffset,
+		summaryLimit:  summaryLimit,
 	}
 
 	if minDate != "" {
@@ -372,9 +380,67 @@ func diskTree(db *database.DiskDB, target string, indent string, isRoot bool, op
 		"childCount": len(children),
 	}).Trace("Processing children for tree")
 
-	for _, child := range children {
-		if err := diskTree(db, child.Path, indent+"  ", false, opts); err != nil {
-			return err
+	// If there are many children, show summary with pagination
+	childThreshold := 100
+	if len(children) > childThreshold {
+		fmt.Printf("%s  [%d children - showing summary]\n", indent, len(children))
+
+		// Calculate summary stats
+		var fileCount, dirCount int
+		var totalSize int64
+		for _, child := range children {
+			totalSize += child.Size
+			if child.Kind == "file" {
+				fileCount++
+			} else {
+				dirCount++
+			}
+		}
+
+		// Sort by size for pagination
+		sort.Slice(children, func(i, j int) bool {
+			return children[i].Size > children[j].Size
+		})
+
+		// Paginate
+		limit := opts.summaryLimit
+		if limit == 0 {
+			limit = 10
+		}
+		offset := opts.summaryOffset
+		start := offset
+		end := offset + limit
+		if start > len(children) {
+			start = len(children)
+		}
+		if end > len(children) {
+			end = len(children)
+		}
+
+		fmt.Printf("%s  Summary: %d files, %d directories, %.2f MB total\n",
+			indent, fileCount, dirCount, float64(totalSize)/(1024*1024))
+		fmt.Printf("%s  Showing items %d-%d (page %d of %d):\n",
+			indent, start+1, end, (offset/limit)+1, (len(children)+limit-1)/limit)
+
+		// Show paginated children
+		for i := start; i < end; i++ {
+			child := children[i]
+			mtimeStr := time.Unix(child.Mtime, 0).Format("2006-01-02")
+			sizeStr := fmt.Sprintf("%.2f MB", float64(child.Size)/(1024*1024))
+			fmt.Printf("%s    %d. %s (%s) [%s] %s\n",
+				indent, i+1, filepath.Base(child.Path), sizeStr, mtimeStr, child.Kind)
+		}
+
+		if end < len(children) {
+			fmt.Printf("%s  ... and %d more items\n", indent, len(children)-end)
+			fmt.Printf("%s  (Use --summary-offset=%d to see next page)\n", indent, end)
+		}
+	} else {
+		// Normal tree traversal for directories with few children
+		for _, child := range children {
+			if err := diskTree(db, child.Path, indent+"  ", false, opts); err != nil {
+				return err
+			}
 		}
 	}
 

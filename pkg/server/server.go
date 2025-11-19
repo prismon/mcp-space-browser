@@ -213,11 +213,16 @@ type treeNode = TreeNode
 // handleTree godoc
 //
 // @Summary Get hierarchical directory tree
-// @Description Returns a hierarchical JSON tree structure showing disk space usage for the specified path and all subdirectories
+// @Description Returns a hierarchical JSON tree structure showing disk space usage for the specified path and all subdirectories. Large directories are automatically summarized. Use summaryOffset and summaryLimit to paginate through summary children.
 // @Tags Tree
 // @Accept json
 // @Produce json
 // @Param path query string false "Filesystem path to analyze (defaults to current directory)" example("/home/user/Documents")
+// @Param maxDepth query int false "Maximum depth to traverse (default: unlimited)"
+// @Param minSize query int64 false "Minimum file size to include in bytes"
+// @Param childThreshold query int false "Summarize directories with more than this many children (default: 100)"
+// @Param summaryOffset query int false "Offset for paginated summary children (e.g., 50 to see 51st-60th items)"
+// @Param summaryLimit query int false "Limit for summary children per page (default: 10)"
 // @Success 200 {object} TreeNode
 // @Failure 400 {string} string "invalid path"
 // @Failure 500 {string} string "failed to build tree"
@@ -235,9 +240,51 @@ func handleTree(c *gin.Context, db *database.DiskDB) {
 		return
 	}
 
+	// Parse query parameters for tree options
+	opts := database.TreeOptions{
+		ChildThreshold: 100, // Default
+		SummaryOffset:  0,
+		SummaryLimit:   10,
+	}
+
+	if maxDepth := c.Query("maxDepth"); maxDepth != "" {
+		var depth int
+		if _, err := fmt.Sscanf(maxDepth, "%d", &depth); err == nil {
+			opts.MaxDepth = depth
+		}
+	}
+
+	if minSize := c.Query("minSize"); minSize != "" {
+		var size int64
+		if _, err := fmt.Sscanf(minSize, "%d", &size); err == nil {
+			opts.MinSize = size
+		}
+	}
+
+	if childThreshold := c.Query("childThreshold"); childThreshold != "" {
+		var threshold int
+		if _, err := fmt.Sscanf(childThreshold, "%d", &threshold); err == nil {
+			opts.ChildThreshold = threshold
+		}
+	}
+
+	if summaryOffset := c.Query("summaryOffset"); summaryOffset != "" {
+		var offset int
+		if _, err := fmt.Sscanf(summaryOffset, "%d", &offset); err == nil {
+			opts.SummaryOffset = offset
+		}
+	}
+
+	if summaryLimit := c.Query("summaryLimit"); summaryLimit != "" {
+		var limit int
+		if _, err := fmt.Sscanf(summaryLimit, "%d", &limit); err == nil {
+			opts.SummaryLimit = limit
+		}
+	}
+
 	log.WithField("path", abs).Debug("Building tree structure")
 
-	tree, err := buildTree(db, abs, 0)
+	tree, err := db.GetTreeWithOptions(c.Request.Context(), abs, opts)
 	if err != nil {
 		log.WithError(err).Error("Failed to build tree")
 		c.String(http.StatusInternalServerError, "failed to build tree")

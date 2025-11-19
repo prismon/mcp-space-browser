@@ -237,6 +237,12 @@ func registerDiskTreeTool(s *server.MCPServer, db *database.DiskDB) {
 		mcp.WithNumber("childThreshold",
 			mcp.Description("Summarize directories with more than this many children (default: 100)"),
 		),
+		mcp.WithNumber("summaryOffset",
+			mcp.Description("Offset for paginated summary children - use to view items beyond the first page (e.g., 50 to see 51st-60th items)"),
+		),
+		mcp.WithNumber("summaryLimit",
+			mcp.Description("Limit for summary children per page (default: 10)"),
+		),
 	)
 
 	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -250,6 +256,8 @@ func registerDiskTreeTool(s *server.MCPServer, db *database.DiskDB) {
 			MinDate        *string `json:"minDate,omitempty"`
 			MaxDate        *string `json:"maxDate,omitempty"`
 			ChildThreshold *int    `json:"childThreshold,omitempty"`
+			SummaryOffset  *int    `json:"summaryOffset,omitempty"`
+			SummaryLimit   *int    `json:"summaryLimit,omitempty"`
 		}
 
 		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
@@ -276,6 +284,8 @@ func registerDiskTreeTool(s *server.MCPServer, db *database.DiskDB) {
 			DescendingSort: getBoolOrDefault(args.DescendingSort, true),
 			ChildThreshold: getIntOrDefault(args.ChildThreshold, 100), // Summarize dirs with >100 children
 			NodesReturned:  new(int),
+			SummaryOffset:  getIntOrDefault(args.SummaryOffset, 0),    // Default to first page
+			SummaryLimit:   getIntOrDefault(args.SummaryLimit, 10),    // Default to 10 items per page
 		}
 
 		// Parse date filters

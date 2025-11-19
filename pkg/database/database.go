@@ -440,6 +440,9 @@ type TreeOptions struct {
 	MaxDate        *time.Time // Filter files modified before this date
 	ChildThreshold int        // When to summarize (default: 100)
 	NodesReturned  *int       // Track total nodes returned
+	// Pagination for summary children
+	SummaryOffset int // Offset for summary children (0-indexed)
+	SummaryLimit  int // Limit for summary children (0 = use default of 10)
 }
 
 // GetTree builds a tree structure starting from a root path
@@ -506,7 +509,7 @@ func (d *DiskDB) GetTreeWithOptions(ctx context.Context, root string, opts TreeO
 
 		// Check if we should summarize this directory
 		if len(children) > opts.ChildThreshold {
-			node.Summary = d.createDirectorySummary(children, opts.ChildThreshold)
+			node.Summary = d.createDirectorySummary(children, opts)
 			node.Truncated = true
 			// Keep only top N largest children for detailed view
 			children = d.getLargestN(children, 10)
@@ -572,7 +575,12 @@ func (d *DiskDB) createSummaryNode(root string) (*models.TreeNode, error) {
 	if entry.Kind == "directory" {
 		children, err := d.Children(entry.Path)
 		if err == nil && len(children) > 0 {
-			node.Summary = d.createDirectorySummary(children, 10)
+			// Use default options for summary-only nodes
+			defaultOpts := TreeOptions{
+				ChildThreshold: 100,
+				SummaryLimit:   10,
+			}
+			node.Summary = d.createDirectorySummary(children, defaultOpts)
 		}
 	}
 
@@ -607,10 +615,12 @@ func (d *DiskDB) filterChildren(children []*models.Entry, opts TreeOptions) []*m
 	return filtered
 }
 
-// createDirectorySummary creates aggregate statistics for a directory
-func (d *DiskDB) createDirectorySummary(children []*models.Entry, topN int) *models.TreeSummary {
+// createDirectorySummary creates aggregate statistics for a directory with pagination support
+func (d *DiskDB) createDirectorySummary(children []*models.Entry, opts TreeOptions) *models.TreeSummary {
+	totalChildren := len(children)
+
 	summary := &models.TreeSummary{
-		TotalChildren:  len(children),
+		TotalChildren:  totalChildren,
 		FileCount:      0,
 		DirectoryCount: 0,
 		TotalSize:      0,
@@ -625,10 +635,40 @@ func (d *DiskDB) createDirectorySummary(children []*models.Entry, topN int) *mod
 		}
 	}
 
-	// Get top N largest children
-	largest := d.getLargestN(children, topN)
-	summary.LargestChildren = make([]*models.SimplifiedNode, len(largest))
-	for i, entry := range largest {
+	// Sort children by size (descending) for pagination
+	sorted := make([]*models.Entry, len(children))
+	copy(sorted, children)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Size > sorted[j].Size
+	})
+
+	// Determine pagination parameters
+	limit := opts.SummaryLimit
+	if limit == 0 {
+		limit = 10 // Default limit
+	}
+	offset := opts.SummaryOffset
+
+	// Calculate pagination metadata
+	summary.Offset = offset
+	summary.Limit = limit
+	summary.TotalPages = (totalChildren + limit - 1) / limit // Ceiling division
+	summary.CurrentPage = (offset / limit) + 1
+	summary.HasMore = (offset + limit) < totalChildren
+
+	// Get paginated slice of children
+	start := offset
+	end := offset + limit
+	if start > totalChildren {
+		start = totalChildren
+	}
+	if end > totalChildren {
+		end = totalChildren
+	}
+
+	paginated := sorted[start:end]
+	summary.LargestChildren = make([]*models.SimplifiedNode, len(paginated))
+	for i, entry := range paginated {
 		summary.LargestChildren[i] = &models.SimplifiedNode{
 			Name:  filepath.Base(entry.Path),
 			Path:  entry.Path,

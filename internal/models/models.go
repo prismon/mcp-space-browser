@@ -103,6 +103,12 @@ type TreeSummary struct {
 	DirectoryCount  int               `json:"directory_count"`
 	TotalSize       int64             `json:"total_size"`
 	LargestChildren []*SimplifiedNode `json:"largest_children,omitempty"` // Top N largest children
+	// Pagination metadata
+	Offset      int  `json:"offset,omitempty"`       // Starting index of children shown
+	Limit       int  `json:"limit,omitempty"`        // Max children shown in this page
+	HasMore     bool `json:"has_more,omitempty"`     // Whether there are more children beyond this page
+	TotalPages  int  `json:"total_pages,omitempty"`  // Total pages available
+	CurrentPage int  `json:"current_page,omitempty"` // Current page number (1-indexed)
 }
 
 // SimplifiedNode represents a lightweight node for summaries
