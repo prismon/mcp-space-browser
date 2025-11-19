@@ -208,7 +208,7 @@ func registerDiskDuTool(s *server.MCPServer, db *database.DiskDB) {
 
 func registerDiskTreeTool(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("disk-tree",
-		mcp.WithDescription("Return a JSON tree of directories and file sizes. Large directories are automatically summarized to prevent performance issues."),
+		mcp.WithDescription("Return a JSON tree of directories and file sizes. Large directories are automatically summarized. Response size is limited to 500KB - if exceeded, an error with suggestions is returned."),
 		mcp.WithString("path",
 			mcp.Required(),
 			mcp.Description("File or directory path"),
@@ -316,6 +316,39 @@ func registerDiskTreeTool(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal tree: %v", err)), nil
 		}
 
+		// Check response size to prevent blowing up Claude's context window
+		// Maximum 500KB response size
+		maxResponseSize := 512000 // 500KB in bytes
+		if len(treeJSON) > maxResponseSize {
+			// Calculate how much we exceeded the limit
+			sizeKB := len(treeJSON) / 1024
+			maxKB := maxResponseSize / 1024
+
+			// Create a helpful error message with suggestions
+			errorMsg := fmt.Sprintf(
+				"Response size too large (%d KB exceeds %d KB limit).\n\n"+
+					"The directory tree is too large to return in a single response.\n\n"+
+					"Current parameters:\n"+
+					"- maxDepth: %d\n"+
+					"- limit: %d\n"+
+					"- childThreshold: %d\n\n"+
+					"Suggestions to reduce response size:\n"+
+					"1. Reduce maxDepth (try 2-3 for large directories)\n"+
+					"2. Reduce limit (try 100-500 for initial exploration)\n"+
+					"3. Increase childThreshold (try 50 to trigger more summarization)\n"+
+					"4. Add minSize filter to skip small files\n"+
+					"5. Query a more specific subdirectory\n"+
+					"6. Use date filters (minDate/maxDate) to narrow results\n\n"+
+					"Example:\n"+
+					"  {\"path\": \"%s\", \"maxDepth\": 3, \"limit\": 200, \"childThreshold\": 50}",
+				sizeKB, maxKB,
+				opts.MaxDepth, *opts.Limit, opts.ChildThreshold,
+				args.Path,
+			)
+
+			return mcp.NewToolResultError(errorMsg), nil
+		}
+
 		return mcp.NewToolResultText(string(treeJSON)), nil
 	})
 }
@@ -355,6 +388,35 @@ func registerDiskTimeRangeTool(s *server.MCPServer, db *database.DiskDB) {
 		result, err := json.Marshal(entries)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal results: %v", err)), nil
+		}
+
+		// Check response size to prevent blowing up Claude's context window
+		maxResponseSize := 512000 // 500KB in bytes
+		if len(result) > maxResponseSize {
+			sizeKB := len(result) / 1024
+			maxKB := maxResponseSize / 1024
+			entryCount := len(entries)
+
+			// Return summary instead of full data
+			errorMsg := fmt.Sprintf(
+				"Response size too large (%d KB exceeds %d KB limit).\n\n"+
+					"Found %d entries matching the time range.\n"+
+					"The result set is too large to return in a single response.\n\n"+
+					"Suggestions:\n"+
+					"1. Narrow the date range\n"+
+					"2. Specify a more specific path to search within\n"+
+					"3. Use a saved query with additional filters (minSize, file patterns)\n"+
+					"4. Create a selection set and paginate through results\n\n"+
+					"Summary of results:\n"+
+					"- Total entries: %d\n"+
+					"- Date range: %s to %s\n"+
+					"- Search path: %s",
+				sizeKB, maxKB, entryCount, entryCount,
+				args.StartDate, args.EndDate,
+				getStringOrDefault(args.Path, "(all paths)"),
+			)
+
+			return mcp.NewToolResultError(errorMsg), nil
 		}
 
 		return mcp.NewToolResultText(string(result)), nil
@@ -453,6 +515,31 @@ func registerSelectionSetGet(s *server.MCPServer, db *database.DiskDB) {
 		result, err := json.Marshal(entries)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal results: %v", err)), nil
+		}
+
+		// Check response size to prevent blowing up Claude's context window
+		maxResponseSize := 512000 // 500KB in bytes
+		if len(result) > maxResponseSize {
+			sizeKB := len(result) / 1024
+			maxKB := maxResponseSize / 1024
+			entryCount := len(entries)
+
+			errorMsg := fmt.Sprintf(
+				"Response size too large (%d KB exceeds %d KB limit).\n\n"+
+					"Selection set '%s' contains %d entries.\n"+
+					"The result set is too large to return in a single response.\n\n"+
+					"Suggestions:\n"+
+					"1. Split the selection set into smaller subsets\n"+
+					"2. Use a query with additional filters to narrow results\n"+
+					"3. Process entries in smaller batches\n\n"+
+					"Summary:\n"+
+					"- Selection set: %s\n"+
+					"- Total entries: %d",
+				sizeKB, maxKB, args.Name, entryCount,
+				args.Name, entryCount,
+			)
+
+			return mcp.NewToolResultError(errorMsg), nil
 		}
 
 		return mcp.NewToolResultText(string(result)), nil
@@ -616,6 +703,32 @@ func registerQueryExecute(s *server.MCPServer, db *database.DiskDB) {
 		result, err := json.Marshal(entries)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal results: %v", err)), nil
+		}
+
+		// Check response size to prevent blowing up Claude's context window
+		maxResponseSize := 512000 // 500KB in bytes
+		if len(result) > maxResponseSize {
+			sizeKB := len(result) / 1024
+			maxKB := maxResponseSize / 1024
+			entryCount := len(entries)
+
+			errorMsg := fmt.Sprintf(
+				"Response size too large (%d KB exceeds %d KB limit).\n\n"+
+					"Query '%s' returned %d entries.\n"+
+					"The result set is too large to return in a single response.\n\n"+
+					"Suggestions:\n"+
+					"1. Update the query to add more restrictive filters (minSize, date range)\n"+
+					"2. Narrow the search path\n"+
+					"3. Create a selection set and process results in batches\n"+
+					"4. Use the disk-tree tool with appropriate limits for hierarchical exploration\n\n"+
+					"Summary:\n"+
+					"- Query: %s\n"+
+					"- Total entries: %d",
+				sizeKB, maxKB, args.Name, entryCount,
+				args.Name, entryCount,
+			)
+
+			return mcp.NewToolResultError(errorMsg), nil
 		}
 
 		return mcp.NewToolResultText(string(result)), nil
