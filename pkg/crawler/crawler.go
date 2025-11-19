@@ -18,11 +18,24 @@ func init() {
 	log = logger.WithName("crawler")
 }
 
+// IndexStats contains statistics about an indexing operation
+type IndexStats struct {
+	FilesProcessed       int
+	DirectoriesProcessed int
+	TotalSize            int64
+	Errors               int
+	Duration             time.Duration
+	StartTime            time.Time
+	EndTime              time.Time
+}
+
 // Index performs filesystem indexing using stack-based DFS traversal
-func Index(root string, db *database.DiskDB) error {
+func Index(root string, db *database.DiskDB) (*IndexStats, error) {
+	startTime := time.Now()
+
 	abs, err := filepath.Abs(root)
 	if err != nil {
-		return fmt.Errorf("failed to resolve absolute path: %w", err)
+		return nil, fmt.Errorf("failed to resolve absolute path: %w", err)
 	}
 
 	runID := time.Now().Unix()
@@ -33,15 +46,14 @@ func Index(root string, db *database.DiskDB) error {
 		"runID": runID,
 	}).Info("Starting filesystem index")
 
-	filesProcessed := 0
-	directoriesProcessed := 0
-	var totalSize int64
-	errors := 0
+	stats := &IndexStats{
+		StartTime: startTime,
+	}
 	lastProgressLog := time.Now()
 
 	// Begin transaction for better performance
 	if err := db.BeginTransaction(); err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
 	defer func() {
@@ -65,7 +77,7 @@ func Index(root string, db *database.DiskDB) error {
 
 		info, err := os.Stat(current)
 		if err != nil {
-			errors++
+			stats.Errors++
 			log.WithFields(logrus.Fields{
 				"path":  current,
 				"error": err,
@@ -99,7 +111,7 @@ func Index(root string, db *database.DiskDB) error {
 		}
 
 		if err := db.InsertOrUpdate(entry); err != nil {
-			errors++
+			stats.Errors++
 			log.WithFields(logrus.Fields{
 				"path":  current,
 				"error": err,
@@ -108,7 +120,7 @@ func Index(root string, db *database.DiskDB) error {
 		}
 
 		if isDir {
-			directoriesProcessed++
+			stats.DirectoriesProcessed++
 
 			if logger.IsLevelEnabled(logrus.DebugLevel) {
 				log.WithField("path", current).Debug("Scanning directory")
@@ -116,7 +128,7 @@ func Index(root string, db *database.DiskDB) error {
 
 			children, err := os.ReadDir(current)
 			if err != nil {
-				errors++
+				stats.Errors++
 				log.WithFields(logrus.Fields{
 					"path":  current,
 					"error": err,
@@ -135,8 +147,8 @@ func Index(root string, db *database.DiskDB) error {
 				stack = append(stack, filepath.Join(current, child.Name()))
 			}
 		} else {
-			filesProcessed++
-			totalSize += info.Size()
+			stats.FilesProcessed++
+			stats.TotalSize += info.Size()
 
 			if logger.IsLevelEnabled(logrus.TraceLevel) {
 				log.WithFields(logrus.Fields{
@@ -150,9 +162,9 @@ func Index(root string, db *database.DiskDB) error {
 		now := time.Now()
 		if now.Sub(lastProgressLog) > 5*time.Second {
 			log.WithFields(logrus.Fields{
-				"filesProcessed": filesProcessed,
-				"directoriesProcessed": directoriesProcessed,
-				"remaining":      len(stack),
+				"filesProcessed":       stats.FilesProcessed,
+				"directoriesProcessed": stats.DirectoriesProcessed,
+				"remaining":            len(stack),
 			}).Info("Index progress")
 			lastProgressLog = now
 		}
@@ -161,15 +173,15 @@ func Index(root string, db *database.DiskDB) error {
 	// Commit the transaction
 	if err := db.CommitTransaction(); err != nil {
 		db.RollbackTransaction()
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	log.WithFields(logrus.Fields{
 		"root":                 abs,
-		"filesProcessed":       filesProcessed,
-		"directoriesProcessed": directoriesProcessed,
-		"totalSize":            totalSize,
-		"errors":               errors,
+		"filesProcessed":       stats.FilesProcessed,
+		"directoriesProcessed": stats.DirectoriesProcessed,
+		"totalSize":            stats.TotalSize,
+		"errors":               stats.Errors,
 		"runID":                runID,
 	}).Info("Filesystem scan complete")
 
@@ -179,16 +191,22 @@ func Index(root string, db *database.DiskDB) error {
 	}).Debug("Deleting stale entries")
 
 	if err := db.DeleteStale(abs, runID); err != nil {
-		return fmt.Errorf("failed to delete stale entries: %w", err)
+		return nil, fmt.Errorf("failed to delete stale entries: %w", err)
 	}
 
 	log.WithField("root", abs).Debug("Computing aggregate sizes")
 
 	if err := db.ComputeAggregates(abs); err != nil {
-		return fmt.Errorf("failed to compute aggregates: %w", err)
+		return nil, fmt.Errorf("failed to compute aggregates: %w", err)
 	}
 
-	log.WithField("root", abs).Info("Index operation complete")
+	stats.EndTime = time.Now()
+	stats.Duration = stats.EndTime.Sub(stats.StartTime)
 
-	return nil
+	log.WithFields(logrus.Fields{
+		"root":     abs,
+		"duration": stats.Duration,
+	}).Info("Index operation complete")
+
+	return stats, nil
 }

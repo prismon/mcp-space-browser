@@ -57,14 +57,16 @@ func DefaultParallelIndexOptions() *ParallelIndexOptions {
 }
 
 // IndexParallel performs filesystem indexing using parallel workers
-func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions) error {
+func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions) (*IndexStats, error) {
+	startTime := time.Now()
+
 	if opts == nil {
 		opts = DefaultParallelIndexOptions()
 	}
 
 	abs, err := filepath.Abs(root)
 	if err != nil {
-		return fmt.Errorf("failed to resolve absolute path: %w", err)
+		return nil, fmt.Errorf("failed to resolve absolute path: %w", err)
 	}
 
 	runID := time.Now().Unix()
@@ -74,11 +76,11 @@ func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions)
 		WorkerCount: opts.WorkerCount,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create index job: %w", err)
+		return nil, fmt.Errorf("failed to create index job: %w", err)
 	}
 
 	if err := db.StartIndexJob(jobID); err != nil {
-		return fmt.Errorf("failed to start index job: %w", err)
+		return nil, fmt.Errorf("failed to start index job: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -114,7 +116,7 @@ func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions)
 
 	// Begin database transaction
 	if err := db.BeginTransaction(); err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
 	defer func() {
@@ -132,7 +134,7 @@ func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions)
 
 	if err := indexer.pool.Submit(rootJob); err != nil {
 		db.RollbackTransaction()
-		return fmt.Errorf("failed to submit root job: %w", err)
+		return nil, fmt.Errorf("failed to submit root job: %w", err)
 	}
 
 	// Wait for all jobs to complete
@@ -144,13 +146,13 @@ func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions)
 	// Flush remaining batch
 	if err := indexer.flushBatch(); err != nil {
 		db.RollbackTransaction()
-		return fmt.Errorf("failed to flush batch: %w", err)
+		return nil, fmt.Errorf("failed to flush batch: %w", err)
 	}
 
 	// Commit transaction
 	if err := db.CommitTransaction(); err != nil {
 		db.RollbackTransaction()
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	filesProcessed := indexer.filesProcessed.Load()
@@ -185,14 +187,14 @@ func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions)
 
 	if err := db.DeleteStale(abs, runID); err != nil {
 		db.UpdateIndexJobStatus(jobID, "failed", stringPtr(err.Error()))
-		return fmt.Errorf("failed to delete stale entries: %w", err)
+		return nil, fmt.Errorf("failed to delete stale entries: %w", err)
 	}
 
 	log.WithField("root", abs).Debug("Computing aggregate sizes")
 
 	if err := db.ComputeAggregates(abs); err != nil {
 		db.UpdateIndexJobStatus(jobID, "failed", stringPtr(err.Error()))
-		return fmt.Errorf("failed to compute aggregates: %w", err)
+		return nil, fmt.Errorf("failed to compute aggregates: %w", err)
 	}
 
 	// Mark job as completed
@@ -200,9 +202,23 @@ func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions)
 		log.WithError(err).Error("Failed to update job status")
 	}
 
-	log.WithField("root", abs).Info("Index operation complete")
+	endTime := time.Now()
+	stats := &IndexStats{
+		FilesProcessed:       int(filesProcessed),
+		DirectoriesProcessed: int(directoriesProcessed),
+		TotalSize:            totalSize,
+		Errors:               int(errorCount),
+		Duration:             endTime.Sub(startTime),
+		StartTime:            startTime,
+		EndTime:              endTime,
+	}
 
-	return nil
+	log.WithFields(logrus.Fields{
+		"root":     abs,
+		"duration": stats.Duration,
+	}).Info("Index operation complete")
+
+	return stats, nil
 }
 
 // reportProgress periodically reports indexing progress
