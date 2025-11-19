@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -42,6 +43,250 @@ func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 	// Session tools
 	registerSessionInfo(s, db, dbPath)
 	registerSessionSetPreferences(s, db)
+}
+
+// Tree compression utilities
+
+// compressTree progressively compresses a tree until it fits within the size limit
+func compressTree(tree *models.TreeNode, maxSizeBytes int) (*models.TreeNode, bool) {
+	// Check current size
+	currentJSON, err := json.Marshal(tree)
+	if err != nil {
+		return tree, false
+	}
+
+	if len(currentJSON) <= maxSizeBytes {
+		return tree, false // No compression needed
+	}
+
+	// Create a working copy
+	compressed := tree
+	compressionLevels := []int{20, 10, 5, 3, 1} // Progressive limits for children to keep
+
+	for _, keepLimit := range compressionLevels {
+		compressed = compressTreeRecursive(compressed, keepLimit, 0, 5) // Start at depth 0, compress beyond depth 5
+
+		// Check if we're now under the limit
+		testJSON, err := json.Marshal(compressed)
+		if err != nil {
+			continue
+		}
+
+		if len(testJSON) <= maxSizeBytes {
+			log.WithFields(logrus.Fields{
+				"originalSize": len(currentJSON),
+				"compressedSize": len(testJSON),
+				"keepLimit": keepLimit,
+			}).Info("Successfully compressed tree to fit size limit")
+			return compressed, true
+		}
+	}
+
+	// If still too large, do aggressive compression - keep only root with summary
+	compressed = compressToSummaryOnly(tree)
+	return compressed, true
+}
+
+// compressTreeRecursive recursively compresses a tree by limiting children at each level
+func compressTreeRecursive(node *models.TreeNode, keepLimit int, currentDepth int, compressAfterDepth int) *models.TreeNode {
+	if node == nil {
+		return nil
+	}
+
+	// Create a new node to avoid modifying the original
+	newNode := &models.TreeNode{
+		Name:      node.Name,
+		Path:      node.Path,
+		Size:      node.Size,
+		Kind:      node.Kind,
+		Mtime:     node.Mtime,
+		Truncated: node.Truncated,
+		Summary:   node.Summary,
+	}
+
+	// If this is a file or has no children, return as-is
+	if node.Kind == "file" || len(node.Children) == 0 {
+		return newNode
+	}
+
+	// If we're past the compression depth, summarize
+	if currentDepth >= compressAfterDepth {
+		newNode.Truncated = true
+		newNode.Summary = createSummaryFromChildren(node.Children, keepLimit)
+		newNode.Children = nil
+		return newNode
+	}
+
+	// Otherwise, keep limited children and recurse
+	sortedChildren := make([]*models.TreeNode, len(node.Children))
+	copy(sortedChildren, node.Children)
+
+	// Sort by size (largest first)
+	sort.Slice(sortedChildren, func(i, j int) bool {
+		return sortedChildren[i].Size > sortedChildren[j].Size
+	})
+
+	// Keep only top N children
+	childrenToKeep := keepLimit
+	if len(sortedChildren) < childrenToKeep {
+		childrenToKeep = len(sortedChildren)
+	}
+
+	newNode.Children = make([]*models.TreeNode, 0, childrenToKeep)
+	for i := 0; i < childrenToKeep; i++ {
+		compressed := compressTreeRecursive(sortedChildren[i], keepLimit, currentDepth+1, compressAfterDepth)
+		newNode.Children = append(newNode.Children, compressed)
+	}
+
+	// If we truncated children, add summary
+	if len(sortedChildren) > childrenToKeep {
+		newNode.Truncated = true
+		newNode.Summary = createSummaryFromChildren(node.Children, keepLimit)
+	}
+
+	return newNode
+}
+
+// compressToSummaryOnly creates a minimal tree with just the root and summary stats
+func compressToSummaryOnly(node *models.TreeNode) *models.TreeNode {
+	if node == nil {
+		return nil
+	}
+
+	return &models.TreeNode{
+		Name:      node.Name,
+		Path:      node.Path,
+		Size:      node.Size,
+		Kind:      node.Kind,
+		Mtime:     node.Mtime,
+		Truncated: true,
+		Summary:   createSummaryFromChildren(node.Children, 10),
+		Children:  nil,
+	}
+}
+
+// createSummaryFromChildren creates a TreeSummary from a list of children
+func createSummaryFromChildren(children []*models.TreeNode, topN int) *models.TreeSummary {
+	if len(children) == 0 {
+		return &models.TreeSummary{
+			TotalChildren:   0,
+			FileCount:       0,
+			DirectoryCount:  0,
+			TotalSize:       0,
+			LargestChildren: []*models.SimplifiedNode{},
+		}
+	}
+
+	summary := &models.TreeSummary{
+		TotalChildren: len(children),
+		FileCount:     0,
+		DirectoryCount: 0,
+		TotalSize:     0,
+	}
+
+	// Count files and directories
+	for _, child := range children {
+		if child.Kind == "file" {
+			summary.FileCount++
+		} else {
+			summary.DirectoryCount++
+		}
+		summary.TotalSize += child.Size
+	}
+
+	// Get top N largest children
+	sortedChildren := make([]*models.TreeNode, len(children))
+	copy(sortedChildren, children)
+	sort.Slice(sortedChildren, func(i, j int) bool {
+		return sortedChildren[i].Size > sortedChildren[j].Size
+	})
+
+	keepCount := topN
+	if len(sortedChildren) < keepCount {
+		keepCount = len(sortedChildren)
+	}
+
+	summary.LargestChildren = make([]*models.SimplifiedNode, keepCount)
+	for i := 0; i < keepCount; i++ {
+		summary.LargestChildren[i] = &models.SimplifiedNode{
+			Name:  sortedChildren[i].Name,
+			Path:  sortedChildren[i].Path,
+			Size:  sortedChildren[i].Size,
+			Kind:  sortedChildren[i].Kind,
+			Mtime: sortedChildren[i].Mtime,
+		}
+	}
+
+	return summary
+}
+
+// compressEntryList creates a summary response for large entry lists
+func compressEntryList(entries []*models.Entry, maxSizeBytes int, contextInfo string) (string, error) {
+	// Try full list first
+	fullJSON, err := json.Marshal(entries)
+	if err != nil {
+		return "", err
+	}
+
+	if len(fullJSON) <= maxSizeBytes {
+		return string(fullJSON), nil
+	}
+
+	// Create a summary response
+	sortedEntries := make([]*models.Entry, len(entries))
+	copy(sortedEntries, entries)
+
+	// Sort by size (largest first)
+	sort.Slice(sortedEntries, func(i, j int) bool {
+		return sortedEntries[i].Size > sortedEntries[j].Size
+	})
+
+	// Calculate statistics
+	var totalSize int64
+	fileCount := 0
+	dirCount := 0
+	for _, entry := range entries {
+		totalSize += entry.Size
+		if entry.Kind == "file" {
+			fileCount++
+		} else {
+			dirCount++
+		}
+	}
+
+	// Create summary with top entries
+	topN := 50 // Keep top 50 largest entries
+	if len(sortedEntries) < topN {
+		topN = len(sortedEntries)
+	}
+
+	summary := map[string]interface{}{
+		"_compressed": true,
+		"_note":       fmt.Sprintf("Result set was too large (%d KB). Showing summary with top %d entries by size.", len(fullJSON)/1024, topN),
+		"context":     contextInfo,
+		"statistics": map[string]interface{}{
+			"total_entries":    len(entries),
+			"total_files":      fileCount,
+			"total_directories": dirCount,
+			"total_size":       totalSize,
+			"total_size_mb":    float64(totalSize) / (1024 * 1024),
+		},
+		"top_entries": sortedEntries[:topN],
+	}
+
+	summaryJSON, err := json.Marshal(summary)
+	if err != nil {
+		return "", err
+	}
+
+	log.WithFields(logrus.Fields{
+		"originalSize":   len(fullJSON),
+		"compressedSize": len(summaryJSON),
+		"totalEntries":   len(entries),
+		"keptEntries":    topN,
+	}).Info("Compressed entry list to fit size limit")
+
+	return string(summaryJSON), nil
 }
 
 // Disk Tools
@@ -208,7 +453,7 @@ func registerDiskDuTool(s *server.MCPServer, db *database.DiskDB) {
 
 func registerDiskTreeTool(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("disk-tree",
-		mcp.WithDescription("Return a JSON tree of directories and file sizes. Large directories are automatically summarized. Response size is limited to 500KB - if exceeded, an error with suggestions is returned."),
+		mcp.WithDescription("Return a JSON tree of directories and file sizes. Large directories are automatically summarized. Trees exceeding 500KB are automatically compressed while preserving the most important information (largest files/dirs)."),
 		mcp.WithString("path",
 			mcp.Required(),
 			mcp.Description("File or directory path"),
@@ -311,42 +556,25 @@ func registerDiskTreeTool(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to get tree for '%s': %v", args.Path, err)), nil
 		}
 
-		treeJSON, err := json.Marshal(tree)
+		// Check response size and compress if needed
+		// Maximum 500KB response size
+		maxResponseSize := 512000 // 500KB in bytes
+
+		// Try to compress the tree if it's too large
+		compressedTree, wasCompressed := compressTree(tree, maxResponseSize)
+
+		treeJSON, err := json.Marshal(compressedTree)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal tree: %v", err)), nil
 		}
 
-		// Check response size to prevent blowing up Claude's context window
-		// Maximum 500KB response size
-		maxResponseSize := 512000 // 500KB in bytes
-		if len(treeJSON) > maxResponseSize {
-			// Calculate how much we exceeded the limit
-			sizeKB := len(treeJSON) / 1024
-			maxKB := maxResponseSize / 1024
-
-			// Create a helpful error message with suggestions
-			errorMsg := fmt.Sprintf(
-				"Response size too large (%d KB exceeds %d KB limit).\n\n"+
-					"The directory tree is too large to return in a single response.\n\n"+
-					"Current parameters:\n"+
-					"- maxDepth: %d\n"+
-					"- limit: %d\n"+
-					"- childThreshold: %d\n\n"+
-					"Suggestions to reduce response size:\n"+
-					"1. Reduce maxDepth (try 2-3 for large directories)\n"+
-					"2. Reduce limit (try 100-500 for initial exploration)\n"+
-					"3. Increase childThreshold (try 50 to trigger more summarization)\n"+
-					"4. Add minSize filter to skip small files\n"+
-					"5. Query a more specific subdirectory\n"+
-					"6. Use date filters (minDate/maxDate) to narrow results\n\n"+
-					"Example:\n"+
-					"  {\"path\": \"%s\", \"maxDepth\": 3, \"limit\": 200, \"childThreshold\": 50}",
-				sizeKB, maxKB,
-				opts.MaxDepth, *opts.Limit, opts.ChildThreshold,
-				args.Path,
-			)
-
-			return mcp.NewToolResultError(errorMsg), nil
+		// Add metadata about compression if it occurred
+		if wasCompressed {
+			log.WithFields(logrus.Fields{
+				"path": expandedPath,
+				"finalSize": len(treeJSON),
+				"compressed": true,
+			}).Info("Returned compressed tree to fit size limit")
 		}
 
 		return mcp.NewToolResultText(string(treeJSON)), nil
@@ -385,41 +613,17 @@ func registerDiskTimeRangeTool(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Query failed: %v", err)), nil
 		}
 
-		result, err := json.Marshal(entries)
+		// Compress if necessary
+		maxResponseSize := 512000 // 500KB
+		contextInfo := fmt.Sprintf("Time range: %s to %s, Path: %s",
+			args.StartDate, args.EndDate, getStringOrDefault(args.Path, "(all paths)"))
+
+		result, err := compressEntryList(entries, maxResponseSize, contextInfo)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal results: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to process results: %v", err)), nil
 		}
 
-		// Check response size to prevent blowing up Claude's context window
-		maxResponseSize := 512000 // 500KB in bytes
-		if len(result) > maxResponseSize {
-			sizeKB := len(result) / 1024
-			maxKB := maxResponseSize / 1024
-			entryCount := len(entries)
-
-			// Return summary instead of full data
-			errorMsg := fmt.Sprintf(
-				"Response size too large (%d KB exceeds %d KB limit).\n\n"+
-					"Found %d entries matching the time range.\n"+
-					"The result set is too large to return in a single response.\n\n"+
-					"Suggestions:\n"+
-					"1. Narrow the date range\n"+
-					"2. Specify a more specific path to search within\n"+
-					"3. Use a saved query with additional filters (minSize, file patterns)\n"+
-					"4. Create a selection set and paginate through results\n\n"+
-					"Summary of results:\n"+
-					"- Total entries: %d\n"+
-					"- Date range: %s to %s\n"+
-					"- Search path: %s",
-				sizeKB, maxKB, entryCount, entryCount,
-				args.StartDate, args.EndDate,
-				getStringOrDefault(args.Path, "(all paths)"),
-			)
-
-			return mcp.NewToolResultError(errorMsg), nil
-		}
-
-		return mcp.NewToolResultText(string(result)), nil
+		return mcp.NewToolResultText(result), nil
 	})
 }
 
@@ -512,37 +716,16 @@ func registerSelectionSetGet(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to get selection set entries: %v", err)), nil
 		}
 
-		result, err := json.Marshal(entries)
+		// Compress if necessary
+		maxResponseSize := 512000 // 500KB
+		contextInfo := fmt.Sprintf("Selection set: %s", args.Name)
+
+		result, err := compressEntryList(entries, maxResponseSize, contextInfo)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal results: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to process results: %v", err)), nil
 		}
 
-		// Check response size to prevent blowing up Claude's context window
-		maxResponseSize := 512000 // 500KB in bytes
-		if len(result) > maxResponseSize {
-			sizeKB := len(result) / 1024
-			maxKB := maxResponseSize / 1024
-			entryCount := len(entries)
-
-			errorMsg := fmt.Sprintf(
-				"Response size too large (%d KB exceeds %d KB limit).\n\n"+
-					"Selection set '%s' contains %d entries.\n"+
-					"The result set is too large to return in a single response.\n\n"+
-					"Suggestions:\n"+
-					"1. Split the selection set into smaller subsets\n"+
-					"2. Use a query with additional filters to narrow results\n"+
-					"3. Process entries in smaller batches\n\n"+
-					"Summary:\n"+
-					"- Selection set: %s\n"+
-					"- Total entries: %d",
-				sizeKB, maxKB, args.Name, entryCount,
-				args.Name, entryCount,
-			)
-
-			return mcp.NewToolResultError(errorMsg), nil
-		}
-
-		return mcp.NewToolResultText(string(result)), nil
+		return mcp.NewToolResultText(result), nil
 	})
 }
 
@@ -700,38 +883,16 @@ func registerQueryExecute(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Query execution failed: %v", err)), nil
 		}
 
-		result, err := json.Marshal(entries)
+		// Compress if necessary
+		maxResponseSize := 512000 // 500KB
+		contextInfo := fmt.Sprintf("Query: %s", args.Name)
+
+		result, err := compressEntryList(entries, maxResponseSize, contextInfo)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal results: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to process results: %v", err)), nil
 		}
 
-		// Check response size to prevent blowing up Claude's context window
-		maxResponseSize := 512000 // 500KB in bytes
-		if len(result) > maxResponseSize {
-			sizeKB := len(result) / 1024
-			maxKB := maxResponseSize / 1024
-			entryCount := len(entries)
-
-			errorMsg := fmt.Sprintf(
-				"Response size too large (%d KB exceeds %d KB limit).\n\n"+
-					"Query '%s' returned %d entries.\n"+
-					"The result set is too large to return in a single response.\n\n"+
-					"Suggestions:\n"+
-					"1. Update the query to add more restrictive filters (minSize, date range)\n"+
-					"2. Narrow the search path\n"+
-					"3. Create a selection set and process results in batches\n"+
-					"4. Use the disk-tree tool with appropriate limits for hierarchical exploration\n\n"+
-					"Summary:\n"+
-					"- Query: %s\n"+
-					"- Total entries: %d",
-				sizeKB, maxKB, args.Name, entryCount,
-				args.Name, entryCount,
-			)
-
-			return mcp.NewToolResultError(errorMsg), nil
-		}
-
-		return mcp.NewToolResultText(string(result)), nil
+		return mcp.NewToolResultText(result), nil
 	})
 }
 
