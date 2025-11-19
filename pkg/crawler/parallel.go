@@ -23,6 +23,7 @@ type ParallelIndexer struct {
 	pool        *queue.WorkerPool
 	runID       int64
 	jobID       int64
+	opts        *ParallelIndexOptions
 
 	// Stats
 	filesProcessed       atomic.Int64
@@ -92,6 +93,7 @@ func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions)
 		pool:      queue.NewWorkerPool(opts.WorkerCount, opts.QueueSize),
 		runID:     runID,
 		jobID:     jobID,
+		opts:      opts,
 		batch:     make([]*models.Entry, 0, opts.BatchSize),
 		batchSize: opts.BatchSize,
 		ctx:       ctx,
@@ -241,14 +243,24 @@ func (pi *ParallelIndexer) reportProgress(stop chan struct{}) {
 				"jobsFailed":           stats.JobsFailed,
 			}).Info("Index progress")
 
-			// Update job progress in database (estimate progress based on files processed)
-			// This is a rough estimate - you could improve this with better heuristics
-			progress := 50 // Arbitrarily set to 50% while running
+			// Calculate progress based on worker pool activity
+			// Progress is estimated as: (jobs completed / (jobs completed + jobs queued)) * 90
+			// We cap at 90% because final steps (cleanup, aggregation) aren't tracked
+			progress := 10 // Start at 10% (indexing started)
+			totalJobs := stats.JobsProcessed + stats.JobsQueued
+			if totalJobs > 0 {
+				// Progress from 10% to 90% based on job completion
+				completionRatio := float64(stats.JobsProcessed) / float64(totalJobs)
+				progress = 10 + int(completionRatio*80)
+			}
+
+			// Update job progress in database with accurate calculation
 			if err := pi.db.UpdateIndexJobProgress(pi.jobID, progress, &database.IndexJobMetadata{
 				FilesProcessed:       int(filesProcessed),
 				DirectoriesProcessed: int(directoriesProcessed),
 				TotalSize:            pi.totalSize.Load(),
 				ErrorCount:           int(pi.errors.Load()),
+				WorkerCount:          pi.opts.WorkerCount,
 			}); err != nil {
 				log.WithError(err).Error("Failed to update job progress")
 			}

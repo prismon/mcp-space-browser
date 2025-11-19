@@ -86,12 +86,32 @@ type SessionPreferences struct {
 
 // TreeNode represents a node in a file tree (for disk-tree command)
 type TreeNode struct {
-	Name     string      `json:"name"`
-	Path     string      `json:"path"`
-	Size     int64       `json:"size"`
-	Kind     string      `json:"kind"`
-	Mtime    time.Time   `json:"mtime"`
-	Children []*TreeNode `json:"children,omitempty"`
+	Name      string       `json:"name"`
+	Path      string       `json:"path"`
+	Size      int64        `json:"size"`
+	Kind      string       `json:"kind"`
+	Mtime     time.Time    `json:"mtime"`
+	Children  []*TreeNode  `json:"children,omitempty"`
+	Summary   *TreeSummary `json:"summary,omitempty"`   // Summary when children are truncated
+	Truncated bool         `json:"truncated,omitempty"` // True if children were truncated
+}
+
+// TreeSummary provides aggregate statistics for truncated directories
+type TreeSummary struct {
+	TotalChildren   int               `json:"total_children"`
+	FileCount       int               `json:"file_count"`
+	DirectoryCount  int               `json:"directory_count"`
+	TotalSize       int64             `json:"total_size"`
+	LargestChildren []*SimplifiedNode `json:"largest_children,omitempty"` // Top N largest children
+}
+
+// SimplifiedNode represents a lightweight node for summaries
+type SimplifiedNode struct {
+	Name  string    `json:"name"`
+	Path  string    `json:"path"`
+	Size  int64     `json:"size"`
+	Kind  string    `json:"kind"`
+	Mtime time.Time `json:"mtime"`
 }
 
 // DiskUsageSummary represents disk usage summary (for disk-du command)
