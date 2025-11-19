@@ -1,11 +1,13 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -426,8 +428,56 @@ func (d *DiskDB) All() ([]*models.Entry, error) {
 	return entries, rows.Err()
 }
 
+// TreeOptions configures tree building behavior
+type TreeOptions struct {
+	MaxDepth       int        // Maximum depth to traverse (0 = unlimited)
+	CurrentDepth   int        // Current depth in recursion
+	MinSize        int64      // Minimum file size to include
+	Limit          *int       // Total node limit
+	SortBy         string     // Sort by: "size", "name", or "mtime"
+	DescendingSort bool       // Sort in descending order
+	MinDate        *time.Time // Filter files modified after this date
+	MaxDate        *time.Time // Filter files modified before this date
+	ChildThreshold int        // When to summarize (default: 100)
+	NodesReturned  *int       // Track total nodes returned
+}
+
 // GetTree builds a tree structure starting from a root path
+// Deprecated: Use GetTreeWithOptions for better control over large directories
 func (d *DiskDB) GetTree(root string) (*models.TreeNode, error) {
+	opts := TreeOptions{
+		MaxDepth:       0, // Unlimited
+		CurrentDepth:   0,
+		MinSize:        0,
+		SortBy:         "size",
+		DescendingSort: true,
+		ChildThreshold: 1000, // High default to maintain backward compatibility
+		NodesReturned:  new(int),
+	}
+	return d.GetTreeWithOptions(context.Background(), root, opts)
+}
+
+// GetTreeWithOptions builds a tree structure with configurable options
+func (d *DiskDB) GetTreeWithOptions(ctx context.Context, root string, opts TreeOptions) (*models.TreeNode, error) {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	// Check depth limit
+	if opts.MaxDepth > 0 && opts.CurrentDepth >= opts.MaxDepth {
+		return d.createSummaryNode(root)
+	}
+
+	// Check total node limit
+	if opts.Limit != nil && opts.NodesReturned != nil {
+		if *opts.NodesReturned >= *opts.Limit {
+			return d.createSummaryNode(root)
+		}
+	}
+
 	entry, err := d.Get(root)
 	if err != nil {
 		return nil, err
@@ -451,16 +501,180 @@ func (d *DiskDB) GetTree(root string) (*models.TreeNode, error) {
 			return nil, err
 		}
 
+		// Filter children by size and date
+		children = d.filterChildren(children, opts)
+
+		// Check if we should summarize this directory
+		if len(children) > opts.ChildThreshold {
+			node.Summary = d.createDirectorySummary(children, opts.ChildThreshold)
+			node.Truncated = true
+			// Keep only top N largest children for detailed view
+			children = d.getLargestN(children, 10)
+		}
+
+		// Sort children
+		d.sortChildren(children, opts.SortBy, opts.DescendingSort)
+
+		// Recurse with incremented depth
 		for _, child := range children {
-			childNode, err := d.GetTree(child.Path)
+			// Check context and limits before each child
+			select {
+			case <-ctx.Done():
+				return node, nil // Return partial tree
+			default:
+			}
+
+			if opts.Limit != nil && opts.NodesReturned != nil {
+				if *opts.NodesReturned >= *opts.Limit {
+					break
+				}
+			}
+
+			childOpts := opts
+			childOpts.CurrentDepth = opts.CurrentDepth + 1
+			childNode, err := d.GetTreeWithOptions(ctx, child.Path, childOpts)
 			if err != nil {
-				return nil, err
+				// Skip errors instead of failing entire tree
+				log.WithError(err).WithField("path", child.Path).Warn("Failed to get child node")
+				continue
 			}
 			node.Children = append(node.Children, childNode)
+			if opts.NodesReturned != nil {
+				*opts.NodesReturned++
+			}
 		}
 	}
 
 	return node, nil
+}
+
+// createSummaryNode creates a minimal node with just metadata (no children)
+func (d *DiskDB) createSummaryNode(root string) (*models.TreeNode, error) {
+	entry, err := d.Get(root)
+	if err != nil {
+		return nil, err
+	}
+	if entry == nil {
+		return nil, fmt.Errorf("path not found: %s", root)
+	}
+
+	node := &models.TreeNode{
+		Name:      filepath.Base(entry.Path),
+		Path:      entry.Path,
+		Size:      entry.Size,
+		Kind:      entry.Kind,
+		Mtime:     time.Unix(entry.Mtime, 0),
+		Children:  []*models.TreeNode{},
+		Truncated: true,
+	}
+
+	// If it's a directory, add summary
+	if entry.Kind == "directory" {
+		children, err := d.Children(entry.Path)
+		if err == nil && len(children) > 0 {
+			node.Summary = d.createDirectorySummary(children, 10)
+		}
+	}
+
+	return node, nil
+}
+
+// filterChildren filters entries based on size and date criteria
+func (d *DiskDB) filterChildren(children []*models.Entry, opts TreeOptions) []*models.Entry {
+	if opts.MinSize == 0 && opts.MinDate == nil && opts.MaxDate == nil {
+		return children // No filtering needed
+	}
+
+	filtered := make([]*models.Entry, 0, len(children))
+	for _, child := range children {
+		// Skip files smaller than minimum
+		if opts.MinSize > 0 && child.Size < opts.MinSize {
+			continue
+		}
+
+		// Skip files outside date range
+		childMtime := time.Unix(child.Mtime, 0)
+		if opts.MinDate != nil && childMtime.Before(*opts.MinDate) {
+			continue
+		}
+		if opts.MaxDate != nil && childMtime.After(*opts.MaxDate) {
+			continue
+		}
+
+		filtered = append(filtered, child)
+	}
+
+	return filtered
+}
+
+// createDirectorySummary creates aggregate statistics for a directory
+func (d *DiskDB) createDirectorySummary(children []*models.Entry, topN int) *models.TreeSummary {
+	summary := &models.TreeSummary{
+		TotalChildren:  len(children),
+		FileCount:      0,
+		DirectoryCount: 0,
+		TotalSize:      0,
+	}
+
+	for _, child := range children {
+		summary.TotalSize += child.Size
+		if child.Kind == "file" {
+			summary.FileCount++
+		} else {
+			summary.DirectoryCount++
+		}
+	}
+
+	// Get top N largest children
+	largest := d.getLargestN(children, topN)
+	summary.LargestChildren = make([]*models.SimplifiedNode, len(largest))
+	for i, entry := range largest {
+		summary.LargestChildren[i] = &models.SimplifiedNode{
+			Name:  filepath.Base(entry.Path),
+			Path:  entry.Path,
+			Size:  entry.Size,
+			Kind:  entry.Kind,
+			Mtime: time.Unix(entry.Mtime, 0),
+		}
+	}
+
+	return summary
+}
+
+// getLargestN returns the N largest entries by size
+func (d *DiskDB) getLargestN(entries []*models.Entry, n int) []*models.Entry {
+	if len(entries) <= n {
+		return entries
+	}
+
+	// Sort by size descending
+	sorted := make([]*models.Entry, len(entries))
+	copy(sorted, entries)
+
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Size > sorted[j].Size
+	})
+
+	return sorted[:n]
+}
+
+// sortChildren sorts entries based on the specified criteria
+func (d *DiskDB) sortChildren(entries []*models.Entry, sortBy string, descending bool) {
+	sort.Slice(entries, func(i, j int) bool {
+		var less bool
+		switch sortBy {
+		case "name":
+			less = filepath.Base(entries[i].Path) < filepath.Base(entries[j].Path)
+		case "mtime":
+			less = entries[i].Mtime < entries[j].Mtime
+		default: // "size"
+			less = entries[i].Size < entries[j].Size
+		}
+		if descending {
+			return !less
+		}
+		return less
+	})
 }
 
 // GetDiskUsageSummary computes a disk usage summary for a path
