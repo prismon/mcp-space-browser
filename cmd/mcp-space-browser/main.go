@@ -161,8 +161,8 @@ func runDiskIndex(cmd *cobra.Command, args []string) {
 			stats.FilesProcessed, stats.DirectoriesProcessed,
 			float64(stats.TotalSize)/(1024*1024), stats.Duration)
 	} else {
-		// Use sequential indexing
-		stats, err := crawler.Index(target, db)
+		// Use sequential indexing (no job tracking for CLI)
+		stats, err := crawler.Index(target, db, 0)
 		if err != nil {
 			log.WithError(err).Error("Failed to index directory")
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)

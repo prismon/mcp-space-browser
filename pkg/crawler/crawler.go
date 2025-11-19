@@ -30,7 +30,8 @@ type IndexStats struct {
 }
 
 // Index performs filesystem indexing using stack-based DFS traversal
-func Index(root string, db *database.DiskDB) (*IndexStats, error) {
+// If jobID is provided (non-zero), it will update job progress in the database
+func Index(root string, db *database.DiskDB, jobID int64) (*IndexStats, error) {
 	startTime := time.Now()
 
 	abs, err := filepath.Abs(root)
@@ -44,12 +45,14 @@ func Index(root string, db *database.DiskDB) (*IndexStats, error) {
 	log.WithFields(logrus.Fields{
 		"root":  abs,
 		"runID": runID,
+		"jobID": jobID,
 	}).Info("Starting filesystem index")
 
 	stats := &IndexStats{
 		StartTime: startTime,
 	}
 	lastProgressLog := time.Now()
+	lastProgressUpdate := time.Now()
 
 	// Begin transaction for better performance
 	if err := db.BeginTransaction(); err != nil {
@@ -158,7 +161,7 @@ func Index(root string, db *database.DiskDB) (*IndexStats, error) {
 			}
 		}
 
-		// Log progress every 5 seconds
+		// Log and update progress every 5 seconds
 		now := time.Now()
 		if now.Sub(lastProgressLog) > 5*time.Second {
 			log.WithFields(logrus.Fields{
@@ -167,6 +170,29 @@ func Index(root string, db *database.DiskDB) (*IndexStats, error) {
 				"remaining":            len(stack),
 			}).Info("Index progress")
 			lastProgressLog = now
+		}
+
+		// Update job progress in database every 5 seconds
+		if jobID > 0 && now.Sub(lastProgressUpdate) > 5*time.Second {
+			// Estimate progress (10-90% range, as final steps happen after crawling)
+			// We don't have total count, so we just show activity by incrementing
+			progress := 10 // Start at 10%
+			if stats.FilesProcessed > 0 || stats.DirectoriesProcessed > 0 {
+				// Increment progress gradually, capped at 90%
+				entriesProcessed := stats.FilesProcessed + stats.DirectoriesProcessed
+				// Simple heuristic: 1% per 100 entries processed, up to 90%
+				progress = 10 + min(80, entriesProcessed/100)
+			}
+
+			if err := db.UpdateIndexJobProgress(jobID, progress, &database.IndexJobMetadata{
+				FilesProcessed:       stats.FilesProcessed,
+				DirectoriesProcessed: stats.DirectoriesProcessed,
+				TotalSize:            stats.TotalSize,
+				ErrorCount:           stats.Errors,
+			}); err != nil {
+				log.WithError(err).WithField("jobID", jobID).Error("Failed to update job progress")
+			}
+			lastProgressUpdate = now
 		}
 	}
 

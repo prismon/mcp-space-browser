@@ -155,15 +155,38 @@ func handleIndex(c *gin.Context, db *database.DiskDB) {
 
 	log.WithField("path", path).Info("Starting filesystem index via API")
 
-	// Run indexing asynchronously
+	// Create job for tracking
+	jobID, err := db.CreateIndexJob(path, nil)
+	if err != nil {
+		log.WithError(err).Error("Failed to create index job")
+		c.String(http.StatusInternalServerError, "failed to create index job")
+		return
+	}
+
+	// Mark job as running
+	if err := db.UpdateIndexJobStatus(jobID, "running", nil); err != nil {
+		log.WithError(err).WithField("jobID", jobID).Error("Failed to mark job as running")
+	}
+
+	// Run indexing asynchronously with job tracking
 	go func() {
-		stats, err := crawler.Index(path, db)
+		stats, err := crawler.Index(path, db, jobID)
 		if err != nil {
+			errMsg := err.Error()
+			db.UpdateIndexJobStatus(jobID, "failed", &errMsg)
 			log.WithFields(logrus.Fields{
 				"path":  path,
+				"jobID": jobID,
 				"error": err,
 			}).Error("Filesystem index failed via API")
 		} else {
+			db.UpdateIndexJobStatus(jobID, "completed", nil)
+			db.UpdateIndexJobProgress(jobID, 100, &database.IndexJobMetadata{
+				FilesProcessed:       stats.FilesProcessed,
+				DirectoriesProcessed: stats.DirectoriesProcessed,
+				TotalSize:            stats.TotalSize,
+				ErrorCount:           stats.Errors,
+			})
 			log.WithFields(logrus.Fields{
 				"path":                 path,
 				"duration":             stats.Duration.Milliseconds(),
