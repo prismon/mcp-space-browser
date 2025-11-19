@@ -157,17 +157,19 @@ func handleIndex(c *gin.Context, db *database.DiskDB) {
 
 	// Run indexing asynchronously
 	go func() {
-		startTime := time.Now()
-		if err := crawler.Index(path, db); err != nil {
+		stats, err := crawler.Index(path, db)
+		if err != nil {
 			log.WithFields(logrus.Fields{
 				"path":  path,
 				"error": err,
 			}).Error("Filesystem index failed via API")
 		} else {
-			duration := time.Since(startTime)
 			log.WithFields(logrus.Fields{
-				"path":     path,
-				"duration": duration.Milliseconds(),
+				"path":                 path,
+				"duration":             stats.Duration.Milliseconds(),
+				"filesProcessed":       stats.FilesProcessed,
+				"directoriesProcessed": stats.DirectoriesProcessed,
+				"totalSize":            stats.TotalSize,
 			}).Info("Filesystem index completed via API")
 		}
 	}()

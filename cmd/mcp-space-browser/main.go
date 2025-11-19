@@ -151,18 +151,26 @@ func runDiskIndex(cmd *cobra.Command, args []string) {
 			"batchSize":   opts.BatchSize,
 		}).Info("Starting parallel indexing")
 
-		if err := crawler.IndexParallel(target, db, opts); err != nil {
+		stats, err := crawler.IndexParallel(target, db, opts)
+		if err != nil {
 			log.WithError(err).Error("Failed to index directory")
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+		fmt.Printf("Indexed %d files and %d directories (%.2f MB) in %s\n",
+			stats.FilesProcessed, stats.DirectoriesProcessed,
+			float64(stats.TotalSize)/(1024*1024), stats.Duration)
 	} else {
 		// Use sequential indexing
-		if err := crawler.Index(target, db); err != nil {
+		stats, err := crawler.Index(target, db)
+		if err != nil {
 			log.WithError(err).Error("Failed to index directory")
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+		fmt.Printf("Indexed %d files and %d directories (%.2f MB) in %s\n",
+			stats.FilesProcessed, stats.DirectoriesProcessed,
+			float64(stats.TotalSize)/(1024*1024), stats.Duration)
 	}
 
 	log.WithFields(logrus.Fields{

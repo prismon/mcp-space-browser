@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
+	"os"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -12,6 +12,7 @@ import (
 	"github.com/prismon/mcp-space-browser/internal/models"
 	"github.com/prismon/mcp-space-browser/pkg/crawler"
 	"github.com/prismon/mcp-space-browser/pkg/database"
+	"github.com/prismon/mcp-space-browser/pkg/pathutil"
 )
 
 // registerMCPTools registers all MCP tools with the server
@@ -64,11 +65,33 @@ func registerDiskIndexTool(s *server.MCPServer, db *database.DiskDB) {
 
 		log.WithField("path", args.Path).Info("Executing disk-index via MCP")
 
-		if err := crawler.Index(args.Path, db); err != nil {
+		// Expand tilde and validate path
+		expandedPath, err := pathutil.ExpandAndValidatePath(args.Path)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid path: %v", err)), nil
+		}
+
+		stats, err := crawler.Index(expandedPath, db)
+		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Indexing failed: %v", err)), nil
 		}
 
-		return mcp.NewToolResultText("OK"), nil
+		// Format the result with statistics
+		result := fmt.Sprintf("Indexing completed successfully\n"+
+			"Files: %d\n"+
+			"Directories: %d\n"+
+			"Total size: %d bytes (%.2f MB)\n"+
+			"Errors: %d\n"+
+			"Duration: %s",
+			stats.FilesProcessed,
+			stats.DirectoriesProcessed,
+			stats.TotalSize,
+			float64(stats.TotalSize)/(1024*1024),
+			stats.Errors,
+			stats.Duration,
+		)
+
+		return mcp.NewToolResultText(result), nil
 	})
 }
 
@@ -90,18 +113,26 @@ func registerDiskDuTool(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		abs, err := filepath.Abs(args.Path)
+		// Expand tilde
+		expandedPath, err := pathutil.ExpandPath(args.Path)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid path: %v", err)), nil
 		}
 
-		entry, err := db.Get(abs)
+		// Check if path exists on filesystem
+		_, statErr := os.Stat(expandedPath)
+		pathExists := statErr == nil
+
+		entry, err := db.Get(expandedPath)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Database error: %v", err)), nil
 		}
 
 		if entry == nil {
-			return mcp.NewToolResultText(fmt.Sprintf("Path %s not found", args.Path)), nil
+			if pathExists {
+				return mcp.NewToolResultError(fmt.Sprintf("Path '%s' exists but has not been indexed yet. Run disk-index first.", args.Path)), nil
+			}
+			return mcp.NewToolResultError(fmt.Sprintf("Path '%s' does not exist", args.Path)), nil
 		}
 
 		return mcp.NewToolResultText(fmt.Sprintf("%d", entry.Size)), nil
@@ -154,14 +185,23 @@ func registerDiskTreeTool(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		abs, err := filepath.Abs(args.Path)
+		// Expand tilde
+		expandedPath, err := pathutil.ExpandPath(args.Path)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid path: %v", err)), nil
 		}
 
-		tree, err := db.GetTree(abs)
+		// Check if path exists on filesystem
+		_, statErr := os.Stat(expandedPath)
+		pathExists := statErr == nil
+
+		tree, err := db.GetTree(expandedPath)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to get tree: %v", err)), nil
+			// Provide more context in error message
+			if pathExists {
+				return mcp.NewToolResultError(fmt.Sprintf("Path '%s' exists but has not been indexed yet. Run disk-index first.", args.Path)), nil
+			}
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to get tree for '%s': %v", args.Path, err)), nil
 		}
 
 		treeJSON, err := json.Marshal(tree)

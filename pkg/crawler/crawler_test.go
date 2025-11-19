@@ -37,8 +37,11 @@ func TestIndex(t *testing.T) {
 	defer db.Close()
 
 	// Run indexer
-	err = Index(tempDir, db)
+	stats, err := Index(tempDir, db)
 	assert.NoError(t, err)
+	assert.NotNil(t, stats)
+	assert.Greater(t, stats.FilesProcessed, 0)
+	assert.Greater(t, stats.DirectoriesProcessed, 0)
 
 	// Verify results
 	entries, err := db.All()
@@ -86,8 +89,9 @@ func TestIndexIncrementalUpdate(t *testing.T) {
 	defer db.Close()
 
 	// First index
-	err = Index(tempDir, db)
+	stats, err := Index(tempDir, db)
 	assert.NoError(t, err)
+	assert.NotNil(t, stats)
 
 	entries, err := db.All()
 	assert.NoError(t, err)
@@ -101,7 +105,7 @@ func TestIndexIncrementalUpdate(t *testing.T) {
 	}
 
 	// Second index (incremental)
-	err = Index(tempDir, db)
+	_, err = Index(tempDir, db)
 	assert.NoError(t, err)
 
 	entries, err = db.All()
