@@ -137,12 +137,20 @@ func runDiskIndex(cmd *cobra.Command, args []string) {
 	}
 	defer db.Close()
 
+	// Create stdout progress callback
+	progressCallback := func(stats *crawler.IndexStats, remaining int) {
+		fmt.Printf("\rIndexing: %d files, %d directories (%.2f MB) - %d remaining",
+			stats.FilesProcessed, stats.DirectoriesProcessed,
+			float64(stats.TotalSize)/(1024*1024), remaining)
+	}
+
 	if parallel {
 		// Use parallel indexing
 		opts := &crawler.ParallelIndexOptions{
-			WorkerCount: workerCount,
-			QueueSize:   queueSize,
-			BatchSize:   batchSize,
+			WorkerCount:      workerCount,
+			QueueSize:        queueSize,
+			BatchSize:        batchSize,
+			ProgressCallback: progressCallback,
 		}
 
 		log.WithFields(logrus.Fields{
@@ -151,24 +159,28 @@ func runDiskIndex(cmd *cobra.Command, args []string) {
 			"batchSize":   opts.BatchSize,
 		}).Info("Starting parallel indexing")
 
+		fmt.Printf("Starting indexing of %s...\n", target)
 		stats, err := crawler.IndexParallel(target, db, opts)
 		if err != nil {
+			fmt.Println() // Clear progress line
 			log.WithError(err).Error("Failed to index directory")
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Indexed %d files and %d directories (%.2f MB) in %s\n",
+		fmt.Printf("\nIndexed %d files and %d directories (%.2f MB) in %s\n",
 			stats.FilesProcessed, stats.DirectoriesProcessed,
 			float64(stats.TotalSize)/(1024*1024), stats.Duration)
 	} else {
 		// Use sequential indexing (no job tracking for CLI)
-		stats, err := crawler.Index(target, db, 0)
+		fmt.Printf("Starting indexing of %s...\n", target)
+		stats, err := crawler.Index(target, db, 0, progressCallback)
 		if err != nil {
+			fmt.Println() // Clear progress line
 			log.WithError(err).Error("Failed to index directory")
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Indexed %d files and %d directories (%.2f MB) in %s\n",
+		fmt.Printf("\nIndexed %d files and %d directories (%.2f MB) in %s\n",
 			stats.FilesProcessed, stats.DirectoriesProcessed,
 			float64(stats.TotalSize)/(1024*1024), stats.Duration)
 	}

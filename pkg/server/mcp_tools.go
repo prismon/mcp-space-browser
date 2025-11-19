@@ -95,7 +95,7 @@ func registerDiskIndexTool(s *server.MCPServer, db *database.DiskDB) {
 				}
 
 				// Run the indexing with job tracking
-				stats, err := crawler.Index(expandedPath, db, jobID)
+				stats, err := crawler.Index(expandedPath, db, jobID, nil)
 
 				// Update job with final status
 				if err != nil {
@@ -137,7 +137,7 @@ func registerDiskIndexTool(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultText(result), nil
 		} else {
 			// Synchronous mode (for backward compatibility) - no job tracking
-			stats, err := crawler.Index(expandedPath, db, 0)
+			stats, err := crawler.Index(expandedPath, db, 0, nil)
 			if err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("Indexing failed: %v", err)), nil
 			}
