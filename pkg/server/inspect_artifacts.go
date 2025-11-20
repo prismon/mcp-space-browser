@@ -311,6 +311,14 @@ func ensureFFmpegFrame(inputPath, outputPath string, frameCount int) error {
 		return err
 	}
 
+	// Validate paths to prevent command injection
+	if err := validateFilePath(inputPath); err != nil {
+		return fmt.Errorf("invalid input path: %w", err)
+	}
+	if err := validateFilePath(outputPath); err != nil {
+		return fmt.Errorf("invalid output path: %w", err)
+	}
+
 	cmd := exec.Command("ffmpeg", "-y", "-i", inputPath, "-vf", "thumbnail,scale=320:-1", "-frames:v", strconv.Itoa(frameCount), outputPath)
 	return cmd.Run()
 }
@@ -318,6 +326,14 @@ func ensureFFmpegFrame(inputPath, outputPath string, frameCount int) error {
 func ensureFFmpegTimelineFrame(inputPath, outputPath string, index, total int) error {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return err
+	}
+
+	// Validate paths to prevent command injection
+	if err := validateFilePath(inputPath); err != nil {
+		return fmt.Errorf("invalid input path: %w", err)
+	}
+	if err := validateFilePath(outputPath); err != nil {
+		return fmt.Errorf("invalid output path: %w", err)
 	}
 
 	// Spread frames across the duration using select to approximate even sampling
@@ -387,6 +403,31 @@ func parsePagination(limitRaw, offsetRaw string) (int, int) {
 	}
 
 	return limit, offset
+}
+
+// validateFilePath validates a file path to prevent command injection
+func validateFilePath(path string) error {
+	if path == "" {
+		return fmt.Errorf("path cannot be empty")
+	}
+
+	// Check for suspicious characters that could be used for command injection
+	if strings.ContainsAny(path, ";|&$`<>(){}[]!*?") {
+		return fmt.Errorf("path contains invalid characters")
+	}
+
+	// Ensure path is absolute or verify it exists
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("failed to resolve absolute path: %w", err)
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(absPath); err != nil {
+		return fmt.Errorf("file does not exist: %w", err)
+	}
+
+	return nil
 }
 
 var inspectLog = logger.WithName("inspect")

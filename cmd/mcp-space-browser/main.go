@@ -102,8 +102,8 @@ exploring disk utilization (similar to Baobab/WinDirStat).`,
 
 	serverCmd.Flags().IntVar(&port, "port", 0, "Port to listen on (overrides config file, 0 = use config)")
 	serverCmd.Flags().StringVar(&host, "host", "", "Host address to bind to (overrides config file, empty = use config)")
-	serverCmd.Flags().StringVar(&externalHost, "external-host", "", "External hostname for generating URLs (overrides config file)")
 	serverCmd.Flags().StringVar(&configPath, "config", "config.yaml", "Path to configuration file")
+	serverCmd.Flags().StringVar(&externalHost, "external-host", "", "External hostname/URL for generating resource URLs. Can be a hostname (e.g., 'example.com') or full URL (e.g., 'https://example.com'). Defaults to --host, or localhost if binding to 0.0.0.0")
 
 	// job-list command
 	var jobListCmd = &cobra.Command{
@@ -389,6 +389,7 @@ func diskTree(db *database.DiskDB, target string, indent string, isRoot bool, op
 }
 
 func runServer(cmd *cobra.Command, args []string) {
+
 	// Load configuration
 	config, err := auth.LoadConfig(configPath)
 	if err != nil {
@@ -396,6 +397,21 @@ func runServer(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error: Failed to load configuration: %v\n", err)
 		os.Exit(1)
 	}
+	// Determine the external host if not specified
+	effectiveExternalHost := externalHost
+	if effectiveExternalHost == "" {
+		if host == "0.0.0.0" || host == "" || host == "::" {
+			effectiveExternalHost = "localhost"
+		} else {
+			effectiveExternalHost = host
+		}
+	}
+
+	log.WithFields(logrus.Fields{
+		"port":         port,
+		"host":         host,
+		"externalHost": effectiveExternalHost,
+	}).Info("Starting unified HTTP server")
 
 	// Override config with command-line flags
 	if port > 0 {
@@ -444,8 +460,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 	defer db.Close()
 
-	// Start server with configuration
-	if err := server.Start(config, db, config.Database.Path); err != nil {
+
+	if err := server.Start(host, port, effectiveExternalHost, db, dbPath); err != nil {
 		log.WithError(err).Error("Server failed")
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
