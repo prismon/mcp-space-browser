@@ -1,10 +1,7 @@
 package server
 
 import (
-	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -30,16 +27,14 @@ import (
 )
 
 const (
-	contentTokenTTL    = 10 * time.Minute
 	artifactTimelineN  = 5
 	thumbnailMaxWidth  = 320
 	thumbnailMaxHeight = 320
 )
 
 var (
-	contentTokenSecret []byte
-	contentBaseURL     string
-	artifactCacheDir   = filepath.Join(os.TempDir(), "mcp-space-browser-artifacts")
+	contentBaseURL   string
+	artifactCacheDir = filepath.Join(os.TempDir(), "mcp-space-browser-artifacts")
 )
 
 type inspectArtifact struct {
@@ -61,17 +56,7 @@ type inspectResponse struct {
 	NextPageUrl string            `json:"nextPageUrl,omitempty"`
 }
 
-func initContentTokenSecret() {
-	if contentTokenSecret != nil {
-		return
-	}
-
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		panic(fmt.Errorf("failed to initialize content token secret: %w", err))
-	}
-	contentTokenSecret = secret
-
+func initArtifactCache() {
 	if err := os.MkdirAll(artifactCacheDir, 0o755); err != nil {
 		panic(fmt.Errorf("failed to create artifact cache: %w", err))
 	}
@@ -91,9 +76,7 @@ func handleInspect(c *gin.Context, db *database.DiskDB) {
 }
 
 func buildInspectResponse(inputPath string, db *database.DiskDB, limit, offset int) (*inspectResponse, error) {
-	if contentTokenSecret == nil {
-		initContentTokenSecret()
-	}
+	initArtifactCache()
 	if contentBaseURL == "" {
 		contentBaseURL = "http://localhost:3000"
 	}
@@ -111,7 +94,6 @@ func buildInspectResponse(inputPath string, db *database.DiskDB, limit, offset i
 		return nil, errors.New("entry not indexed")
 	}
 
-	contentToken := createContentToken(expandedPath, time.Now().Add(contentTokenTTL))
 	artifacts, nextPage, err := generateArtifacts(expandedPath, entry.Kind, entry.Mtime, limit, offset)
 	if err != nil {
 		return nil, err
@@ -124,7 +106,7 @@ func buildInspectResponse(inputPath string, db *database.DiskDB, limit, offset i
 		ModifiedAt: time.Unix(entry.Mtime, 0).Format(time.RFC3339),
 		CreatedAt:  time.Unix(entry.Ctime, 0).Format(time.RFC3339),
 		Link:       fmt.Sprintf("shell://nodes/%s", entry.Path),
-		ContentUrl: fmt.Sprintf("%s/api/content?token=%s", contentBaseURL, url.QueryEscape(contentToken)),
+		ContentUrl: fmt.Sprintf("%s/api/content?path=%s", contentBaseURL, url.QueryEscape(expandedPath)),
 		Artifacts:  artifacts,
 		NextPageUrl: func() string {
 			if nextPage == -1 {
@@ -184,11 +166,10 @@ func generateArtifacts(path string, kind string, mtime int64, limit, offset int)
 }
 
 func buildArtifact(artifactType, mimeType, filePath string, metadata map[string]any) inspectArtifact {
-	token := createContentToken(filePath, time.Now().Add(contentTokenTTL))
 	return inspectArtifact{
 		Type:     artifactType,
 		MimeType: mimeType,
-		Url:      fmt.Sprintf("%s/api/content?token=%s", contentBaseURL, url.QueryEscape(token)),
+		Url:      fmt.Sprintf("%s/api/content?path=%s", contentBaseURL, url.QueryEscape(filePath)),
 		Metadata: metadata,
 	}
 }
@@ -212,28 +193,35 @@ func artifactCachePath(hashKey, filename string) (string, error) {
 }
 
 func serveContent(c *gin.Context, db *database.DiskDB) {
-	token := c.Query("token")
-	if token == "" {
-		c.String(http.StatusBadRequest, "token required")
+	path := c.Query("path")
+	if path == "" {
+		c.String(http.StatusBadRequest, "path required")
 		return
 	}
 
-	targetPath, err := validateContentToken(token)
+	// Expand and validate the path
+	targetPath, err := pathutil.ExpandPath(path)
 	if err != nil {
-		c.String(http.StatusForbidden, err.Error())
+		c.String(http.StatusBadRequest, "invalid path")
 		return
 	}
 
-	// If the file is part of the index ensure it exists
+	// Security: Ensure the file exists in the database OR is an artifact
 	entry, _ := db.Get(targetPath)
 	if entry == nil {
-		// It might be an artifact; just ensure path exists
+		// Check if it's an artifact (in our cache directory)
+		if !strings.HasPrefix(filepath.Clean(targetPath), filepath.Clean(artifactCacheDir)) {
+			c.String(http.StatusForbidden, "path not accessible")
+			return
+		}
+		// Ensure artifact exists
 		if _, err := os.Stat(targetPath); err != nil {
 			c.String(http.StatusNotFound, "not found")
 			return
 		}
 	}
 
+	// Serve the file
 	file, err := os.Open(targetPath)
 	if err != nil {
 		c.String(http.StatusInternalServerError, "failed to open file")
@@ -248,48 +236,6 @@ func serveContent(c *gin.Context, db *database.DiskDB) {
 
 	c.Header("Content-Type", mimeType)
 	c.File(targetPath)
-}
-
-func createContentToken(path string, expiresAt time.Time) string {
-	payload := fmt.Sprintf("%s|%d", path, expiresAt.Unix())
-	mac := hmac.New(sha256.New, contentTokenSecret)
-	mac.Write([]byte(payload))
-	signature := hex.EncodeToString(mac.Sum(nil))
-	token := fmt.Sprintf("%s|%s", payload, signature)
-	return base64.RawURLEncoding.EncodeToString([]byte(token))
-}
-
-func validateContentToken(token string) (string, error) {
-	decoded, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil {
-		return "", errors.New("invalid token")
-	}
-
-	parts := strings.Split(string(decoded), "|")
-	if len(parts) != 3 {
-		return "", errors.New("invalid token")
-	}
-
-	path := parts[0]
-	expiresUnix, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
-		return "", errors.New("invalid token")
-	}
-
-	payload := fmt.Sprintf("%s|%d", path, expiresUnix)
-	mac := hmac.New(sha256.New, contentTokenSecret)
-	mac.Write([]byte(payload))
-	signature := hex.EncodeToString(mac.Sum(nil))
-
-	if !hmac.Equal([]byte(signature), []byte(parts[2])) {
-		return "", errors.New("invalid token signature")
-	}
-
-	if time.Now().Unix() > expiresUnix {
-		return "", errors.New("token expired")
-	}
-
-	return path, nil
 }
 
 func createImageThumbnail(path string, mtime int64, hashKey string) (string, string, error) {

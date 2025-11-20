@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/prismon/mcp-space-browser/internal/models"
+	"github.com/prismon/mcp-space-browser/pkg/auth"
 	"github.com/prismon/mcp-space-browser/pkg/crawler"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
@@ -26,7 +27,8 @@ var (
 	maxDate   string
 
 	// Server command options
-	port int
+	port       int
+	configPath string
 
 	// Database path
 	dbPath string
@@ -96,7 +98,8 @@ exploring disk utilization (similar to Baobab/WinDirStat).`,
 		Run:   runServer,
 	}
 
-	serverCmd.Flags().IntVar(&port, "port", 3000, "Port to listen on")
+	serverCmd.Flags().IntVar(&port, "port", 0, "Port to listen on (overrides config file)")
+	serverCmd.Flags().StringVar(&configPath, "config", "config.yaml", "Path to configuration file")
 
 	// job-list command
 	var jobListCmd = &cobra.Command{
@@ -382,9 +385,30 @@ func diskTree(db *database.DiskDB, target string, indent string, isRoot bool, op
 }
 
 func runServer(cmd *cobra.Command, args []string) {
-	log.WithField("port", port).Info("Starting unified HTTP server")
+	// Load configuration
+	config, err := auth.LoadConfig(configPath)
+	if err != nil {
+		log.WithError(err).Error("Failed to load configuration")
+		fmt.Fprintf(os.Stderr, "Error: Failed to load configuration: %v\n", err)
+		os.Exit(1)
+	}
 
-	db, err := database.NewDiskDB(dbPath)
+	// Override config with command-line flags
+	if port > 0 {
+		config.Server.Port = port
+	}
+	if dbPath != "" {
+		config.Database.Path = dbPath
+	}
+
+	log.WithFields(logrus.Fields{
+		"port":        config.Server.Port,
+		"config_file": configPath,
+		"auth_enabled": config.Auth.Enabled,
+	}).Info("Starting unified HTTP server")
+
+	// Open database
+	db, err := database.NewDiskDB(config.Database.Path)
 	if err != nil {
 		log.WithError(err).Error("Failed to open database")
 		fmt.Fprintf(os.Stderr, "Error: Failed to open database: %v\n", err)
@@ -392,7 +416,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 	defer db.Close()
 
-	if err := server.Start(port, db, dbPath); err != nil {
+	// Start server with configuration
+	if err := server.Start(config, db, config.Database.Path); err != nil {
 		log.WithError(err).Error("Server failed")
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
