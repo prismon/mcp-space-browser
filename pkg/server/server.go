@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -54,7 +55,14 @@ func Start(host string, port int, externalHost string, db *database.DiskDB, dbPa
 
 	router := gin.Default()
 
-	contentBaseURL = fmt.Sprintf("http://%s:%d", externalHost, port)
+	// Build contentBaseURL based on whether externalHost already includes protocol
+	if strings.HasPrefix(externalHost, "http://") || strings.HasPrefix(externalHost, "https://") {
+		// External host already includes protocol - use it as-is
+		contentBaseURL = strings.TrimSuffix(externalHost, "/")
+	} else {
+		// External host is just a hostname - add protocol and port
+		contentBaseURL = fmt.Sprintf("http://%s:%d", externalHost, port)
+	}
 	initContentTokenSecret()
 
 	// Middleware for logging
