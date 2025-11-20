@@ -510,37 +510,31 @@ func registerInspectTool(s *server.MCPServer, db *database.DiskDB) {
 			mcp.Required(),
 			mcp.Description("Path of the file or directory to inspect"),
 		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum number of artifacts to return"),
+		),
+		mcp.WithNumber("offset",
+			mcp.Description("Pagination offset for artifacts"),
+		),
 	)
 
 	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args struct {
-			Path string `json:"path"`
+			Path   string `json:"path"`
+			Limit  *int   `json:"limit,omitempty"`
+			Offset *int   `json:"offset,omitempty"`
 		}
 
 		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		expandedPath, err := pathutil.ExpandPath(args.Path)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Invalid path: %v", err)), nil
-		}
+		limit := getIntOrDefault(args.Limit, 20)
+		offset := getIntOrDefault(args.Offset, 0)
 
-		entry, err := db.Get(expandedPath)
+		detail, err := buildInspectResponse(args.Path, db, limit, offset)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to load entry: %v", err)), nil
-		}
-		if entry == nil {
-			return mcp.NewToolResultError("Entry not indexed"), nil
-		}
-
-		detail := map[string]any{
-			"path":       entry.Path,
-			"kind":       entry.Kind,
-			"size":       entry.Size,
-			"modifiedAt": time.Unix(entry.Mtime, 0).Format(time.RFC3339),
-			"createdAt":  time.Unix(entry.Ctime, 0).Format(time.RFC3339),
-			"link":       fmt.Sprintf("shell://nodes/%s", entry.Path),
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 
 		payload, err := json.Marshal(detail)
