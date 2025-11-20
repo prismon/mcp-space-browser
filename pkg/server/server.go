@@ -35,8 +35,8 @@ import (
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
 	"github.com/sirupsen/logrus"
-	ginSwagger "github.com/swaggo/gin-swagger"
 	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 
 	_ "github.com/prismon/mcp-space-browser/docs" // Import generated docs
 )
@@ -53,6 +53,9 @@ func Start(port int, db *database.DiskDB, dbPath string) error {
 	gin.SetMode(gin.ReleaseMode)
 
 	router := gin.Default()
+
+	contentBaseURL = fmt.Sprintf("http://localhost:%d", port)
+	initContentTokenSecret()
 
 	// Middleware for logging
 	router.Use(func(c *gin.Context) {
@@ -89,6 +92,14 @@ func Start(port int, db *database.DiskDB, dbPath string) error {
 		handleTree(c, db)
 	})
 
+	router.GET("/api/inspect", func(c *gin.Context) {
+		handleInspect(c, db)
+	})
+
+	router.GET("/api/content", func(c *gin.Context) {
+		serveContent(c, db)
+	})
+
 	// Create and configure MCP server
 	mcpServer := server.NewMCPServer(
 		"mcp-space-browser",
@@ -114,11 +125,11 @@ func Start(port int, db *database.DiskDB, dbPath string) error {
 
 	addr := fmt.Sprintf(":%d", port)
 	log.WithFields(logrus.Fields{
-		"port":          port,
-		"rest_api":      "/api/*",
-		"mcp_endpoint":  "/mcp",
-		"swagger_docs":  "/docs/index.html",
-		"openapi_spec":  "/docs/swagger.json",
+		"port":         port,
+		"rest_api":     "/api/*",
+		"mcp_endpoint": "/mcp",
+		"swagger_docs": "/docs/index.html",
+		"openapi_spec": "/docs/swagger.json",
 	}).Info("Unified HTTP server starting with REST API, MCP support, and OpenAPI documentation")
 
 	return router.Run(addr)
