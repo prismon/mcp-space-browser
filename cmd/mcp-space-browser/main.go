@@ -27,8 +27,10 @@ var (
 	maxDate   string
 
 	// Server command options
-	port       int
-	configPath string
+	port         int
+	host         string
+	externalHost string
+	configPath   string
 
 	// Database path
 	dbPath string
@@ -98,7 +100,9 @@ exploring disk utilization (similar to Baobab/WinDirStat).`,
 		Run:   runServer,
 	}
 
-	serverCmd.Flags().IntVar(&port, "port", 0, "Port to listen on (overrides config file)")
+	serverCmd.Flags().IntVar(&port, "port", 0, "Port to listen on (overrides config file, 0 = use config)")
+	serverCmd.Flags().StringVar(&host, "host", "", "Host address to bind to (overrides config file, empty = use config)")
+	serverCmd.Flags().StringVar(&externalHost, "external-host", "", "External hostname for generating URLs (overrides config file)")
 	serverCmd.Flags().StringVar(&configPath, "config", "config.yaml", "Path to configuration file")
 
 	// job-list command
@@ -397,13 +401,37 @@ func runServer(cmd *cobra.Command, args []string) {
 	if port > 0 {
 		config.Server.Port = port
 	}
+	if host != "" {
+		config.Server.Host = host
+	}
+	if externalHost != "" {
+		config.Server.ExternalHost = externalHost
+	}
 	if dbPath != "" {
 		config.Database.Path = dbPath
 	}
 
+	// Determine the external host if not specified
+	effectiveExternalHost := config.Server.ExternalHost
+	if effectiveExternalHost == "" {
+		if config.Server.Host == "0.0.0.0" || config.Server.Host == "" || config.Server.Host == "::" {
+			effectiveExternalHost = "localhost"
+		} else {
+			effectiveExternalHost = config.Server.Host
+		}
+		config.Server.ExternalHost = effectiveExternalHost
+	}
+
+	// Update base URL from host/port if not explicitly set
+	if config.Server.BaseURL == "" || config.Server.BaseURL == "http://localhost:3000" {
+		config.Server.BaseURL = fmt.Sprintf("http://%s:%d", effectiveExternalHost, config.Server.Port)
+	}
+
 	log.WithFields(logrus.Fields{
-		"port":        config.Server.Port,
-		"config_file": configPath,
+		"port":         config.Server.Port,
+		"host":         config.Server.Host,
+		"externalHost": effectiveExternalHost,
+		"config_file":  configPath,
 		"auth_enabled": config.Auth.Enabled,
 	}).Info("Starting unified HTTP server")
 

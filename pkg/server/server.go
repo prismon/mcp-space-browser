@@ -159,9 +159,11 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 	}
 	router.Any("/mcp", gin.WrapH(mcpHandler))
 
-	addr := fmt.Sprintf(":%d", config.Server.Port)
+	addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
 	logFields := logrus.Fields{
+		"host":         config.Server.Host,
 		"port":         config.Server.Port,
+		"externalHost": config.Server.ExternalHost,
 		"rest_api":     "/api/*",
 		"mcp_endpoint": "/mcp",
 		"swagger_docs": "/docs/index.html",
