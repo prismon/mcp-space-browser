@@ -61,6 +61,8 @@ type inspectResponse struct {
 	CreatedAt        string            `json:"createdAt"`
 	Link             string            `json:"link"`
 	ArtifactsUri     string            `json:"artifactsUri,omitempty"`     // MCP resource URI for all artifacts of this node
+	ThumbnailUri     string            `json:"thumbnailUri,omitempty"`     // MCP resource URI for thumbnail (if available)
+	TimelineUri      string            `json:"timelineUri,omitempty"`      // MCP resource URI for video timeline (if available)
 	ContentUrl       string            `json:"contentUrl"`
 	Artifacts        []inspectArtifact `json:"artifacts"`
 	ArtifactsCount   int               `json:"artifactsCount"`             // Total count of artifacts
@@ -131,6 +133,26 @@ func buildInspectResponse(inputPath string, db *database.DiskDB, limit, offset i
 	// Add artifacts URI if there are any artifacts
 	if totalCount > 0 {
 		response.ArtifactsUri = fmt.Sprintf("shell://nodes/%s/artifacts", entry.Path)
+
+		// Check artifact types to set type-specific URIs
+		hasThumbnail := false
+		hasTimeline := false
+		for _, artifact := range artifacts {
+			if artifact.Type == "thumbnail" {
+				hasThumbnail = true
+			}
+			if artifact.Type == "video-timeline" {
+				hasTimeline = true
+			}
+		}
+
+		// Set type-specific URIs if those artifact types exist
+		if hasThumbnail {
+			response.ThumbnailUri = fmt.Sprintf("shell://nodes/%s/thumbnail", entry.Path)
+		}
+		if hasTimeline {
+			response.TimelineUri = fmt.Sprintf("shell://nodes/%s/timeline", entry.Path)
+		}
 	}
 
 	return response, nil

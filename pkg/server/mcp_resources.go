@@ -9,6 +9,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/prismon/mcp-space-browser/internal/models"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 )
 
@@ -19,7 +20,11 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	registerSelectionSetsResource(s, db)
 	registerQueriesResource(s, db)
 	registerIndexJobsResource(s, db)
-	registerArtifactsResource(s, db) // NEW: Artifacts resource
+	registerArtifactsResource(s, db) // All artifacts (generic)
+
+	// Type-specific artifact resources
+	registerThumbnailsResource(s, db)      // All thumbnails
+	registerVideoTimelinesResource(s, db)  // All video timeline frames
 
 	// Register job queue resources
 	registerJobQueuePendingResource(s, db)
@@ -35,8 +40,12 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	registerQueryTemplate(s, db)
 	registerQueryExecutionsTemplate(s, db)
 	registerIndexJobTemplate(s, db)
-	registerArtifactTemplate(s, db)             // NEW: Artifact by hash
-	registerNodeArtifactsTemplate(s, db)        // NEW: Artifacts for a node path
+	registerArtifactTemplate(s, db)             // Artifact by hash
+	registerNodeArtifactsTemplate(s, db)        // All artifacts for a node
+
+	// Type-specific artifact templates for nodes
+	registerNodeThumbnailTemplate(s, db)        // Thumbnail for a specific node
+	registerNodeVideoTimelineTemplate(s, db)    // Video timeline for a specific node
 }
 
 // Static Resources
@@ -726,6 +735,200 @@ func registerNodeArtifactsTemplate(s *server.MCPServer, db *database.DiskDB) {
 		}, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal artifacts: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+// Type-Specific Artifact Resources
+
+func registerThumbnailsResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"shell://thumbnails",
+		"All Thumbnail Artifacts",
+		mcp.WithResourceDescription("List of all generated thumbnail artifacts for images and videos"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		thumbnailType := "thumbnail"
+		artifacts, err := db.ListArtifacts(&thumbnailType)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch thumbnails: %w", err)
+		}
+
+		// Add resource URIs to artifacts
+		for _, artifact := range artifacts {
+			artifact.ResourceUri = fmt.Sprintf("shell://artifacts/%s", artifact.Hash)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"count":      len(artifacts),
+			"thumbnails": artifacts,
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal thumbnails: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerVideoTimelinesResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"shell://video-timelines",
+		"All Video Timeline Artifacts",
+		mcp.WithResourceDescription("List of all generated video timeline frame artifacts"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		timelineType := "video-timeline"
+		artifacts, err := db.ListArtifacts(&timelineType)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch video timelines: %w", err)
+		}
+
+		// Add resource URIs to artifacts
+		for _, artifact := range artifacts {
+			artifact.ResourceUri = fmt.Sprintf("shell://artifacts/%s", artifact.Hash)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"count":          len(artifacts),
+			"video_timelines": artifacts,
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal video timelines: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerNodeThumbnailTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://nodes/{path}/thumbnail",
+		"Thumbnail for Node",
+		mcp.WithTemplateDescription("Get the thumbnail artifact for a specific file (image or video poster)"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract path from URI: shell://nodes/{path}/thumbnail
+		uri := request.Params.URI
+		if !strings.HasPrefix(uri, "shell://nodes/") || !strings.HasSuffix(uri, "/thumbnail") {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		// Remove prefix and suffix to get path
+		path := strings.TrimPrefix(uri, "shell://nodes/")
+		path = strings.TrimSuffix(path, "/thumbnail")
+
+		artifacts, err := db.GetArtifactsByPath(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch artifacts for path: %w", err)
+		}
+
+		// Filter for thumbnail type only
+		var thumbnailArtifact *models.Artifact
+		for _, artifact := range artifacts {
+			if artifact.ArtifactType == "thumbnail" {
+				artifact.ResourceUri = fmt.Sprintf("shell://artifacts/%s", artifact.Hash)
+				thumbnailArtifact = artifact
+				break
+			}
+		}
+
+		if thumbnailArtifact == nil {
+			return nil, fmt.Errorf("no thumbnail found for path: %s", path)
+		}
+
+		result := map[string]interface{}{
+			"path":      path,
+			"thumbnail": thumbnailArtifact,
+		}
+
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal thumbnail: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerNodeVideoTimelineTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://nodes/{path}/timeline",
+		"Video Timeline for Node",
+		mcp.WithTemplateDescription("Get all video timeline frame artifacts for a specific video file"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract path from URI: shell://nodes/{path}/timeline
+		uri := request.Params.URI
+		if !strings.HasPrefix(uri, "shell://nodes/") || !strings.HasSuffix(uri, "/timeline") {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		// Remove prefix and suffix to get path
+		path := strings.TrimPrefix(uri, "shell://nodes/")
+		path = strings.TrimSuffix(path, "/timeline")
+
+		artifacts, err := db.GetArtifactsByPath(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch artifacts for path: %w", err)
+		}
+
+		// Filter for video-timeline type only
+		var timelineFrames []*models.Artifact
+		for _, artifact := range artifacts {
+			if artifact.ArtifactType == "video-timeline" {
+				artifact.ResourceUri = fmt.Sprintf("shell://artifacts/%s", artifact.Hash)
+				timelineFrames = append(timelineFrames, artifact)
+			}
+		}
+
+		if len(timelineFrames) == 0 {
+			return nil, fmt.Errorf("no video timeline found for path: %s", path)
+		}
+
+		result := map[string]interface{}{
+			"path":   path,
+			"count":  len(timelineFrames),
+			"frames": timelineFrames,
+		}
+
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal video timeline: %w", err)
 		}
 
 		return []mcp.ResourceContents{
