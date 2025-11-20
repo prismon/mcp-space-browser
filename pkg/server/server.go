@@ -48,13 +48,13 @@ func init() {
 }
 
 // Start starts the unified HTTP server with both REST API and MCP endpoints
-func Start(port int, db *database.DiskDB, dbPath string) error {
+func Start(host string, port int, externalHost string, db *database.DiskDB, dbPath string) error {
 	// Set gin to release mode in production
 	gin.SetMode(gin.ReleaseMode)
 
 	router := gin.Default()
 
-	contentBaseURL = fmt.Sprintf("http://localhost:%d", port)
+	contentBaseURL = fmt.Sprintf("http://%s:%d", externalHost, port)
 	initContentTokenSecret()
 
 	// Middleware for logging
@@ -123,9 +123,11 @@ func Start(port int, db *database.DiskDB, dbPath string) error {
 	// Mount MCP endpoint at /mcp using Gin's Any method to handle all HTTP methods
 	router.Any("/mcp", gin.WrapH(mcpHTTPServer))
 
-	addr := fmt.Sprintf(":%d", port)
+	addr := fmt.Sprintf("%s:%d", host, port)
 	log.WithFields(logrus.Fields{
+		"host":         host,
 		"port":         port,
+		"externalHost": externalHost,
 		"rest_api":     "/api/*",
 		"mcp_endpoint": "/mcp",
 		"swagger_docs": "/docs/index.html",

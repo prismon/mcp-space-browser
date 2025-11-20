@@ -26,7 +26,9 @@ var (
 	maxDate   string
 
 	// Server command options
-	port int
+	port         int
+	host         string
+	externalHost string
 
 	// Database path
 	dbPath string
@@ -97,6 +99,8 @@ exploring disk utilization (similar to Baobab/WinDirStat).`,
 	}
 
 	serverCmd.Flags().IntVar(&port, "port", 3000, "Port to listen on")
+	serverCmd.Flags().StringVar(&host, "host", "127.0.0.1", "Host address to bind to (use 0.0.0.0 for all interfaces)")
+	serverCmd.Flags().StringVar(&externalHost, "external-host", "", "External hostname for generating URLs (defaults to --host, or localhost if binding to 0.0.0.0)")
 
 	// job-list command
 	var jobListCmd = &cobra.Command{
@@ -382,7 +386,21 @@ func diskTree(db *database.DiskDB, target string, indent string, isRoot bool, op
 }
 
 func runServer(cmd *cobra.Command, args []string) {
-	log.WithField("port", port).Info("Starting unified HTTP server")
+	// Determine the external host if not specified
+	effectiveExternalHost := externalHost
+	if effectiveExternalHost == "" {
+		if host == "0.0.0.0" || host == "" || host == "::" {
+			effectiveExternalHost = "localhost"
+		} else {
+			effectiveExternalHost = host
+		}
+	}
+
+	log.WithFields(logrus.Fields{
+		"port":         port,
+		"host":         host,
+		"externalHost": effectiveExternalHost,
+	}).Info("Starting unified HTTP server")
 
 	db, err := database.NewDiskDB(dbPath)
 	if err != nil {
@@ -392,7 +410,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 	defer db.Close()
 
-	if err := server.Start(port, db, dbPath); err != nil {
+	if err := server.Start(host, port, effectiveExternalHost, db, dbPath); err != nil {
 		log.WithError(err).Error("Server failed")
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
