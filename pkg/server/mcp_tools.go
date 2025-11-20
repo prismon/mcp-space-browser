@@ -580,7 +580,7 @@ func registerJobProgressTool(s *server.MCPServer, db *database.DiskDB) {
 		response := map[string]any{
 			"jobId":     job.ID,
 			"status":    job.Status,
-			"path":      job.Path,
+			"path":      job.RootPath,
 			"progress":  job.Progress,
 			"statusUrl": fmt.Sprintf("shell://jobs/%d", job.ID),
 		}

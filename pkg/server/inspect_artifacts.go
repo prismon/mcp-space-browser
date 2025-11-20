@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/draw"
 	_ "image/gif"
 	"image/jpeg"
 	_ "image/png"
@@ -27,6 +26,7 @@ import (
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
 	"github.com/prismon/mcp-space-browser/pkg/pathutil"
+	"golang.org/x/image/draw"
 )
 
 const (
