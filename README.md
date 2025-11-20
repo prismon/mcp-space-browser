@@ -2,7 +2,7 @@
 
 A high-performance disk space indexing agent written in Go that crawls filesystems, stores metadata in SQLite, and provides tools for exploring disk utilization (similar to Baobab/WinDirStat).
 
-See [docs/disk_agent_design.md](docs/disk_agent_design.md) for the design and [README.go.md](README.go.md) for complete documentation.
+See [docs/disk_agent_design.md](docs/disk_agent_design.md) for the design and [README.go.md](README.go.md) for complete documentation. For an MCP shape tuned to small context windows, review [docs/mcp_low_context_domain_model.md](docs/mcp_low_context_domain_model.md).
 
 ## Installation
 
@@ -34,22 +34,5 @@ go run ./cmd/mcp-space-browser server --port=3000
 ```
 
 This exposes:
-- **MCP endpoint**: `http://localhost:3000/mcp` with 17 tools for disk space analysis
+- **MCP endpoint**: `http://localhost:3000/mcp` with shell-style navigation tools (`index`, `cd`, `inspect`, `job-progress`) plus selection sets, queries, and session preferences.
 - **REST API**: `http://localhost:3000/api/*` for programmatic access
-
-Available MCP tools: disk-index, disk-du, disk-tree, disk-time-range, selection set management, saved queries, and session preferences.
-
-### CLI Commands
-
-You can also run individual CLI commands directly:
-
-```bash
-./mcp-space-browser disk-index /path/to/scan
-./mcp-space-browser disk-du /path
-./mcp-space-browser disk-tree /path
-
-# Or with go run
-go run ./cmd/mcp-space-browser disk-index /path/to/scan
-go run ./cmd/mcp-space-browser disk-du /path
-go run ./cmd/mcp-space-browser disk-tree /path
-```

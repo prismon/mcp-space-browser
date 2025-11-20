@@ -110,10 +110,10 @@ know to recompute aggregated statistics.
 
 We will provide CLI commands using the MCP tool interface:
 
-- `disk-index <path>`: run the crawler to index the specified path.
-- `disk-du <path>`: compute disk usage for a folder by summing child sizes.
-- `disk-tree <path>`: display a tree of directories and file sizes.
-- `disk-dedupe <path>` (future): identify duplicate files via hashing.
+- `index <path>`: run the crawler to index the specified path.
+- `cd <path>`: navigate into a directory and return a lightweight listing slice.
+- `inspect <path>`: fetch metadata for a file or directory.
+- `job-progress <jobId>`: check on an indexing run.
 
 These commands will query the SQLite database or trigger new indexing runs.
 

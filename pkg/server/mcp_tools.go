@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -19,11 +20,11 @@ import (
 
 // registerMCPTools registers all MCP tools with the server
 func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
-	// Core disk tools
-	registerDiskIndexTool(s, db)
-	registerDiskDuTool(s, db)
-	registerDiskTreeTool(s, db)
-	registerDiskTimeRangeTool(s, db)
+	// Shell-style navigation tools
+	registerIndexTool(s, db)
+	registerCdTool(s, db)
+	registerInspectTool(s, db)
+	registerJobProgressTool(s, db)
 
 	// Selection set tools
 	registerSelectionSetCreate(s, db)
@@ -74,9 +75,9 @@ func compressTree(tree *models.TreeNode, maxSizeBytes int) (*models.TreeNode, bo
 
 		if len(testJSON) <= maxSizeBytes {
 			log.WithFields(logrus.Fields{
-				"originalSize": len(currentJSON),
+				"originalSize":   len(currentJSON),
 				"compressedSize": len(testJSON),
-				"keepLimit": keepLimit,
+				"keepLimit":      keepLimit,
 			}).Info("Successfully compressed tree to fit size limit")
 			return compressed, true
 		}
@@ -178,10 +179,10 @@ func createSummaryFromChildren(children []*models.TreeNode, topN int) *models.Tr
 	}
 
 	summary := &models.TreeSummary{
-		TotalChildren: len(children),
-		FileCount:     0,
+		TotalChildren:  len(children),
+		FileCount:      0,
 		DirectoryCount: 0,
-		TotalSize:     0,
+		TotalSize:      0,
 	}
 
 	// Count files and directories
@@ -265,11 +266,11 @@ func compressEntryList(entries []*models.Entry, maxSizeBytes int, contextInfo st
 		"_note":       fmt.Sprintf("Result set was too large (%d KB). Showing summary with top %d entries by size.", len(fullJSON)/1024, topN),
 		"context":     contextInfo,
 		"statistics": map[string]interface{}{
-			"total_entries":    len(entries),
-			"total_files":      fileCount,
+			"total_entries":     len(entries),
+			"total_files":       fileCount,
 			"total_directories": dirCount,
-			"total_size":       totalSize,
-			"total_size_mb":    float64(totalSize) / (1024 * 1024),
+			"total_size":        totalSize,
+			"total_size_mb":     float64(totalSize) / (1024 * 1024),
 		},
 		"top_entries": sortedEntries[:topN],
 	}
@@ -291,10 +292,10 @@ func compressEntryList(entries []*models.Entry, maxSizeBytes int, contextInfo st
 
 // Disk Tools
 
-func registerDiskIndexTool(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("disk-index",
-		mcp.WithDescription("Index the specified path. Returns immediately with a job ID. Use disk://index-jobs/{id} resource to monitor progress."),
-		mcp.WithString("path",
+func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("index",
+		mcp.WithDescription("Index the specified path and track progress with shell://jobs/{id}."),
+		mcp.WithString("root",
 			mcp.Required(),
 			mcp.Description("File or directory path to index"),
 		),
@@ -305,7 +306,7 @@ func registerDiskIndexTool(s *server.MCPServer, db *database.DiskDB) {
 
 	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args struct {
-			Path  string `json:"path"`
+			Root  string `json:"root"`
 			Async *bool  `json:"async,omitempty"`
 		}
 
@@ -313,10 +314,10 @@ func registerDiskIndexTool(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		log.WithField("path", args.Path).Info("Executing disk-index via MCP")
+		log.WithField("root", args.Root).Info("Executing index via MCP")
 
 		// Expand tilde and validate path
-		expandedPath, err := pathutil.ExpandAndValidatePath(args.Path)
+		expandedPath, err := pathutil.ExpandAndValidatePath(args.Root)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid path: %v", err)), nil
 		}
@@ -371,48 +372,143 @@ func registerDiskIndexTool(s *server.MCPServer, db *database.DiskDB) {
 				}
 			}()
 
-			// Return job ID immediately
-			result := fmt.Sprintf("Indexing job started\n"+
-				"Job ID: %d\n"+
-				"Path: %s\n"+
-				"\nTo monitor progress, use the resource: disk://index-jobs/%d\n"+
-				"Or list running jobs: disk://jobs/running",
-				jobID, expandedPath, jobID)
-
-			return mcp.NewToolResultText(result), nil
-		} else {
-			// Synchronous mode (for backward compatibility) - no job tracking
-			stats, err := crawler.Index(expandedPath, db, 0, nil)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("Indexing failed: %v", err)), nil
+			response := map[string]any{
+				"jobId":     jobID,
+				"root":      expandedPath,
+				"status":    "pending",
+				"statusUrl": fmt.Sprintf("shell://jobs/%d", jobID),
+				"cwdHint":   expandedPath,
 			}
 
-			// Format the result with statistics
-			result := fmt.Sprintf("Indexing completed successfully\n"+
-				"Files: %d\n"+
-				"Directories: %d\n"+
-				"Total size: %d bytes (%.2f MB)\n"+
-				"Errors: %d\n"+
-				"Duration: %s",
-				stats.FilesProcessed,
-				stats.DirectoriesProcessed,
-				stats.TotalSize,
-				float64(stats.TotalSize)/(1024*1024),
-				stats.Errors,
-				stats.Duration,
-			)
+			payload, err := json.Marshal(response)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal response: %v", err)), nil
+			}
 
-			return mcp.NewToolResultText(result), nil
+			return mcp.NewToolResultText(string(payload)), nil
 		}
+
+		// Synchronous mode (for backward compatibility) - no job tracking
+		stats, err := crawler.Index(expandedPath, db, 0, nil)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Indexing failed: %v", err)), nil
+		}
+
+		response := map[string]any{
+			"root":        expandedPath,
+			"status":      "completed",
+			"files":       stats.FilesProcessed,
+			"directories": stats.DirectoriesProcessed,
+			"totalSize":   stats.TotalSize,
+			"durationMs":  stats.Duration.Milliseconds(),
+		}
+
+		payload, err := json.Marshal(response)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal response: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(string(payload)), nil
 	})
 }
 
-func registerDiskDuTool(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("disk-du",
-		mcp.WithDescription("Get disk usage for a path"),
+func registerCdTool(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("cd",
+		mcp.WithDescription("Change directory within the indexed tree and return a lightweight listing."),
 		mcp.WithString("path",
 			mcp.Required(),
-			mcp.Description("File or directory path"),
+			mcp.Description("Target path (absolute or relative to previous call)"),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum number of entries to return (default: 20)"),
+		),
+		mcp.WithNumber("offset",
+			mcp.Description("Offset into the child list for pagination"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Path   string `json:"path"`
+			Limit  *int   `json:"limit,omitempty"`
+			Offset *int   `json:"offset,omitempty"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		expandedPath, err := pathutil.ExpandPath(args.Path)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid path: %v", err)), nil
+		}
+
+		entry, err := db.Get(expandedPath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to load path: %v", err)), nil
+		}
+		if entry == nil || entry.Kind != "directory" {
+			return mcp.NewToolResultError("Path is not an indexed directory"), nil
+		}
+
+		children, err := db.Children(expandedPath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to fetch children: %v", err)), nil
+		}
+
+		offset := getIntOrDefault(args.Offset, 0)
+		if offset < 0 {
+			offset = 0
+		}
+		limit := getIntOrDefault(args.Limit, 20)
+		if limit <= 0 {
+			limit = 20
+		}
+
+		end := offset + limit
+		if end > len(children) {
+			end = len(children)
+		}
+
+		slice := children[offset:end]
+		listings := make([]map[string]any, 0, len(slice))
+		for _, child := range slice {
+			listings = append(listings, map[string]any{
+				"path":       child.Path,
+				"name":       filepath.Base(child.Path),
+				"kind":       child.Kind,
+				"size":       child.Size,
+				"modifiedAt": time.Unix(child.Mtime, 0).Format(time.RFC3339),
+				"link":       fmt.Sprintf("shell://nodes/%s", child.Path),
+			})
+		}
+
+		response := map[string]any{
+			"cwd":         expandedPath,
+			"count":       len(children),
+			"entries":     listings,
+			"nextPageUrl": "",
+		}
+
+		if end < len(children) {
+			response["nextPageUrl"] = fmt.Sprintf("shell://list?path=%s&offset=%d&limit=%d", expandedPath, end, limit)
+		}
+
+		payload, err := json.Marshal(response)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal response: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerInspectTool(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("inspect",
+		mcp.WithDescription("Return metadata for a specific indexed node."),
+		mcp.WithString("path",
+			mcp.Required(),
+			mcp.Description("Path of the file or directory to inspect"),
 		),
 	)
 
@@ -425,205 +521,82 @@ func registerDiskDuTool(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		// Expand tilde
 		expandedPath, err := pathutil.ExpandPath(args.Path)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid path: %v", err)), nil
 		}
-
-		// Check if path exists on filesystem
-		_, statErr := os.Stat(expandedPath)
-		pathExists := statErr == nil
 
 		entry, err := db.Get(expandedPath)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Database error: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to load entry: %v", err)), nil
 		}
-
 		if entry == nil {
-			if pathExists {
-				return mcp.NewToolResultError(fmt.Sprintf("Path '%s' exists but has not been indexed yet. Run disk-index first.", args.Path)), nil
-			}
-			return mcp.NewToolResultError(fmt.Sprintf("Path '%s' does not exist", args.Path)), nil
+			return mcp.NewToolResultError("Entry not indexed"), nil
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("%d", entry.Size)), nil
+		detail := map[string]any{
+			"path":       entry.Path,
+			"kind":       entry.Kind,
+			"size":       entry.Size,
+			"modifiedAt": time.Unix(entry.Mtime, 0).Format(time.RFC3339),
+			"createdAt":  time.Unix(entry.Ctime, 0).Format(time.RFC3339),
+			"link":       fmt.Sprintf("shell://nodes/%s", entry.Path),
+		}
+
+		payload, err := json.Marshal(detail)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal response: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(string(payload)), nil
 	})
 }
 
-func registerDiskTreeTool(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("disk-tree",
-		mcp.WithDescription("Return a JSON tree of directories and file sizes. Large directories are automatically summarized. Trees exceeding 500KB are automatically compressed while preserving the most important information (largest files/dirs)."),
-		mcp.WithString("path",
+func registerJobProgressTool(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("job-progress",
+		mcp.WithDescription("Retrieve status for an indexing job."),
+		mcp.WithString("jobId",
 			mcp.Required(),
-			mcp.Description("File or directory path"),
-		),
-		mcp.WithNumber("maxDepth",
-			mcp.Description("Maximum depth to traverse (default: 10 for performance)"),
-		),
-		mcp.WithNumber("minSize",
-			mcp.Description("Minimum file size to include in bytes (default: 0)"),
-		),
-		mcp.WithNumber("limit",
-			mcp.Description("Maximum number of nodes to return (default: 1000)"),
-		),
-		mcp.WithString("sortBy",
-			mcp.Description("Sort entries by size, name, or mtime (default: size)"),
-		),
-		mcp.WithBoolean("descendingSort",
-			mcp.Description("Sort in descending order (default: true)"),
-		),
-		mcp.WithString("minDate",
-			mcp.Description("Filter files modified after this date (YYYY-MM-DD)"),
-		),
-		mcp.WithString("maxDate",
-			mcp.Description("Filter files modified before this date (YYYY-MM-DD)"),
-		),
-		mcp.WithNumber("childThreshold",
-			mcp.Description("Summarize directories with more than this many children (default: 100)"),
+			mcp.Description("Job identifier returned from index"),
 		),
 	)
 
 	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args struct {
-			Path           string  `json:"path"`
-			MaxDepth       *int    `json:"maxDepth,omitempty"`
-			MinSize        *int64  `json:"minSize,omitempty"`
-			Limit          *int    `json:"limit,omitempty"`
-			SortBy         *string `json:"sortBy,omitempty"`
-			DescendingSort *bool   `json:"descendingSort,omitempty"`
-			MinDate        *string `json:"minDate,omitempty"`
-			MaxDate        *string `json:"maxDate,omitempty"`
-			ChildThreshold *int    `json:"childThreshold,omitempty"`
+			JobID string `json:"jobId"`
 		}
 
 		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		// Expand tilde
-		expandedPath, err := pathutil.ExpandPath(args.Path)
+		id, err := strconv.ParseInt(args.JobID, 10, 64)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Invalid path: %v", err)), nil
+			return mcp.NewToolResultError("jobId must be an integer"), nil
 		}
 
-		// Check if path exists on filesystem
-		_, statErr := os.Stat(expandedPath)
-		pathExists := statErr == nil
-
-		// Build tree options with defaults for performance
-		opts := database.TreeOptions{
-			MaxDepth:       getIntOrDefault(args.MaxDepth, 10),        // Default to 10 levels deep
-			CurrentDepth:   0,
-			MinSize:        getInt64OrDefault(args.MinSize, 0),
-			Limit:          getIntPtrOrDefault(args.Limit, 1000),      // Default to 1000 nodes max
-			SortBy:         getStringOrDefault(args.SortBy, "size"),
-			DescendingSort: getBoolOrDefault(args.DescendingSort, true),
-			ChildThreshold: getIntOrDefault(args.ChildThreshold, 100), // Summarize dirs with >100 children
-			NodesReturned:  new(int),
-		}
-
-		// Parse date filters
-		if args.MinDate != nil {
-			minDate, err := time.Parse("2006-01-02", *args.MinDate)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("Invalid minDate format (use YYYY-MM-DD): %v", err)), nil
-			}
-			opts.MinDate = &minDate
-		}
-		if args.MaxDate != nil {
-			maxDate, err := time.Parse("2006-01-02", *args.MaxDate)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("Invalid maxDate format (use YYYY-MM-DD): %v", err)), nil
-			}
-			opts.MaxDate = &maxDate
-		}
-
-		// Add timeout to prevent hangs
-		treeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-
-		tree, err := db.GetTreeWithOptions(treeCtx, expandedPath, opts)
+		job, err := db.GetIndexJob(id)
 		if err != nil {
-			// Check if it was a timeout
-			if err == context.DeadlineExceeded {
-				return mcp.NewToolResultError("Tree building timed out after 30 seconds. Try reducing maxDepth or limit, or increasing childThreshold."), nil
-			}
-			// Provide more context in error message
-			if pathExists {
-				return mcp.NewToolResultError(fmt.Sprintf("Path '%s' exists but has not been indexed yet. Run disk-index first.", args.Path)), nil
-			}
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to get tree for '%s': %v", args.Path, err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to load job: %v", err)), nil
+		}
+		if job == nil {
+			return mcp.NewToolResultError("Job not found"), nil
 		}
 
-		// Check response size and compress if needed
-		// Maximum 500KB response size
-		maxResponseSize := 512000 // 500KB in bytes
+		response := map[string]any{
+			"jobId":     job.ID,
+			"status":    job.Status,
+			"path":      job.Path,
+			"progress":  job.Progress,
+			"statusUrl": fmt.Sprintf("shell://jobs/%d", job.ID),
+		}
 
-		// Try to compress the tree if it's too large
-		compressedTree, wasCompressed := compressTree(tree, maxResponseSize)
-
-		treeJSON, err := json.Marshal(compressedTree)
+		payload, err := json.Marshal(response)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal tree: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal response: %v", err)), nil
 		}
 
-		// Add metadata about compression if it occurred
-		if wasCompressed {
-			log.WithFields(logrus.Fields{
-				"path": expandedPath,
-				"finalSize": len(treeJSON),
-				"compressed": true,
-			}).Info("Returned compressed tree to fit size limit")
-		}
-
-		return mcp.NewToolResultText(string(treeJSON)), nil
-	})
-}
-
-func registerDiskTimeRangeTool(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("disk-time-range",
-		mcp.WithDescription("Find files modified within a date range"),
-		mcp.WithString("startDate",
-			mcp.Required(),
-			mcp.Description("Start date (YYYY-MM-DD)"),
-		),
-		mcp.WithString("endDate",
-			mcp.Required(),
-			mcp.Description("End date (YYYY-MM-DD)"),
-		),
-		mcp.WithString("path",
-			mcp.Description("Root path to search (optional)"),
-		),
-	)
-
-	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		var args struct {
-			StartDate string  `json:"startDate"`
-			EndDate   string  `json:"endDate"`
-			Path      *string `json:"path,omitempty"`
-		}
-
-		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
-		}
-
-		entries, err := db.GetEntriesByTimeRange(args.StartDate, args.EndDate, args.Path)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Query failed: %v", err)), nil
-		}
-
-		// Compress if necessary
-		maxResponseSize := 512000 // 500KB
-		contextInfo := fmt.Sprintf("Time range: %s to %s, Path: %s",
-			args.StartDate, args.EndDate, getStringOrDefault(args.Path, "(all paths)"))
-
-		result, err := compressEntryList(entries, maxResponseSize, contextInfo)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to process results: %v", err)), nil
-		}
-
-		return mcp.NewToolResultText(result), nil
+		return mcp.NewToolResultText(string(payload)), nil
 	})
 }
 

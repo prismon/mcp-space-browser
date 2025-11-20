@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -35,15 +34,13 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	registerQueryTemplate(s, db)
 	registerQueryExecutionsTemplate(s, db)
 	registerIndexJobTemplate(s, db)
-	registerTreeTemplate(s, db)
-	registerDiskUsageTemplate(s, db)
 }
 
 // Static Resources
 
 func registerEntriesResource(s *server.MCPServer, db *database.DiskDB) {
 	resource := mcp.NewResource(
-		"disk://entries",
+		"shell://nodes",
 		"All Filesystem Entries",
 		mcp.WithResourceDescription("List of all indexed filesystem entries (files and directories)"),
 		mcp.WithMIMEType("application/json"),
@@ -72,7 +69,7 @@ func registerEntriesResource(s *server.MCPServer, db *database.DiskDB) {
 
 func registerSelectionSetsResource(s *server.MCPServer, db *database.DiskDB) {
 	resource := mcp.NewResource(
-		"disk://selection-sets",
+		"shell://selection-sets",
 		"All Selection Sets",
 		mcp.WithResourceDescription("List of all selection sets (named groups of files)"),
 		mcp.WithMIMEType("application/json"),
@@ -101,7 +98,7 @@ func registerSelectionSetsResource(s *server.MCPServer, db *database.DiskDB) {
 
 func registerQueriesResource(s *server.MCPServer, db *database.DiskDB) {
 	resource := mcp.NewResource(
-		"disk://queries",
+		"shell://queries",
 		"All Saved Queries",
 		mcp.WithResourceDescription("List of all saved file filter queries"),
 		mcp.WithMIMEType("application/json"),
@@ -130,7 +127,7 @@ func registerQueriesResource(s *server.MCPServer, db *database.DiskDB) {
 
 func registerIndexJobsResource(s *server.MCPServer, db *database.DiskDB) {
 	resource := mcp.NewResource(
-		"disk://index-jobs",
+		"shell://jobs",
 		"All Index Jobs",
 		mcp.WithResourceDescription("List of all filesystem indexing jobs"),
 		mcp.WithMIMEType("application/json"),
@@ -161,7 +158,7 @@ func registerIndexJobsResource(s *server.MCPServer, db *database.DiskDB) {
 
 func registerJobQueuePendingResource(s *server.MCPServer, db *database.DiskDB) {
 	resource := mcp.NewResource(
-		"disk://jobs/pending",
+		"shell://jobs/pending",
 		"Pending Jobs",
 		mcp.WithResourceDescription("List of pending indexing jobs waiting to be started"),
 		mcp.WithMIMEType("application/json"),
@@ -191,7 +188,7 @@ func registerJobQueuePendingResource(s *server.MCPServer, db *database.DiskDB) {
 
 func registerJobQueueRunningResource(s *server.MCPServer, db *database.DiskDB) {
 	resource := mcp.NewResource(
-		"disk://jobs/running",
+		"shell://jobs/running",
 		"Running Jobs",
 		mcp.WithResourceDescription("List of currently running indexing jobs"),
 		mcp.WithMIMEType("application/json"),
@@ -221,7 +218,7 @@ func registerJobQueueRunningResource(s *server.MCPServer, db *database.DiskDB) {
 
 func registerJobQueueCompletedResource(s *server.MCPServer, db *database.DiskDB) {
 	resource := mcp.NewResource(
-		"disk://jobs/completed",
+		"shell://jobs/completed",
 		"Completed Jobs",
 		mcp.WithResourceDescription("List of successfully completed indexing jobs"),
 		mcp.WithMIMEType("application/json"),
@@ -251,7 +248,7 @@ func registerJobQueueCompletedResource(s *server.MCPServer, db *database.DiskDB)
 
 func registerJobQueueFailedResource(s *server.MCPServer, db *database.DiskDB) {
 	resource := mcp.NewResource(
-		"disk://jobs/failed",
+		"shell://jobs/failed",
 		"Failed Jobs",
 		mcp.WithResourceDescription("List of failed indexing jobs with error details"),
 		mcp.WithMIMEType("application/json"),
@@ -281,7 +278,7 @@ func registerJobQueueFailedResource(s *server.MCPServer, db *database.DiskDB) {
 
 func registerJobQueueActiveResource(s *server.MCPServer, db *database.DiskDB) {
 	resource := mcp.NewResource(
-		"disk://jobs/active",
+		"shell://jobs/active",
 		"Active Jobs",
 		mcp.WithResourceDescription("List of all active jobs (pending, running, and paused)"),
 		mcp.WithMIMEType("application/json"),
@@ -319,16 +316,16 @@ func registerJobQueueActiveResource(s *server.MCPServer, db *database.DiskDB) {
 
 func registerEntryTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"disk://entries/{path}",
+		"shell://nodes/{path}",
 		"Filesystem Entry",
 		mcp.WithTemplateDescription("Individual filesystem entry by path"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract path from URI: disk://entries/{path}
+		// Extract path from URI: shell://nodes/{path}
 		uri := request.Params.URI
-		prefix := "disk://entries/"
+		prefix := "shell://nodes/"
 		if !strings.HasPrefix(uri, prefix) {
 			return nil, fmt.Errorf("invalid URI format: %s", uri)
 		}
@@ -364,16 +361,16 @@ func registerEntryTemplate(s *server.MCPServer, db *database.DiskDB) {
 
 func registerSelectionSetTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"disk://selection-sets/{name}",
+		"shell://selection-sets/{name}",
 		"Selection Set",
 		mcp.WithTemplateDescription("Individual selection set by name"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract name from URI: disk://selection-sets/{name}
+		// Extract name from URI: shell://selection-sets/{name}
 		uri := request.Params.URI
-		prefix := "disk://selection-sets/"
+		prefix := "shell://selection-sets/"
 		if !strings.HasPrefix(uri, prefix) {
 			return nil, fmt.Errorf("invalid URI format: %s", uri)
 		}
@@ -412,16 +409,16 @@ func registerSelectionSetTemplate(s *server.MCPServer, db *database.DiskDB) {
 
 func registerSelectionSetEntriesTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"disk://selection-sets/{name}/entries",
+		"shell://selection-sets/{name}/entries",
 		"Selection Set Entries",
 		mcp.WithTemplateDescription("All entries in a selection set"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract name from URI: disk://selection-sets/{name}/entries
+		// Extract name from URI: shell://selection-sets/{name}/entries
 		uri := request.Params.URI
-		prefix := "disk://selection-sets/"
+		prefix := "shell://selection-sets/"
 		suffix := "/entries"
 
 		if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, suffix) {
@@ -457,16 +454,16 @@ func registerSelectionSetEntriesTemplate(s *server.MCPServer, db *database.DiskD
 
 func registerQueryTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"disk://queries/{name}",
+		"shell://queries/{name}",
 		"Query",
 		mcp.WithTemplateDescription("Individual query by name"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract name from URI: disk://queries/{name}
+		// Extract name from URI: shell://queries/{name}
 		uri := request.Params.URI
-		prefix := "disk://queries/"
+		prefix := "shell://queries/"
 		if !strings.HasPrefix(uri, prefix) {
 			return nil, fmt.Errorf("invalid URI format: %s", uri)
 		}
@@ -505,16 +502,16 @@ func registerQueryTemplate(s *server.MCPServer, db *database.DiskDB) {
 
 func registerQueryExecutionsTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"disk://queries/{name}/executions",
+		"shell://queries/{name}/executions",
 		"Query Execution History",
 		mcp.WithTemplateDescription("Execution history for a query"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract name from URI: disk://queries/{name}/executions
+		// Extract name from URI: shell://queries/{name}/executions
 		uri := request.Params.URI
-		prefix := "disk://queries/"
+		prefix := "shell://queries/"
 		suffix := "/executions"
 
 		if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, suffix) {
@@ -560,16 +557,16 @@ func registerQueryExecutionsTemplate(s *server.MCPServer, db *database.DiskDB) {
 
 func registerIndexJobTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"disk://index-jobs/{id}",
+		"shell://jobs/{id}",
 		"Index Job",
 		mcp.WithTemplateDescription("Individual index job by ID"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract id from URI: disk://index-jobs/{id}
+		// Extract id from URI: shell://jobs/{id}
 		uri := request.Params.URI
-		prefix := "disk://index-jobs/"
+		prefix := "shell://jobs/"
 		if !strings.HasPrefix(uri, prefix) {
 			return nil, fmt.Errorf("invalid URI format: %s", uri)
 		}
@@ -596,100 +593,6 @@ func registerIndexJobTemplate(s *server.MCPServer, db *database.DiskDB) {
 		data, err := json.MarshalIndent(job, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal index job: %w", err)
-		}
-
-		return []mcp.ResourceContents{
-			&mcp.TextResourceContents{
-				URI:      request.Params.URI,
-				MIMEType: "application/json",
-				Text:     string(data),
-			},
-		}, nil
-	})
-}
-
-func registerTreeTemplate(s *server.MCPServer, db *database.DiskDB) {
-	template := mcp.NewResourceTemplate(
-		"disk://tree/{path}",
-		"Directory Tree",
-		mcp.WithTemplateDescription("Hierarchical tree structure starting at path"),
-		mcp.WithTemplateMIMEType("application/json"),
-	)
-
-	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract path from URI: disk://tree/{path}
-		uri := request.Params.URI
-		prefix := "disk://tree/"
-		if !strings.HasPrefix(uri, prefix) {
-			return nil, fmt.Errorf("invalid URI format: %s", uri)
-		}
-
-		path := strings.TrimPrefix(uri, prefix)
-		if path == "" {
-			return nil, fmt.Errorf("path parameter is required")
-		}
-
-		// Resolve to absolute path
-		absPath, err := filepath.Abs(path)
-		if err != nil {
-			return nil, fmt.Errorf("invalid path: %w", err)
-		}
-
-		tree, err := db.GetTree(absPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get tree: %w", err)
-		}
-
-		data, err := json.MarshalIndent(tree, "", "  ")
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal tree: %w", err)
-		}
-
-		return []mcp.ResourceContents{
-			&mcp.TextResourceContents{
-				URI:      request.Params.URI,
-				MIMEType: "application/json",
-				Text:     string(data),
-			},
-		}, nil
-	})
-}
-
-func registerDiskUsageTemplate(s *server.MCPServer, db *database.DiskDB) {
-	template := mcp.NewResourceTemplate(
-		"disk://disk-usage/{path}",
-		"Disk Usage Summary",
-		mcp.WithTemplateDescription("Disk usage summary for a path"),
-		mcp.WithTemplateMIMEType("application/json"),
-	)
-
-	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract path from URI: disk://disk-usage/{path}
-		uri := request.Params.URI
-		prefix := "disk://disk-usage/"
-		if !strings.HasPrefix(uri, prefix) {
-			return nil, fmt.Errorf("invalid URI format: %s", uri)
-		}
-
-		path := strings.TrimPrefix(uri, prefix)
-		if path == "" {
-			return nil, fmt.Errorf("path parameter is required")
-		}
-
-		// Resolve to absolute path
-		absPath, err := filepath.Abs(path)
-		if err != nil {
-			return nil, fmt.Errorf("invalid path: %w", err)
-		}
-
-		summary, err := db.GetDiskUsageSummary(absPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get disk usage: %w", err)
-		}
-
-		data, err := json.MarshalIndent(summary, "", "  ")
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal disk usage: %w", err)
 		}
 
 		return []mcp.ResourceContents{
