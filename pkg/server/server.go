@@ -32,6 +32,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/prismon/mcp-space-browser/pkg/auth"
 	"github.com/prismon/mcp-space-browser/pkg/crawler"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
@@ -49,12 +50,29 @@ func init() {
 }
 
 // Start starts the unified HTTP server with both REST API and MCP endpoints
-func Start(host string, port int, externalHost string, db *database.DiskDB, dbPath string) error {
+func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 	// Set gin to release mode in production
 	gin.SetMode(gin.ReleaseMode)
 
 	router := gin.Default()
 
+	// Update contentBaseURL from config
+	contentBaseURL = config.Server.BaseURL
+
+	// Initialize token validator if auth is enabled
+	var validator *auth.TokenValidator
+	if config.Auth.Enabled {
+		var err error
+		validator, err = auth.NewTokenValidator(&config.Auth)
+		if err != nil {
+			return fmt.Errorf("failed to initialize token validator: %w", err)
+		}
+		log.Info("OAuth/OIDC authentication enabled")
+
+		// Register Protected Resource Metadata endpoint (RFC 9728)
+		auth.RegisterProtectedResourceMetadataEndpoint(router, &config.Auth, config.Server.BaseURL)
+		log.Info("Protected Resource Metadata endpoint registered at /.well-known/oauth-protected-resource")
+	}
 	// Build contentBaseURL based on whether externalHost already includes protocol
 	if strings.HasPrefix(externalHost, "http://") || strings.HasPrefix(externalHost, "https://") {
 		// External host already includes protocol - use it as-is
@@ -88,32 +106,47 @@ func Start(host string, port int, externalHost string, db *database.DiskDB, dbPa
 		}).Info("Request completed")
 	})
 
-	// Swagger documentation endpoint
+	// Swagger documentation endpoint (public, no auth required)
 	router.GET("/docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	// REST API endpoints
-	router.GET("/api/index", func(c *gin.Context) {
+	// REST API endpoints with optional OAuth middleware
+	apiGroup := router.Group("/api")
+	if validator != nil {
+		apiGroup.Use(auth.AuthMiddleware(validator, &config.Auth))
+	}
+
+	apiGroup.GET("/index", func(c *gin.Context) {
 		handleIndex(c, db)
 	})
 
-	router.GET("/api/tree", func(c *gin.Context) {
+	apiGroup.GET("/tree", func(c *gin.Context) {
 		handleTree(c, db)
 	})
 
-	router.GET("/api/inspect", func(c *gin.Context) {
+	apiGroup.GET("/inspect", func(c *gin.Context) {
 		handleInspect(c, db)
 	})
 
-	router.GET("/api/content", func(c *gin.Context) {
+	apiGroup.GET("/content", func(c *gin.Context) {
 		serveContent(c, db)
 	})
 
 	// Create and configure MCP server
+	mcpOptions := []server.ServerOption{
+		server.WithToolCapabilities(true),
+		server.WithResourceCapabilities(false, true), // subscribe=false, listChanged=true
+	}
+
+	// Add OAuth option for MCP if auth is enabled
+	if validator != nil {
+		mcpAuthOption := auth.CreateMCPAuthOption(validator, &config.Auth)
+		mcpOptions = append(mcpOptions, mcpAuthOption)
+	}
+
 	mcpServer := server.NewMCPServer(
 		"mcp-space-browser",
 		"0.1.0",
-		server.WithToolCapabilities(true),
-		server.WithResourceCapabilities(false, true), // subscribe=false, listChanged=true
+		mcpOptions...,
 	)
 
 	// Register all MCP tools
@@ -128,8 +161,13 @@ func Start(host string, port int, externalHost string, db *database.DiskDB, dbPa
 		server.WithStateLess(true),
 	)
 
-	// Mount MCP endpoint at /mcp using Gin's Any method to handle all HTTP methods
-	router.Any("/mcp", gin.WrapH(mcpHTTPServer))
+	// Mount MCP endpoint at /mcp with OAuth protection if enabled
+	var mcpHandler http.Handler = mcpHTTPServer
+	if validator != nil {
+		// Wrap MCP handler with OAuth middleware
+		mcpHandler = auth.WrapMCPHandler(validator, &config.Auth, mcpHandler)
+	}
+	router.Any("/mcp", gin.WrapH(mcpHandler))
 
 	addr := fmt.Sprintf("%s:%d", host, port)
 	log.WithFields(logrus.Fields{
@@ -140,7 +178,13 @@ func Start(host string, port int, externalHost string, db *database.DiskDB, dbPa
 		"mcp_endpoint": "/mcp",
 		"swagger_docs": "/docs/index.html",
 		"openapi_spec": "/docs/swagger.json",
-	}).Info("Unified HTTP server starting with REST API, MCP support, and OpenAPI documentation")
+	}
+	if config.Auth.Enabled {
+		logFields["auth_enabled"] = true
+		logFields["auth_required"] = config.Auth.RequireAuth
+		logFields["oauth_issuer"] = config.Auth.Issuer
+	}
+	log.WithFields(logFields).Info("Unified HTTP server starting with REST API, MCP support, and OpenAPI documentation")
 
 	return router.Run(addr)
 }
