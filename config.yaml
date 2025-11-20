@@ -3,7 +3,9 @@
 # Server settings
 server:
   port: 3000
-  base_url: "http://localhost:3000"
+  host: "127.0.0.1"  # Host address to bind to (use 0.0.0.0 for all interfaces)
+  external_host: ""  # External hostname for generating URLs (defaults to host, or localhost if binding to 0.0.0.0)
+  base_url: "http://localhost:3000"  # Deprecated: use external_host and port instead
 
 # Database settings
 database:

@@ -20,8 +20,10 @@ type Config struct {
 
 // ServerConfig holds server settings
 type ServerConfig struct {
-	Port    int    `yaml:"port"`
-	BaseURL string `yaml:"base_url"`
+	Port         int    `yaml:"port"`
+	Host         string `yaml:"host"`
+	ExternalHost string `yaml:"external_host"`
+	BaseURL      string `yaml:"base_url"` // Deprecated: use ExternalHost and Port instead
 }
 
 // DatabaseConfig holds database settings
@@ -61,8 +63,10 @@ func LoadConfig(configPath string) (*Config, error) {
 	// Set defaults
 	config := &Config{
 		Server: ServerConfig{
-			Port:    3000,
-			BaseURL: "http://localhost:3000",
+			Port:         3000,
+			Host:         "127.0.0.1",
+			ExternalHost: "",
+			BaseURL:      "http://localhost:3000",
 		},
 		Database: DatabaseConfig{
 			Path: "disk.db",
@@ -118,6 +122,12 @@ func applyEnvOverrides(config *Config) {
 	// Server overrides
 	if port := os.Getenv("SERVER_PORT"); port != "" {
 		fmt.Sscanf(port, "%d", &config.Server.Port)
+	}
+	if host := os.Getenv("SERVER_HOST"); host != "" {
+		config.Server.Host = host
+	}
+	if externalHost := os.Getenv("SERVER_EXTERNAL_HOST"); externalHost != "" {
+		config.Server.ExternalHost = externalHost
 	}
 	if baseURL := os.Getenv("SERVER_BASE_URL"); baseURL != "" {
 		config.Server.BaseURL = baseURL
