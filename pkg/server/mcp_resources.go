@@ -628,19 +628,19 @@ func registerMetadataResource(s *server.MCPServer, db *database.DiskDB) {
 	)
 
 	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		artifacts, err := db.ListArtifacts(nil)
+		metadataList, err := db.ListMetadata(nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch metadata: %w", err)
 		}
 
 		// Add resource URIs to metadata entries
-		for _, artifact := range artifacts {
-			artifact.ResourceUri = fmt.Sprintf("shell://metadata/%s", artifact.Hash)
+		for _, metadata := range metadataList {
+			metadata.ResourceUri = fmt.Sprintf("shell://metadata/%s", metadata.Hash)
 		}
 
 		data, err := json.MarshalIndent(map[string]interface{}{
-			"count":    len(artifacts),
-			"metadata": artifacts,
+			"count":    len(metadataList),
+			"metadata": metadataList,
 		}, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal metadata: %w", err)
@@ -672,19 +672,19 @@ func registerMetadataByHashTemplate(s *server.MCPServer, db *database.DiskDB) {
 		}
 		hash := parts[3]
 
-		artifact, err := db.GetArtifact(hash)
+		metadata, err := db.GetMetadata(hash)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch metadata: %w", err)
 		}
 
-		if artifact == nil {
+		if metadata == nil {
 			return nil, fmt.Errorf("metadata not found: %s", hash)
 		}
 
 		// Add resource URI
-		artifact.ResourceUri = fmt.Sprintf("shell://metadata/%s", artifact.Hash)
+		metadata.ResourceUri = fmt.Sprintf("shell://metadata/%s", metadata.Hash)
 
-		data, err := json.MarshalIndent(artifact, "", "  ")
+		data, err := json.MarshalIndent(metadata, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal metadata: %w", err)
 		}
@@ -718,20 +718,20 @@ func registerNodeMetadataTemplate(s *server.MCPServer, db *database.DiskDB) {
 		path := strings.TrimPrefix(uri, "shell://nodes/")
 		path = strings.TrimSuffix(path, "/metadata")
 
-		artifacts, err := db.GetArtifactsByPath(path)
+		metadataList, err := db.GetMetadataByPath(path)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch metadata for path: %w", err)
 		}
 
 		// Add resource URIs to metadata entries
-		for _, artifact := range artifacts {
-			artifact.ResourceUri = fmt.Sprintf("shell://metadata/%s", artifact.Hash)
+		for _, metadata := range metadataList {
+			metadata.ResourceUri = fmt.Sprintf("shell://metadata/%s", metadata.Hash)
 		}
 
 		data, err := json.MarshalIndent(map[string]interface{}{
 			"path":     path,
-			"count":    len(artifacts),
-			"metadata": artifacts,
+			"count":    len(metadataList),
+			"metadata": metadataList,
 		}, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal metadata: %w", err)
@@ -759,19 +759,19 @@ func registerThumbnailsResource(s *server.MCPServer, db *database.DiskDB) {
 
 	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		thumbnailType := "thumbnail"
-		artifacts, err := db.ListArtifacts(&thumbnailType)
+		metadataList, err := db.ListMetadata(&thumbnailType)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch thumbnails: %w", err)
 		}
 
-		// Add resource URIs to artifacts
-		for _, artifact := range artifacts {
-			artifact.ResourceUri = fmt.Sprintf("shell://metadata/%s", artifact.Hash)
+		// Add resource URIs to metadata
+		for _, metadata := range metadataList {
+			metadata.ResourceUri = fmt.Sprintf("shell://metadata/%s", metadata.Hash)
 		}
 
 		data, err := json.MarshalIndent(map[string]interface{}{
-			"count":      len(artifacts),
-			"thumbnails": artifacts,
+			"count":      len(metadataList),
+			"thumbnails": metadataList,
 		}, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal thumbnails: %w", err)
@@ -797,19 +797,19 @@ func registerVideoTimelinesResource(s *server.MCPServer, db *database.DiskDB) {
 
 	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		timelineType := "video-timeline"
-		artifacts, err := db.ListArtifacts(&timelineType)
+		metadataList, err := db.ListMetadata(&timelineType)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch video timelines: %w", err)
 		}
 
-		// Add resource URIs to artifacts
-		for _, artifact := range artifacts {
-			artifact.ResourceUri = fmt.Sprintf("shell://metadata/%s", artifact.Hash)
+		// Add resource URIs to metadata
+		for _, metadata := range metadataList {
+			metadata.ResourceUri = fmt.Sprintf("shell://metadata/%s", metadata.Hash)
 		}
 
 		data, err := json.MarshalIndent(map[string]interface{}{
-			"count":          len(artifacts),
-			"video_timelines": artifacts,
+			"count":          len(metadataList),
+			"video_timelines": metadataList,
 		}, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal video timelines: %w", err)
@@ -844,28 +844,28 @@ func registerNodeThumbnailTemplate(s *server.MCPServer, db *database.DiskDB) {
 		path := strings.TrimPrefix(uri, "shell://nodes/")
 		path = strings.TrimSuffix(path, "/thumbnail")
 
-		artifacts, err := db.GetArtifactsByPath(path)
+		metadataList, err := db.GetMetadataByPath(path)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch artifacts for path: %w", err)
+			return nil, fmt.Errorf("failed to fetch metadata for path: %w", err)
 		}
 
 		// Filter for thumbnail type only
-		var thumbnailArtifact *models.Artifact
-		for _, artifact := range artifacts {
-			if artifact.ArtifactType == "thumbnail" {
-				artifact.ResourceUri = fmt.Sprintf("shell://metadata/%s", artifact.Hash)
-				thumbnailArtifact = artifact
+		var thumbnailMetadata *models.Metadata
+		for _, metadata := range metadataList {
+			if metadata.MetadataType == "thumbnail" {
+				metadata.ResourceUri = fmt.Sprintf("shell://metadata/%s", metadata.Hash)
+				thumbnailMetadata = metadata
 				break
 			}
 		}
 
-		if thumbnailArtifact == nil {
+		if thumbnailMetadata == nil {
 			return nil, fmt.Errorf("no thumbnail found for path: %s", path)
 		}
 
 		result := map[string]interface{}{
 			"path":      path,
-			"thumbnail": thumbnailArtifact,
+			"thumbnail": thumbnailMetadata,
 		}
 
 		data, err := json.MarshalIndent(result, "", "  ")
@@ -902,17 +902,17 @@ func registerNodeVideoTimelineTemplate(s *server.MCPServer, db *database.DiskDB)
 		path := strings.TrimPrefix(uri, "shell://nodes/")
 		path = strings.TrimSuffix(path, "/timeline")
 
-		artifacts, err := db.GetArtifactsByPath(path)
+		metadataList, err := db.GetMetadataByPath(path)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch artifacts for path: %w", err)
+			return nil, fmt.Errorf("failed to fetch metadata for path: %w", err)
 		}
 
 		// Filter for video-timeline type only
-		var timelineFrames []*models.Artifact
-		for _, artifact := range artifacts {
-			if artifact.ArtifactType == "video-timeline" {
-				artifact.ResourceUri = fmt.Sprintf("shell://metadata/%s", artifact.Hash)
-				timelineFrames = append(timelineFrames, artifact)
+		var timelineFrames []*models.Metadata
+		for _, metadata := range metadataList {
+			if metadata.MetadataType == "video-timeline" {
+				metadata.ResourceUri = fmt.Sprintf("shell://metadata/%s", metadata.Hash)
+				timelineFrames = append(timelineFrames, metadata)
 			}
 		}
 

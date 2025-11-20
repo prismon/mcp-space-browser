@@ -230,17 +230,17 @@ func buildArtifact(artifactType, mimeType, cachePath, sourcePath, hash string, m
 	// We do this asynchronously to avoid slowing down artifact generation
 	go func() {
 		if artifactDB != nil {
-			artifact := &models.Artifact{
+			metadata := &models.Metadata{
 				Hash:         hash,
 				SourcePath:   sourcePath,
-				ArtifactType: artifactType,
+				MetadataType: artifactType,
 				MimeType:     mimeType,
 				CachePath:    cachePath,
 				FileSize:     fileSize,
-				Metadata:     metadataJSON,
+				MetadataJson: metadataJSON,
 				CreatedAt:    time.Now().Unix(),
 			}
-			if err := artifactDB.CreateOrUpdateArtifact(artifact); err != nil {
+			if err := artifactDB.CreateOrUpdateMetadata(metadata); err != nil {
 				inspectLog.WithError(err).WithField("hash", hash).Warn("Failed to persist artifact metadata")
 			}
 		}

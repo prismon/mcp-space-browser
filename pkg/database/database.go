@@ -156,27 +156,27 @@ func (d *DiskDB) init() error {
 		return err
 	}
 
-	// Create artifacts table
-	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS artifacts (
+	// Create metadata table
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS metadata (
 		id INTEGER PRIMARY KEY,
 		hash TEXT UNIQUE NOT NULL,
 		source_path TEXT NOT NULL,
-		artifact_type TEXT NOT NULL,
+		metadata_type TEXT NOT NULL,
 		mime_type TEXT NOT NULL,
 		cache_path TEXT NOT NULL,
 		file_size INTEGER DEFAULT 0,
-		metadata TEXT,
+		metadata_json TEXT,
 		created_at INTEGER DEFAULT (strftime('%s', 'now')),
 		FOREIGN KEY (source_path) REFERENCES entries(path) ON DELETE CASCADE
 	)`); err != nil {
 		return err
 	}
 
-	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_artifact_source ON artifacts(source_path)"); err != nil {
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_metadata_source ON metadata(source_path)"); err != nil {
 		return err
 	}
 
-	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_artifact_type ON artifacts(artifact_type)"); err != nil {
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_metadata_type ON metadata(metadata_type)"); err != nil {
 		return err
 	}
 
@@ -1413,44 +1413,44 @@ func intPtr(i int) *int {
 	return &i
 }
 
-// Artifact Operations
+// Metadata Operations
 
-// CreateOrUpdateArtifact inserts or updates an artifact in the database
-func (d *DiskDB) CreateOrUpdateArtifact(artifact *models.Artifact) error {
+// CreateOrUpdateMetadata inserts or updates metadata in the database
+func (d *DiskDB) CreateOrUpdateMetadata(metadata *models.Metadata) error {
 	log.WithFields(logrus.Fields{
-		"hash":       artifact.Hash,
-		"sourcePath": artifact.SourcePath,
-		"type":       artifact.ArtifactType,
-	}).Debug("Creating/updating artifact")
+		"hash":       metadata.Hash,
+		"sourcePath": metadata.SourcePath,
+		"type":       metadata.MetadataType,
+	}).Debug("Creating/updating metadata")
 
 	_, err := d.db.Exec(`
-		INSERT INTO artifacts (hash, source_path, artifact_type, mime_type, cache_path, file_size, metadata)
+		INSERT INTO metadata (hash, source_path, metadata_type, mime_type, cache_path, file_size, metadata_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(hash) DO UPDATE SET
 			source_path=excluded.source_path,
-			artifact_type=excluded.artifact_type,
+			metadata_type=excluded.metadata_type,
 			mime_type=excluded.mime_type,
 			cache_path=excluded.cache_path,
 			file_size=excluded.file_size,
-			metadata=excluded.metadata,
+			metadata_json=excluded.metadata_json,
 			created_at=excluded.created_at
-	`, artifact.Hash, artifact.SourcePath, artifact.ArtifactType, artifact.MimeType,
-		artifact.CachePath, artifact.FileSize, artifact.Metadata)
+	`, metadata.Hash, metadata.SourcePath, metadata.MetadataType, metadata.MimeType,
+		metadata.CachePath, metadata.FileSize, metadata.MetadataJson)
 
 	return err
 }
 
-// GetArtifact retrieves an artifact by hash
-func (d *DiskDB) GetArtifact(hash string) (*models.Artifact, error) {
-	var artifact models.Artifact
-	var metadata sql.NullString
+// GetMetadata retrieves metadata by hash
+func (d *DiskDB) GetMetadata(hash string) (*models.Metadata, error) {
+	var metadata models.Metadata
+	var metadataJson sql.NullString
 
 	err := d.db.QueryRow(`
-		SELECT id, hash, source_path, artifact_type, mime_type, cache_path, file_size, metadata, created_at
-		FROM artifacts WHERE hash = ?
+		SELECT id, hash, source_path, metadata_type, mime_type, cache_path, file_size, metadata_json, created_at
+		FROM metadata WHERE hash = ?
 	`, hash).Scan(
-		&artifact.ID, &artifact.Hash, &artifact.SourcePath, &artifact.ArtifactType,
-		&artifact.MimeType, &artifact.CachePath, &artifact.FileSize, &metadata, &artifact.CreatedAt,
+		&metadata.ID, &metadata.Hash, &metadata.SourcePath, &metadata.MetadataType,
+		&metadata.MimeType, &metadata.CachePath, &metadata.FileSize, &metadataJson, &metadata.CreatedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -1460,18 +1460,18 @@ func (d *DiskDB) GetArtifact(hash string) (*models.Artifact, error) {
 		return nil, err
 	}
 
-	if metadata.Valid {
-		artifact.Metadata = metadata.String
+	if metadataJson.Valid {
+		metadata.MetadataJson = metadataJson.String
 	}
 
-	return &artifact, nil
+	return &metadata, nil
 }
 
-// GetArtifactsByPath retrieves all artifacts for a source path
-func (d *DiskDB) GetArtifactsByPath(sourcePath string) ([]*models.Artifact, error) {
+// GetMetadataByPath retrieves all metadata for a source path
+func (d *DiskDB) GetMetadataByPath(sourcePath string) ([]*models.Metadata, error) {
 	rows, err := d.db.Query(`
-		SELECT id, hash, source_path, artifact_type, mime_type, cache_path, file_size, metadata, created_at
-		FROM artifacts WHERE source_path = ?
+		SELECT id, hash, source_path, metadata_type, mime_type, cache_path, file_size, metadata_json, created_at
+		FROM metadata WHERE source_path = ?
 		ORDER BY created_at DESC
 	`, sourcePath)
 
@@ -1480,39 +1480,39 @@ func (d *DiskDB) GetArtifactsByPath(sourcePath string) ([]*models.Artifact, erro
 	}
 	defer rows.Close()
 
-	var artifacts []*models.Artifact
+	var metadataList []*models.Metadata
 	for rows.Next() {
-		var artifact models.Artifact
-		var metadata sql.NullString
+		var metadata models.Metadata
+		var metadataJson sql.NullString
 
 		if err := rows.Scan(
-			&artifact.ID, &artifact.Hash, &artifact.SourcePath, &artifact.ArtifactType,
-			&artifact.MimeType, &artifact.CachePath, &artifact.FileSize, &metadata, &artifact.CreatedAt,
+			&metadata.ID, &metadata.Hash, &metadata.SourcePath, &metadata.MetadataType,
+			&metadata.MimeType, &metadata.CachePath, &metadata.FileSize, &metadataJson, &metadata.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
 
-		if metadata.Valid {
-			artifact.Metadata = metadata.String
+		if metadataJson.Valid {
+			metadata.MetadataJson = metadataJson.String
 		}
 
-		artifacts = append(artifacts, &artifact)
+		metadataList = append(metadataList, &metadata)
 	}
 
-	return artifacts, rows.Err()
+	return metadataList, rows.Err()
 }
 
-// ListArtifacts retrieves all artifacts, optionally filtered by type
-func (d *DiskDB) ListArtifacts(artifactType *string) ([]*models.Artifact, error) {
+// ListMetadata retrieves all metadata, optionally filtered by type
+func (d *DiskDB) ListMetadata(metadataType *string) ([]*models.Metadata, error) {
 	query := `
-		SELECT id, hash, source_path, artifact_type, mime_type, cache_path, file_size, metadata, created_at
-		FROM artifacts
+		SELECT id, hash, source_path, metadata_type, mime_type, cache_path, file_size, metadata_json, created_at
+		FROM metadata
 	`
 	args := []interface{}{}
 
-	if artifactType != nil && *artifactType != "" {
-		query += " WHERE artifact_type = ?"
-		args = append(args, *artifactType)
+	if metadataType != nil && *metadataType != "" {
+		query += " WHERE metadata_type = ?"
+		args = append(args, *metadataType)
 	}
 
 	query += " ORDER BY created_at DESC"
@@ -1523,31 +1523,31 @@ func (d *DiskDB) ListArtifacts(artifactType *string) ([]*models.Artifact, error)
 	}
 	defer rows.Close()
 
-	var artifacts []*models.Artifact
+	var metadataList []*models.Metadata
 	for rows.Next() {
-		var artifact models.Artifact
-		var metadata sql.NullString
+		var metadata models.Metadata
+		var metadataJson sql.NullString
 
 		if err := rows.Scan(
-			&artifact.ID, &artifact.Hash, &artifact.SourcePath, &artifact.ArtifactType,
-			&artifact.MimeType, &artifact.CachePath, &artifact.FileSize, &metadata, &artifact.CreatedAt,
+			&metadata.ID, &metadata.Hash, &metadata.SourcePath, &metadata.MetadataType,
+			&metadata.MimeType, &metadata.CachePath, &metadata.FileSize, &metadataJson, &metadata.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
 
-		if metadata.Valid {
-			artifact.Metadata = metadata.String
+		if metadataJson.Valid {
+			metadata.MetadataJson = metadataJson.String
 		}
 
-		artifacts = append(artifacts, &artifact)
+		metadataList = append(metadataList, &metadata)
 	}
 
-	return artifacts, rows.Err()
+	return metadataList, rows.Err()
 }
 
-// DeleteArtifact deletes an artifact by hash
-func (d *DiskDB) DeleteArtifact(hash string) error {
-	log.WithField("hash", hash).Info("Deleting artifact")
-	_, err := d.db.Exec(`DELETE FROM artifacts WHERE hash = ?`, hash)
+// DeleteMetadata deletes metadata by hash
+func (d *DiskDB) DeleteMetadata(hash string) error {
+	log.WithField("hash", hash).Info("Deleting metadata")
+	_, err := d.db.Exec(`DELETE FROM metadata WHERE hash = ?`, hash)
 	return err
 }
