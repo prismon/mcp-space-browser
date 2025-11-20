@@ -100,7 +100,7 @@ exploring disk utilization (similar to Baobab/WinDirStat).`,
 
 	serverCmd.Flags().IntVar(&port, "port", 3000, "Port to listen on")
 	serverCmd.Flags().StringVar(&host, "host", "127.0.0.1", "Host address to bind to (use 0.0.0.0 for all interfaces)")
-	serverCmd.Flags().StringVar(&externalHost, "external-host", "", "External hostname for generating URLs (defaults to --host, or localhost if binding to 0.0.0.0)")
+	serverCmd.Flags().StringVar(&externalHost, "external-host", "", "External hostname/URL for generating resource URLs. Can be a hostname (e.g., 'example.com') or full URL (e.g., 'https://example.com'). Defaults to --host, or localhost if binding to 0.0.0.0")
 
 	// job-list command
 	var jobListCmd = &cobra.Command{
