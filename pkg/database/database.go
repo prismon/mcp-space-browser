@@ -771,12 +771,12 @@ func (d *DiskDB) ExecuteFileFilter(filter *models.FileFilter) ([]*models.Entry, 
 	}
 
 	if filter.Extensions != nil && len(filter.Extensions) > 0 {
-		placeholders := make([]string, len(filter.Extensions))
+		conditions := make([]string, len(filter.Extensions))
 		for i, ext := range filter.Extensions {
-			placeholders[i] = "?"
+			conditions[i] = "path LIKE ?"
 			args = append(args, "%."+ext)
 		}
-		query += " AND path LIKE ANY(" + strings.Join(placeholders, ",") + ")"
+		query += " AND (" + strings.Join(conditions, " OR ") + ")"
 	}
 
 	if filter.MinSize != nil {
@@ -823,6 +823,18 @@ func (d *DiskDB) ExecuteFileFilter(filter *models.FileFilter) ([]*models.Entry, 
 	sortBy := "mtime"
 	if filter.SortBy != nil {
 		sortBy = *filter.SortBy
+	}
+
+	// Validate sortBy field to prevent SQL injection
+	validSortFields := map[string]bool{
+		"size":  true,
+		"name":  true,
+		"mtime": true,
+		"ctime": true,
+		"path":  true,
+	}
+	if !validSortFields[sortBy] {
+		return nil, fmt.Errorf("invalid sort field: %s", sortBy)
 	}
 
 	descending := true
