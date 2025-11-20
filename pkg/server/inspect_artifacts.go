@@ -60,7 +60,7 @@ type inspectResponse struct {
 	ModifiedAt       string            `json:"modifiedAt"`
 	CreatedAt        string            `json:"createdAt"`
 	Link             string            `json:"link"`
-	ArtifactsUri     string            `json:"artifactsUri,omitempty"`     // MCP resource URI for all artifacts of this node
+	MetadataUri      string            `json:"metadataUri,omitempty"`      // MCP resource URI for all generated metadata of this node
 	ThumbnailUri     string            `json:"thumbnailUri,omitempty"`     // MCP resource URI for thumbnail (if available)
 	TimelineUri      string            `json:"timelineUri,omitempty"`      // MCP resource URI for video timeline (if available)
 	ContentUrl       string            `json:"contentUrl"`
@@ -130,9 +130,9 @@ func buildInspectResponse(inputPath string, db *database.DiskDB, limit, offset i
 		}(),
 	}
 
-	// Add artifacts URI if there are any artifacts
+	// Add metadata URI if there are any artifacts
 	if totalCount > 0 {
-		response.ArtifactsUri = fmt.Sprintf("shell://nodes/%s/artifacts", entry.Path)
+		response.MetadataUri = fmt.Sprintf("shell://nodes/%s/metadata", entry.Path)
 
 		// Check artifact types to set type-specific URIs
 		hasThumbnail := false
@@ -250,7 +250,7 @@ func buildArtifact(artifactType, mimeType, cachePath, sourcePath, hash string, m
 		Type:        artifactType,
 		MimeType:    mimeType,
 		Url:         fmt.Sprintf("%s/api/content?path=%s", contentBaseURL, url.QueryEscape(cachePath)),
-		ResourceUri: fmt.Sprintf("shell://artifacts/%s", hash),
+		ResourceUri: fmt.Sprintf("shell://metadata/%s", hash),
 		Metadata:    metadata,
 	}
 }

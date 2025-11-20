@@ -20,9 +20,9 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	registerSelectionSetsResource(s, db)
 	registerQueriesResource(s, db)
 	registerIndexJobsResource(s, db)
-	registerArtifactsResource(s, db) // All artifacts (generic)
+	registerMetadataResource(s, db) // All generated metadata (generic)
 
-	// Type-specific artifact resources
+	// Type-specific metadata resources
 	registerThumbnailsResource(s, db)      // All thumbnails
 	registerVideoTimelinesResource(s, db)  // All video timeline frames
 
@@ -40,12 +40,12 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	registerQueryTemplate(s, db)
 	registerQueryExecutionsTemplate(s, db)
 	registerIndexJobTemplate(s, db)
-	registerArtifactTemplate(s, db)             // Artifact by hash
-	registerNodeArtifactsTemplate(s, db)        // All artifacts for a node
+	registerMetadataByHashTemplate(s, db)      // Metadata by hash
+	registerNodeMetadataTemplate(s, db)        // All metadata for a node
 
-	// Type-specific artifact templates for nodes
-	registerNodeThumbnailTemplate(s, db)        // Thumbnail for a specific node
-	registerNodeVideoTimelineTemplate(s, db)    // Video timeline for a specific node
+	// Type-specific metadata templates for nodes
+	registerNodeThumbnailTemplate(s, db)       // Thumbnail for a specific node
+	registerNodeVideoTimelineTemplate(s, db)   // Video timeline for a specific node
 }
 
 // Static Resources
@@ -617,33 +617,33 @@ func registerIndexJobTemplate(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-// Artifact Resources
+// Generated Metadata Resources
 
-func registerArtifactsResource(s *server.MCPServer, db *database.DiskDB) {
+func registerMetadataResource(s *server.MCPServer, db *database.DiskDB) {
 	resource := mcp.NewResource(
-		"shell://artifacts",
-		"All Generated Artifacts",
-		mcp.WithResourceDescription("List of all generated media artifacts (thumbnails, video timelines, etc.)"),
+		"shell://metadata",
+		"All Generated Metadata",
+		mcp.WithResourceDescription("List of all generated file metadata (thumbnails, video timelines, etc.)"),
 		mcp.WithMIMEType("application/json"),
 	)
 
 	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		artifacts, err := db.ListArtifacts(nil)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch artifacts: %w", err)
+			return nil, fmt.Errorf("failed to fetch metadata: %w", err)
 		}
 
-		// Add resource URIs to artifacts
+		// Add resource URIs to metadata entries
 		for _, artifact := range artifacts {
-			artifact.ResourceUri = fmt.Sprintf("shell://artifacts/%s", artifact.Hash)
+			artifact.ResourceUri = fmt.Sprintf("shell://metadata/%s", artifact.Hash)
 		}
 
 		data, err := json.MarshalIndent(map[string]interface{}{
-			"count":     len(artifacts),
-			"artifacts": artifacts,
+			"count":    len(artifacts),
+			"metadata": artifacts,
 		}, "", "  ")
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal artifacts: %w", err)
+			return nil, fmt.Errorf("failed to marshal metadata: %w", err)
 		}
 
 		return []mcp.ResourceContents{
@@ -656,16 +656,16 @@ func registerArtifactsResource(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-func registerArtifactTemplate(s *server.MCPServer, db *database.DiskDB) {
+func registerMetadataByHashTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"shell://artifacts/{hash}",
-		"Artifact by Hash",
-		mcp.WithTemplateDescription("Get a specific artifact by its hash"),
+		"shell://metadata/{hash}",
+		"Metadata by Hash",
+		mcp.WithTemplateDescription("Get a specific generated metadata entry by its hash"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract hash from URI: shell://artifacts/{hash}
+		// Extract hash from URI: shell://metadata/{hash}
 		parts := strings.Split(request.Params.URI, "/")
 		if len(parts) < 4 {
 			return nil, fmt.Errorf("invalid URI format: %s", request.Params.URI)
@@ -674,19 +674,19 @@ func registerArtifactTemplate(s *server.MCPServer, db *database.DiskDB) {
 
 		artifact, err := db.GetArtifact(hash)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch artifact: %w", err)
+			return nil, fmt.Errorf("failed to fetch metadata: %w", err)
 		}
 
 		if artifact == nil {
-			return nil, fmt.Errorf("artifact not found: %s", hash)
+			return nil, fmt.Errorf("metadata not found: %s", hash)
 		}
 
 		// Add resource URI
-		artifact.ResourceUri = fmt.Sprintf("shell://artifacts/%s", artifact.Hash)
+		artifact.ResourceUri = fmt.Sprintf("shell://metadata/%s", artifact.Hash)
 
 		data, err := json.MarshalIndent(artifact, "", "  ")
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal artifact: %w", err)
+			return nil, fmt.Errorf("failed to marshal metadata: %w", err)
 		}
 
 		return []mcp.ResourceContents{
@@ -699,42 +699,42 @@ func registerArtifactTemplate(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-func registerNodeArtifactsTemplate(s *server.MCPServer, db *database.DiskDB) {
+func registerNodeMetadataTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"shell://nodes/{path}/artifacts",
-		"Artifacts for Node",
-		mcp.WithTemplateDescription("Get all artifacts for a specific filesystem node (file or directory)"),
+		"shell://nodes/{path}/metadata",
+		"Metadata for Node",
+		mcp.WithTemplateDescription("Get all generated metadata for a specific filesystem node (file or directory)"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract path from URI: shell://nodes/{path}/artifacts
+		// Extract path from URI: shell://nodes/{path}/metadata
 		uri := request.Params.URI
-		if !strings.HasPrefix(uri, "shell://nodes/") || !strings.HasSuffix(uri, "/artifacts") {
+		if !strings.HasPrefix(uri, "shell://nodes/") || !strings.HasSuffix(uri, "/metadata") {
 			return nil, fmt.Errorf("invalid URI format: %s", uri)
 		}
 
 		// Remove prefix and suffix to get path
 		path := strings.TrimPrefix(uri, "shell://nodes/")
-		path = strings.TrimSuffix(path, "/artifacts")
+		path = strings.TrimSuffix(path, "/metadata")
 
 		artifacts, err := db.GetArtifactsByPath(path)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch artifacts for path: %w", err)
+			return nil, fmt.Errorf("failed to fetch metadata for path: %w", err)
 		}
 
-		// Add resource URIs to artifacts
+		// Add resource URIs to metadata entries
 		for _, artifact := range artifacts {
-			artifact.ResourceUri = fmt.Sprintf("shell://artifacts/%s", artifact.Hash)
+			artifact.ResourceUri = fmt.Sprintf("shell://metadata/%s", artifact.Hash)
 		}
 
 		data, err := json.MarshalIndent(map[string]interface{}{
-			"path":      path,
-			"count":     len(artifacts),
-			"artifacts": artifacts,
+			"path":     path,
+			"count":    len(artifacts),
+			"metadata": artifacts,
 		}, "", "  ")
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal artifacts: %w", err)
+			return nil, fmt.Errorf("failed to marshal metadata: %w", err)
 		}
 
 		return []mcp.ResourceContents{
@@ -766,7 +766,7 @@ func registerThumbnailsResource(s *server.MCPServer, db *database.DiskDB) {
 
 		// Add resource URIs to artifacts
 		for _, artifact := range artifacts {
-			artifact.ResourceUri = fmt.Sprintf("shell://artifacts/%s", artifact.Hash)
+			artifact.ResourceUri = fmt.Sprintf("shell://metadata/%s", artifact.Hash)
 		}
 
 		data, err := json.MarshalIndent(map[string]interface{}{
@@ -804,7 +804,7 @@ func registerVideoTimelinesResource(s *server.MCPServer, db *database.DiskDB) {
 
 		// Add resource URIs to artifacts
 		for _, artifact := range artifacts {
-			artifact.ResourceUri = fmt.Sprintf("shell://artifacts/%s", artifact.Hash)
+			artifact.ResourceUri = fmt.Sprintf("shell://metadata/%s", artifact.Hash)
 		}
 
 		data, err := json.MarshalIndent(map[string]interface{}{
@@ -853,7 +853,7 @@ func registerNodeThumbnailTemplate(s *server.MCPServer, db *database.DiskDB) {
 		var thumbnailArtifact *models.Artifact
 		for _, artifact := range artifacts {
 			if artifact.ArtifactType == "thumbnail" {
-				artifact.ResourceUri = fmt.Sprintf("shell://artifacts/%s", artifact.Hash)
+				artifact.ResourceUri = fmt.Sprintf("shell://metadata/%s", artifact.Hash)
 				thumbnailArtifact = artifact
 				break
 			}
@@ -911,7 +911,7 @@ func registerNodeVideoTimelineTemplate(s *server.MCPServer, db *database.DiskDB)
 		var timelineFrames []*models.Artifact
 		for _, artifact := range artifacts {
 			if artifact.ArtifactType == "video-timeline" {
-				artifact.ResourceUri = fmt.Sprintf("shell://artifacts/%s", artifact.Hash)
+				artifact.ResourceUri = fmt.Sprintf("shell://metadata/%s", artifact.Hash)
 				timelineFrames = append(timelineFrames, artifact)
 			}
 		}
