@@ -127,3 +127,17 @@ type DiskUsageSummary struct {
 	NewestFile       string `json:"newest_file,omitempty"`
 	NewestFileTime   int64  `json:"newest_file_time"`
 }
+
+// Artifact represents a generated media artifact (thumbnail, video timeline, etc.)
+type Artifact struct {
+	ID           int64  `db:"id" json:"id,omitempty"`
+	Hash         string `db:"hash" json:"hash"`                   // SHA256 hash for deduplication
+	SourcePath   string `db:"source_path" json:"source_path"`     // Original file path
+	ArtifactType string `db:"artifact_type" json:"artifact_type"` // "thumbnail", "video-timeline", etc.
+	MimeType     string `db:"mime_type" json:"mime_type"`         // "image/jpeg", etc.
+	CachePath    string `db:"cache_path" json:"cache_path"`       // Path to cached artifact file
+	FileSize     int64  `db:"file_size" json:"file_size"`         // Size of artifact file in bytes
+	Metadata     string `db:"metadata" json:"metadata,omitempty"` // JSON metadata (frame number, etc.)
+	CreatedAt    int64  `db:"created_at" json:"created_at"`       // Unix timestamp
+	ResourceUri  string `db:"-" json:"resource_uri,omitempty"`    // MCP resource URI (computed)
+}

@@ -428,7 +428,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	// Determine the external host if not specified
-	effectiveExternalHost := config.Server.ExternalHost
+	effectiveExternalHost = config.Server.ExternalHost
 	if effectiveExternalHost == "" {
 		if config.Server.Host == "0.0.0.0" || config.Server.Host == "" || config.Server.Host == "::" {
 			effectiveExternalHost = "localhost"
@@ -461,7 +461,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	defer db.Close()
 
 
-	if err := server.Start(host, port, effectiveExternalHost, db, dbPath); err != nil {
+	if err := server.Start(config, db, config.Database.Path); err != nil {
 		log.WithError(err).Error("Server failed")
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

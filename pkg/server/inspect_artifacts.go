@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prismon/mcp-space-browser/internal/models"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
 	"github.com/prismon/mcp-space-browser/pkg/pathutil"
@@ -35,25 +37,34 @@ const (
 var (
 	contentBaseURL   string
 	artifactCacheDir = filepath.Join(os.TempDir(), "mcp-space-browser-artifacts")
+	artifactDB       *database.DiskDB // Database reference for persisting artifact metadata
 )
 
+// SetArtifactDB sets the database instance for artifact persistence
+func SetArtifactDB(db *database.DiskDB) {
+	artifactDB = db
+}
+
 type inspectArtifact struct {
-	Type     string         `json:"type"`
-	MimeType string         `json:"mimeType"`
-	Url      string         `json:"url"`
-	Metadata map[string]any `json:"metadata,omitempty"`
+	Type        string         `json:"type"`
+	MimeType    string         `json:"mimeType"`
+	Url         string         `json:"url"`
+	ResourceUri string         `json:"resourceUri,omitempty"` // MCP resource URI for discovery
+	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
 type inspectResponse struct {
-	Path        string            `json:"path"`
-	Kind        string            `json:"kind"`
-	Size        int64             `json:"size"`
-	ModifiedAt  string            `json:"modifiedAt"`
-	CreatedAt   string            `json:"createdAt"`
-	Link        string            `json:"link"`
-	ContentUrl  string            `json:"contentUrl"`
-	Artifacts   []inspectArtifact `json:"artifacts"`
-	NextPageUrl string            `json:"nextPageUrl,omitempty"`
+	Path             string            `json:"path"`
+	Kind             string            `json:"kind"`
+	Size             int64             `json:"size"`
+	ModifiedAt       string            `json:"modifiedAt"`
+	CreatedAt        string            `json:"createdAt"`
+	Link             string            `json:"link"`
+	ArtifactsUri     string            `json:"artifactsUri,omitempty"`     // MCP resource URI for all artifacts of this node
+	ContentUrl       string            `json:"contentUrl"`
+	Artifacts        []inspectArtifact `json:"artifacts"`
+	ArtifactsCount   int               `json:"artifactsCount"`             // Total count of artifacts
+	NextPageUrl      string            `json:"nextPageUrl,omitempty"`
 }
 
 func initArtifactCache() {
@@ -94,30 +105,38 @@ func buildInspectResponse(inputPath string, db *database.DiskDB, limit, offset i
 		return nil, errors.New("entry not indexed")
 	}
 
-	artifacts, nextPage, err := generateArtifacts(expandedPath, entry.Kind, entry.Mtime, limit, offset)
+	artifacts, nextPage, totalCount, err := generateArtifacts(expandedPath, entry.Kind, entry.Mtime, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 
-	return &inspectResponse{
-		Path:       entry.Path,
-		Kind:       entry.Kind,
-		Size:       entry.Size,
-		ModifiedAt: time.Unix(entry.Mtime, 0).Format(time.RFC3339),
-		CreatedAt:  time.Unix(entry.Ctime, 0).Format(time.RFC3339),
-		Link:       fmt.Sprintf("shell://nodes/%s", entry.Path),
-		ContentUrl: fmt.Sprintf("%s/api/content?path=%s", contentBaseURL, url.QueryEscape(expandedPath)),
-		Artifacts:  artifacts,
+	response := &inspectResponse{
+		Path:           entry.Path,
+		Kind:           entry.Kind,
+		Size:           entry.Size,
+		ModifiedAt:     time.Unix(entry.Mtime, 0).Format(time.RFC3339),
+		CreatedAt:      time.Unix(entry.Ctime, 0).Format(time.RFC3339),
+		Link:           fmt.Sprintf("shell://nodes/%s", entry.Path),
+		ContentUrl:     fmt.Sprintf("%s/api/content?path=%s", contentBaseURL, url.QueryEscape(expandedPath)),
+		Artifacts:      artifacts,
+		ArtifactsCount: totalCount,
 		NextPageUrl: func() string {
 			if nextPage == -1 {
 				return ""
 			}
 			return fmt.Sprintf("%s/api/inspect?path=%s&offset=%d&limit=%d", contentBaseURL, url.QueryEscape(expandedPath), nextPage, limit)
 		}(),
-	}, nil
+	}
+
+	// Add artifacts URI if there are any artifacts
+	if totalCount > 0 {
+		response.ArtifactsUri = fmt.Sprintf("shell://nodes/%s/artifacts", entry.Path)
+	}
+
+	return response, nil
 }
 
-func generateArtifacts(path string, kind string, mtime int64, limit, offset int) ([]inspectArtifact, int, error) {
+func generateArtifacts(path string, kind string, mtime int64, limit, offset int) ([]inspectArtifact, int, int, error) {
 	artifacts := make([]inspectArtifact, 0)
 	hashKey := artifactHashKey(path, mtime)
 	lower := strings.ToLower(filepath.Ext(path))
@@ -127,27 +146,32 @@ func generateArtifacts(path string, kind string, mtime int64, limit, offset int)
 	if kind == "file" && isImage {
 		thumbPath, mimeType, err := createImageThumbnail(path, mtime, hashKey)
 		if err != nil {
-			return nil, -1, err
+			return nil, -1, 0, err
 		}
-		artifacts = append(artifacts, buildArtifact("thumbnail", mimeType, thumbPath, nil))
+		artifact := buildArtifact("thumbnail", mimeType, thumbPath, path, hashKey, nil)
+		artifacts = append(artifacts, artifact)
 	}
 
 	if kind == "file" && isVideo {
 		posterPath, mimeType, err := createVideoPoster(path, mtime, hashKey)
 		if err != nil {
-			return nil, -1, err
+			return nil, -1, 0, err
 		}
-		artifacts = append(artifacts, buildArtifact("thumbnail", mimeType, posterPath, nil))
+		artifact := buildArtifact("thumbnail", mimeType, posterPath, path, hashKey, nil)
+		artifacts = append(artifacts, artifact)
 
 		frames, err := createVideoTimeline(path, mtime, hashKey, artifactTimelineN)
 		if err != nil {
-			return nil, -1, err
+			return nil, -1, 0, err
 		}
 		for idx, f := range frames {
-			artifacts = append(artifacts, buildArtifact("video-timeline", "image/jpeg", f, map[string]any{"frame": idx}))
+			frameHash := fmt.Sprintf("%s-frame-%d", hashKey, idx)
+			artifact := buildArtifact("video-timeline", "image/jpeg", f, path, frameHash, map[string]any{"frame": idx})
+			artifacts = append(artifacts, artifact)
 		}
 	}
 
+	totalCount := len(artifacts)
 	start := offset
 	if start > len(artifacts) {
 		start = len(artifacts)
@@ -162,15 +186,50 @@ func generateArtifacts(path string, kind string, mtime int64, limit, offset int)
 		next = end
 	}
 
-	return artifacts[start:end], next, nil
+	return artifacts[start:end], next, totalCount, nil
 }
 
-func buildArtifact(artifactType, mimeType, filePath string, metadata map[string]any) inspectArtifact {
+func buildArtifact(artifactType, mimeType, cachePath, sourcePath, hash string, metadata map[string]any) inspectArtifact {
+	// Convert metadata to JSON string for database storage
+	var metadataJSON string
+	if metadata != nil {
+		if jsonBytes, err := json.Marshal(metadata); err == nil {
+			metadataJSON = string(jsonBytes)
+		}
+	}
+
+	// Get file size of cached artifact
+	var fileSize int64
+	if stat, err := os.Stat(cachePath); err == nil {
+		fileSize = stat.Size()
+	}
+
+	// Persist artifact metadata to database (fire and forget)
+	// We do this asynchronously to avoid slowing down artifact generation
+	go func() {
+		if artifactDB != nil {
+			artifact := &models.Artifact{
+				Hash:         hash,
+				SourcePath:   sourcePath,
+				ArtifactType: artifactType,
+				MimeType:     mimeType,
+				CachePath:    cachePath,
+				FileSize:     fileSize,
+				Metadata:     metadataJSON,
+				CreatedAt:    time.Now().Unix(),
+			}
+			if err := artifactDB.CreateOrUpdateArtifact(artifact); err != nil {
+				inspectLog.WithError(err).WithField("hash", hash).Warn("Failed to persist artifact metadata")
+			}
+		}
+	}()
+
 	return inspectArtifact{
-		Type:     artifactType,
-		MimeType: mimeType,
-		Url:      fmt.Sprintf("%s/api/content?path=%s", contentBaseURL, url.QueryEscape(filePath)),
-		Metadata: metadata,
+		Type:        artifactType,
+		MimeType:    mimeType,
+		Url:         fmt.Sprintf("%s/api/content?path=%s", contentBaseURL, url.QueryEscape(cachePath)),
+		ResourceUri: fmt.Sprintf("shell://artifacts/%s", hash),
+		Metadata:    metadata,
 	}
 }
 

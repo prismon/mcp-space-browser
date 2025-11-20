@@ -19,6 +19,7 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	registerSelectionSetsResource(s, db)
 	registerQueriesResource(s, db)
 	registerIndexJobsResource(s, db)
+	registerArtifactsResource(s, db) // NEW: Artifacts resource
 
 	// Register job queue resources
 	registerJobQueuePendingResource(s, db)
@@ -34,6 +35,8 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	registerQueryTemplate(s, db)
 	registerQueryExecutionsTemplate(s, db)
 	registerIndexJobTemplate(s, db)
+	registerArtifactTemplate(s, db)             // NEW: Artifact by hash
+	registerNodeArtifactsTemplate(s, db)        // NEW: Artifacts for a node path
 }
 
 // Static Resources
@@ -593,6 +596,136 @@ func registerIndexJobTemplate(s *server.MCPServer, db *database.DiskDB) {
 		data, err := json.MarshalIndent(job, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal index job: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+// Artifact Resources
+
+func registerArtifactsResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"shell://artifacts",
+		"All Generated Artifacts",
+		mcp.WithResourceDescription("List of all generated media artifacts (thumbnails, video timelines, etc.)"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		artifacts, err := db.ListArtifacts(nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch artifacts: %w", err)
+		}
+
+		// Add resource URIs to artifacts
+		for _, artifact := range artifacts {
+			artifact.ResourceUri = fmt.Sprintf("shell://artifacts/%s", artifact.Hash)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"count":     len(artifacts),
+			"artifacts": artifacts,
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal artifacts: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerArtifactTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://artifacts/{hash}",
+		"Artifact by Hash",
+		mcp.WithTemplateDescription("Get a specific artifact by its hash"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract hash from URI: shell://artifacts/{hash}
+		parts := strings.Split(request.Params.URI, "/")
+		if len(parts) < 4 {
+			return nil, fmt.Errorf("invalid URI format: %s", request.Params.URI)
+		}
+		hash := parts[3]
+
+		artifact, err := db.GetArtifact(hash)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch artifact: %w", err)
+		}
+
+		if artifact == nil {
+			return nil, fmt.Errorf("artifact not found: %s", hash)
+		}
+
+		// Add resource URI
+		artifact.ResourceUri = fmt.Sprintf("shell://artifacts/%s", artifact.Hash)
+
+		data, err := json.MarshalIndent(artifact, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal artifact: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerNodeArtifactsTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://nodes/{path}/artifacts",
+		"Artifacts for Node",
+		mcp.WithTemplateDescription("Get all artifacts for a specific filesystem node (file or directory)"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract path from URI: shell://nodes/{path}/artifacts
+		uri := request.Params.URI
+		if !strings.HasPrefix(uri, "shell://nodes/") || !strings.HasSuffix(uri, "/artifacts") {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		// Remove prefix and suffix to get path
+		path := strings.TrimPrefix(uri, "shell://nodes/")
+		path = strings.TrimSuffix(path, "/artifacts")
+
+		artifacts, err := db.GetArtifactsByPath(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch artifacts for path: %w", err)
+		}
+
+		// Add resource URIs to artifacts
+		for _, artifact := range artifacts {
+			artifact.ResourceUri = fmt.Sprintf("shell://artifacts/%s", artifact.Hash)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"path":      path,
+			"count":     len(artifacts),
+			"artifacts": artifacts,
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal artifacts: %w", err)
 		}
 
 		return []mcp.ResourceContents{

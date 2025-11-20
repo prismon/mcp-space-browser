@@ -156,6 +156,30 @@ func (d *DiskDB) init() error {
 		return err
 	}
 
+	// Create artifacts table
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS artifacts (
+		id INTEGER PRIMARY KEY,
+		hash TEXT UNIQUE NOT NULL,
+		source_path TEXT NOT NULL,
+		artifact_type TEXT NOT NULL,
+		mime_type TEXT NOT NULL,
+		cache_path TEXT NOT NULL,
+		file_size INTEGER DEFAULT 0,
+		metadata TEXT,
+		created_at INTEGER DEFAULT (strftime('%s', 'now')),
+		FOREIGN KEY (source_path) REFERENCES entries(path) ON DELETE CASCADE
+	)`); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_artifact_source ON artifacts(source_path)"); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_artifact_type ON artifacts(artifact_type)"); err != nil {
+		return err
+	}
+
 	log.Debug("Database initialization complete")
 	return nil
 }
@@ -1387,4 +1411,143 @@ func (d *DiskDB) DeleteQuery(name string) error {
 // Helper function to create int pointer
 func intPtr(i int) *int {
 	return &i
+}
+
+// Artifact Operations
+
+// CreateOrUpdateArtifact inserts or updates an artifact in the database
+func (d *DiskDB) CreateOrUpdateArtifact(artifact *models.Artifact) error {
+	log.WithFields(logrus.Fields{
+		"hash":       artifact.Hash,
+		"sourcePath": artifact.SourcePath,
+		"type":       artifact.ArtifactType,
+	}).Debug("Creating/updating artifact")
+
+	_, err := d.db.Exec(`
+		INSERT INTO artifacts (hash, source_path, artifact_type, mime_type, cache_path, file_size, metadata)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(hash) DO UPDATE SET
+			source_path=excluded.source_path,
+			artifact_type=excluded.artifact_type,
+			mime_type=excluded.mime_type,
+			cache_path=excluded.cache_path,
+			file_size=excluded.file_size,
+			metadata=excluded.metadata,
+			created_at=excluded.created_at
+	`, artifact.Hash, artifact.SourcePath, artifact.ArtifactType, artifact.MimeType,
+		artifact.CachePath, artifact.FileSize, artifact.Metadata)
+
+	return err
+}
+
+// GetArtifact retrieves an artifact by hash
+func (d *DiskDB) GetArtifact(hash string) (*models.Artifact, error) {
+	var artifact models.Artifact
+	var metadata sql.NullString
+
+	err := d.db.QueryRow(`
+		SELECT id, hash, source_path, artifact_type, mime_type, cache_path, file_size, metadata, created_at
+		FROM artifacts WHERE hash = ?
+	`, hash).Scan(
+		&artifact.ID, &artifact.Hash, &artifact.SourcePath, &artifact.ArtifactType,
+		&artifact.MimeType, &artifact.CachePath, &artifact.FileSize, &metadata, &artifact.CreatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if metadata.Valid {
+		artifact.Metadata = metadata.String
+	}
+
+	return &artifact, nil
+}
+
+// GetArtifactsByPath retrieves all artifacts for a source path
+func (d *DiskDB) GetArtifactsByPath(sourcePath string) ([]*models.Artifact, error) {
+	rows, err := d.db.Query(`
+		SELECT id, hash, source_path, artifact_type, mime_type, cache_path, file_size, metadata, created_at
+		FROM artifacts WHERE source_path = ?
+		ORDER BY created_at DESC
+	`, sourcePath)
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var artifacts []*models.Artifact
+	for rows.Next() {
+		var artifact models.Artifact
+		var metadata sql.NullString
+
+		if err := rows.Scan(
+			&artifact.ID, &artifact.Hash, &artifact.SourcePath, &artifact.ArtifactType,
+			&artifact.MimeType, &artifact.CachePath, &artifact.FileSize, &metadata, &artifact.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+
+		if metadata.Valid {
+			artifact.Metadata = metadata.String
+		}
+
+		artifacts = append(artifacts, &artifact)
+	}
+
+	return artifacts, rows.Err()
+}
+
+// ListArtifacts retrieves all artifacts, optionally filtered by type
+func (d *DiskDB) ListArtifacts(artifactType *string) ([]*models.Artifact, error) {
+	query := `
+		SELECT id, hash, source_path, artifact_type, mime_type, cache_path, file_size, metadata, created_at
+		FROM artifacts
+	`
+	args := []interface{}{}
+
+	if artifactType != nil && *artifactType != "" {
+		query += " WHERE artifact_type = ?"
+		args = append(args, *artifactType)
+	}
+
+	query += " ORDER BY created_at DESC"
+
+	rows, err := d.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var artifacts []*models.Artifact
+	for rows.Next() {
+		var artifact models.Artifact
+		var metadata sql.NullString
+
+		if err := rows.Scan(
+			&artifact.ID, &artifact.Hash, &artifact.SourcePath, &artifact.ArtifactType,
+			&artifact.MimeType, &artifact.CachePath, &artifact.FileSize, &metadata, &artifact.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+
+		if metadata.Valid {
+			artifact.Metadata = metadata.String
+		}
+
+		artifacts = append(artifacts, &artifact)
+	}
+
+	return artifacts, rows.Err()
+}
+
+// DeleteArtifact deletes an artifact by hash
+func (d *DiskDB) DeleteArtifact(hash string) error {
+	log.WithField("hash", hash).Info("Deleting artifact")
+	_, err := d.db.Exec(`DELETE FROM artifacts WHERE hash = ?`, hash)
+	return err
 }

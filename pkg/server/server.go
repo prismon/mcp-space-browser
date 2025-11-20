@@ -27,7 +27,6 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -59,6 +58,9 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 	// Update contentBaseURL from config
 	contentBaseURL = config.Server.BaseURL
 
+	// Set artifact database for persistence
+	SetArtifactDB(db)
+
 	// Initialize token validator if auth is enabled
 	var validator *auth.TokenValidator
 	if config.Auth.Enabled {
@@ -73,15 +75,6 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 		auth.RegisterProtectedResourceMetadataEndpoint(router, &config.Auth, config.Server.BaseURL)
 		log.Info("Protected Resource Metadata endpoint registered at /.well-known/oauth-protected-resource")
 	}
-	// Build contentBaseURL based on whether externalHost already includes protocol
-	if strings.HasPrefix(externalHost, "http://") || strings.HasPrefix(externalHost, "https://") {
-		// External host already includes protocol - use it as-is
-		contentBaseURL = strings.TrimSuffix(externalHost, "/")
-	} else {
-		// External host is just a hostname - add protocol and port
-		contentBaseURL = fmt.Sprintf("http://%s:%d", externalHost, port)
-	}
-	initContentTokenSecret()
 
 	// Middleware for logging
 	router.Use(func(c *gin.Context) {
@@ -169,11 +162,11 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 	}
 	router.Any("/mcp", gin.WrapH(mcpHandler))
 
-	addr := fmt.Sprintf("%s:%d", host, port)
-	log.WithFields(logrus.Fields{
-		"host":         host,
-		"port":         port,
-		"externalHost": externalHost,
+	addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
+	logFields := logrus.Fields{
+		"host":         config.Server.Host,
+		"port":         config.Server.Port,
+		"externalHost": config.Server.ExternalHost,
 		"rest_api":     "/api/*",
 		"mcp_endpoint": "/mcp",
 		"swagger_docs": "/docs/index.html",
