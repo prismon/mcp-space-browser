@@ -14,6 +14,7 @@ import (
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	Database DatabaseConfig `yaml:"database"`
+	Cache    CacheConfig    `yaml:"cache"`
 	Auth     AuthConfig     `yaml:"auth"`
 	Logging  LoggingConfig  `yaml:"logging"`
 }
@@ -29,6 +30,11 @@ type ServerConfig struct {
 // DatabaseConfig holds database settings
 type DatabaseConfig struct {
 	Path string `yaml:"path"`
+}
+
+// CacheConfig holds cache settings
+type CacheConfig struct {
+	Dir string `yaml:"dir"`
 }
 
 // AuthConfig holds OAuth/OIDC authentication settings
@@ -70,6 +76,9 @@ func LoadConfig(configPath string) (*Config, error) {
 		},
 		Database: DatabaseConfig{
 			Path: "disk.db",
+		},
+		Cache: CacheConfig{
+			Dir: "./cache/artifacts",
 		},
 		Auth: AuthConfig{
 			Enabled:         false,
@@ -136,6 +145,11 @@ func applyEnvOverrides(config *Config) {
 	// Database overrides
 	if dbPath := os.Getenv("DATABASE_PATH"); dbPath != "" {
 		config.Database.Path = dbPath
+	}
+
+	// Cache overrides
+	if cacheDir := os.Getenv("CACHE_DIR"); cacheDir != "" {
+		config.Cache.Dir = cacheDir
 	}
 
 	// Auth overrides

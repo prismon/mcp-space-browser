@@ -36,13 +36,18 @@ const (
 
 var (
 	contentBaseURL   string
-	artifactCacheDir = filepath.Join(os.TempDir(), "mcp-space-browser-artifacts")
+	artifactCacheDir string
 	artifactDB       *database.DiskDB // Database reference for persisting artifact metadata
 )
 
 // SetArtifactDB sets the database instance for artifact persistence
 func SetArtifactDB(db *database.DiskDB) {
 	artifactDB = db
+}
+
+// SetArtifactCacheDir sets the directory for storing artifact cache
+func SetArtifactCacheDir(dir string) {
+	artifactCacheDir = dir
 }
 
 type inspectArtifact struct {

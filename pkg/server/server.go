@@ -58,6 +58,9 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 	// Update contentBaseURL from config
 	contentBaseURL = config.Server.BaseURL
 
+	// Set artifact cache directory from config
+	SetArtifactCacheDir(config.Cache.Dir)
+
 	// Set artifact database for persistence
 	SetArtifactDB(db)
 

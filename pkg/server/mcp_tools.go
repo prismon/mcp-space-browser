@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -473,14 +474,21 @@ func registerCdTool(s *server.MCPServer, db *database.DiskDB) {
 		slice := children[offset:end]
 		listings := make([]map[string]any, 0, len(slice))
 		for _, child := range slice {
-			listings = append(listings, map[string]any{
+			listing := map[string]any{
 				"path":       child.Path,
 				"name":       filepath.Base(child.Path),
 				"kind":       child.Kind,
 				"size":       child.Size,
 				"modifiedAt": time.Unix(child.Mtime, 0).Format(time.RFC3339),
 				"link":       fmt.Sprintf("shell://nodes/%s", child.Path),
-			})
+			}
+
+			// Check if this child has metadata/artifacts
+			if hasMetadata := checkIfHasMetadata(child.Path, child.Kind, child.Mtime); hasMetadata {
+				listing["metadataUri"] = fmt.Sprintf("shell://nodes/%s/metadata", child.Path)
+			}
+
+			listings = append(listings, listing)
 		}
 
 		response := map[string]any{
@@ -1106,4 +1114,24 @@ func splitPaths(pathsStr string) []string {
 		paths = append(paths, current)
 	}
 	return paths
+}
+
+// checkIfHasMetadata checks if a file would have metadata/artifacts generated
+func checkIfHasMetadata(path string, kind string, mtime int64) bool {
+	if kind != "file" {
+		return false
+	}
+
+	// Get the file extension and convert to lowercase
+	lower := strings.ToLower(filepath.Ext(path))
+
+	// Check for image extensions
+	isImage := lower == ".jpg" || lower == ".jpeg" || lower == ".png" ||
+		lower == ".gif" || lower == ".bmp"
+
+	// Check for video extensions
+	isVideo := lower == ".mp4" || lower == ".mov" || lower == ".mkv" ||
+		lower == ".avi" || lower == ".webm"
+
+	return isImage || isVideo
 }
