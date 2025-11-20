@@ -9,6 +9,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/prismon/mcp-space-browser/internal/models"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 )
 
@@ -19,6 +20,11 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	registerSelectionSetsResource(s, db)
 	registerQueriesResource(s, db)
 	registerIndexJobsResource(s, db)
+	registerMetadataResource(s, db) // All generated metadata (generic)
+
+	// Type-specific metadata resources
+	registerThumbnailsResource(s, db)      // All thumbnails
+	registerVideoTimelinesResource(s, db)  // All video timeline frames
 
 	// Register job queue resources
 	registerJobQueuePendingResource(s, db)
@@ -34,6 +40,12 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	registerQueryTemplate(s, db)
 	registerQueryExecutionsTemplate(s, db)
 	registerIndexJobTemplate(s, db)
+	registerMetadataByHashTemplate(s, db)      // Metadata by hash
+	registerNodeMetadataTemplate(s, db)        // All metadata for a node
+
+	// Type-specific metadata templates for nodes
+	registerNodeThumbnailTemplate(s, db)       // Thumbnail for a specific node
+	registerNodeVideoTimelineTemplate(s, db)   // Video timeline for a specific node
 }
 
 // Static Resources
@@ -593,6 +605,330 @@ func registerIndexJobTemplate(s *server.MCPServer, db *database.DiskDB) {
 		data, err := json.MarshalIndent(job, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal index job: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+// Generated Metadata Resources
+
+func registerMetadataResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"shell://metadata",
+		"All Generated Metadata",
+		mcp.WithResourceDescription("List of all generated file metadata (thumbnails, video timelines, etc.)"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		metadataList, err := db.ListMetadata(nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch metadata: %w", err)
+		}
+
+		// Add resource URIs to metadata entries
+		for _, metadata := range metadataList {
+			metadata.ResourceUri = fmt.Sprintf("shell://metadata/%s", metadata.Hash)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"count":    len(metadataList),
+			"metadata": metadataList,
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerMetadataByHashTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://metadata/{hash}",
+		"Metadata by Hash",
+		mcp.WithTemplateDescription("Get a specific generated metadata entry by its hash"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract hash from URI: shell://metadata/{hash}
+		parts := strings.Split(request.Params.URI, "/")
+		if len(parts) < 4 {
+			return nil, fmt.Errorf("invalid URI format: %s", request.Params.URI)
+		}
+		hash := parts[3]
+
+		metadata, err := db.GetMetadata(hash)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch metadata: %w", err)
+		}
+
+		if metadata == nil {
+			return nil, fmt.Errorf("metadata not found: %s", hash)
+		}
+
+		// Add resource URI
+		metadata.ResourceUri = fmt.Sprintf("shell://metadata/%s", metadata.Hash)
+
+		data, err := json.MarshalIndent(metadata, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerNodeMetadataTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://nodes/{path}/metadata",
+		"Metadata for Node",
+		mcp.WithTemplateDescription("Get all generated metadata for a specific filesystem node (file or directory)"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract path from URI: shell://nodes/{path}/metadata
+		uri := request.Params.URI
+		if !strings.HasPrefix(uri, "shell://nodes/") || !strings.HasSuffix(uri, "/metadata") {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		// Remove prefix and suffix to get path
+		path := strings.TrimPrefix(uri, "shell://nodes/")
+		path = strings.TrimSuffix(path, "/metadata")
+
+		metadataList, err := db.GetMetadataByPath(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch metadata for path: %w", err)
+		}
+
+		// Add resource URIs to metadata entries
+		for _, metadata := range metadataList {
+			metadata.ResourceUri = fmt.Sprintf("shell://metadata/%s", metadata.Hash)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"path":     path,
+			"count":    len(metadataList),
+			"metadata": metadataList,
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+// Type-Specific Artifact Resources
+
+func registerThumbnailsResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"shell://thumbnails",
+		"All Thumbnail Artifacts",
+		mcp.WithResourceDescription("List of all generated thumbnail artifacts for images and videos"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		thumbnailType := "thumbnail"
+		metadataList, err := db.ListMetadata(&thumbnailType)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch thumbnails: %w", err)
+		}
+
+		// Add resource URIs to metadata
+		for _, metadata := range metadataList {
+			metadata.ResourceUri = fmt.Sprintf("shell://metadata/%s", metadata.Hash)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"count":      len(metadataList),
+			"thumbnails": metadataList,
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal thumbnails: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerVideoTimelinesResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"shell://video-timelines",
+		"All Video Timeline Artifacts",
+		mcp.WithResourceDescription("List of all generated video timeline frame artifacts"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		timelineType := "video-timeline"
+		metadataList, err := db.ListMetadata(&timelineType)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch video timelines: %w", err)
+		}
+
+		// Add resource URIs to metadata
+		for _, metadata := range metadataList {
+			metadata.ResourceUri = fmt.Sprintf("shell://metadata/%s", metadata.Hash)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"count":          len(metadataList),
+			"video_timelines": metadataList,
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal video timelines: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerNodeThumbnailTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://nodes/{path}/thumbnail",
+		"Thumbnail for Node",
+		mcp.WithTemplateDescription("Get the thumbnail artifact for a specific file (image or video poster)"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract path from URI: shell://nodes/{path}/thumbnail
+		uri := request.Params.URI
+		if !strings.HasPrefix(uri, "shell://nodes/") || !strings.HasSuffix(uri, "/thumbnail") {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		// Remove prefix and suffix to get path
+		path := strings.TrimPrefix(uri, "shell://nodes/")
+		path = strings.TrimSuffix(path, "/thumbnail")
+
+		metadataList, err := db.GetMetadataByPath(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch metadata for path: %w", err)
+		}
+
+		// Filter for thumbnail type only
+		var thumbnailMetadata *models.Metadata
+		for _, metadata := range metadataList {
+			if metadata.MetadataType == "thumbnail" {
+				metadata.ResourceUri = fmt.Sprintf("shell://metadata/%s", metadata.Hash)
+				thumbnailMetadata = metadata
+				break
+			}
+		}
+
+		if thumbnailMetadata == nil {
+			return nil, fmt.Errorf("no thumbnail found for path: %s", path)
+		}
+
+		result := map[string]interface{}{
+			"path":      path,
+			"thumbnail": thumbnailMetadata,
+		}
+
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal thumbnail: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerNodeVideoTimelineTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://nodes/{path}/timeline",
+		"Video Timeline for Node",
+		mcp.WithTemplateDescription("Get all video timeline frame artifacts for a specific video file"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract path from URI: shell://nodes/{path}/timeline
+		uri := request.Params.URI
+		if !strings.HasPrefix(uri, "shell://nodes/") || !strings.HasSuffix(uri, "/timeline") {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		// Remove prefix and suffix to get path
+		path := strings.TrimPrefix(uri, "shell://nodes/")
+		path = strings.TrimSuffix(path, "/timeline")
+
+		metadataList, err := db.GetMetadataByPath(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch metadata for path: %w", err)
+		}
+
+		// Filter for video-timeline type only
+		var timelineFrames []*models.Metadata
+		for _, metadata := range metadataList {
+			if metadata.MetadataType == "video-timeline" {
+				metadata.ResourceUri = fmt.Sprintf("shell://metadata/%s", metadata.Hash)
+				timelineFrames = append(timelineFrames, metadata)
+			}
+		}
+
+		if len(timelineFrames) == 0 {
+			return nil, fmt.Errorf("no video timeline found for path: %s", path)
+		}
+
+		result := map[string]interface{}{
+			"path":   path,
+			"count":  len(timelineFrames),
+			"frames": timelineFrames,
+		}
+
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal video timeline: %w", err)
 		}
 
 		return []mcp.ResourceContents{
