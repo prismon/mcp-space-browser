@@ -260,7 +260,14 @@ func handleTree(c *gin.Context, db *database.DiskDB) {
 	c.JSON(http.StatusOK, tree)
 }
 
+const maxTreeDepth = 100
+
 func buildTree(db *database.DiskDB, root string, depth int) (*treeNode, error) {
+	// Prevent stack overflow with depth limit
+	if depth > maxTreeDepth {
+		return nil, fmt.Errorf("maximum tree depth (%d) exceeded", maxTreeDepth)
+	}
+
 	entry, err := db.Get(root)
 	if err != nil {
 		return nil, err
