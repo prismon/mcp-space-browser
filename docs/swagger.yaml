@@ -13,7 +13,6 @@ definitions:
         example: 1048576
         type: integer
     type: object
-host: localhost:3000
 info:
   contact:
     name: API Support
