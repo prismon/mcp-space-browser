@@ -85,6 +85,7 @@ Include the script and use the custom element:
 |-----------|------|---------|-------------|
 | `api-base` | string | `window.location.origin` | Base URL for the MCP Space Browser API |
 | `default-path` | string | `/tmp` | Default filesystem path to show in the input field |
+| `poll-progress` | boolean | `true` | Enable automatic job progress polling |
 
 ### Events
 
@@ -96,8 +97,32 @@ Fired when indexing successfully starts.
 
 ```javascript
 event.detail = {
-  path: string,    // The path being indexed
-  result: string   // Server response
+  path: string,      // The path being indexed
+  jobId: number,     // MCP job identifier
+  status: string,    // Initial job status ('pending')
+  response: object   // Full MCP response
+}
+```
+
+#### `index-completed`
+
+Fired when indexing completes successfully (only if `poll-progress` is enabled).
+
+```javascript
+event.detail = {
+  jobId: number,     // Job identifier
+  progress: object   // Job progress data
+}
+```
+
+#### `index-failed`
+
+Fired when indexing fails (only if `poll-progress` is enabled).
+
+```javascript
+event.detail = {
+  jobId: number,     // Job identifier
+  progress: object   // Job progress data
 }
 ```
 
@@ -114,6 +139,9 @@ event.detail = {
 
 ## Features
 
+- **MCP Native**: Uses Model Context Protocol (JSON-RPC 2.0) for communication
+- **Async Job Tracking**: Creates jobs and polls for progress automatically
+- **Progress Visualization**: Real-time progress bar with percentage updates
 - **Fully Encapsulated**: Uses Shadow DOM for complete style isolation
 - **Reusable**: Can be dropped into any HTML page
 - **Framework Agnostic**: Pure Web Components, works with any framework
@@ -127,19 +155,77 @@ The component follows the Custom Elements v1 specification:
 
 1. **Custom Element**: `<mcp-disk-indexer>` registered via `customElements.define()`
 2. **Shadow DOM**: All styles and markup encapsulated
-3. **Lifecycle Hooks**: `connectedCallback()` for initialization
+3. **Lifecycle Hooks**: `connectedCallback()` for initialization, `disconnectedCallback()` for cleanup
 4. **Observed Attributes**: `attributeChangedCallback()` for reactive updates
 5. **Event Emitters**: Custom events for external communication
+6. **MCP Client**: JSON-RPC 2.0 client for MCP tool calls
 
-## API Endpoint
+## MCP Protocol
 
-The component calls the following REST API endpoint:
+The component communicates via the Model Context Protocol (MCP) using JSON-RPC 2.0:
+
+### Index Tool
+
+Creates an asynchronous indexing job:
 
 ```
-GET /api/index?path={encoded_path}
+POST /mcp
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "index",
+    "arguments": {
+      "root": "/path/to/index",
+      "async": true
+    }
+  }
+}
 ```
 
-This triggers asynchronous filesystem indexing on the server.
+Response:
+```json
+{
+  "jobId": 123,
+  "root": "/path/to/index",
+  "status": "pending",
+  "statusUrl": "shell://jobs/123"
+}
+```
+
+### Job Progress Tool
+
+Polls for job status and progress:
+
+```
+POST /mcp
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "job-progress",
+    "arguments": {
+      "jobId": "123"
+    }
+  }
+}
+```
+
+Response:
+```json
+{
+  "jobId": 123,
+  "status": "running",
+  "path": "/path/to/index",
+  "progress": 45
+}
+```
 
 ## Browser Compatibility
 

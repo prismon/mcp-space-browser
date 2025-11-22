@@ -235,7 +235,15 @@
     }
 
     indexer.addEventListener('index-started', (e) => {
-      logEvent('info', `✓ Index started for: ${e.detail.path}`);
+      logEvent('info', `✓ Index job created: Job ID ${e.detail.jobId} for ${e.detail.path}`);
+    });
+
+    indexer.addEventListener('index-completed', (e) => {
+      logEvent('info', `✅ Index job ${e.detail.jobId} completed successfully!`);
+    });
+
+    indexer.addEventListener('index-failed', (e) => {
+      logEvent('error', `❌ Index job ${e.detail.jobId} failed`);
     });
 
     indexer.addEventListener('index-error', (e) => {

@@ -2,7 +2,7 @@
  * MCP Disk Indexer Web Component
  *
  * A standalone web component that provides a UI for triggering MCP disk indexing
- * via the mcp-space-browser REST API.
+ * via the mcp-space-browser MCP JSON-RPC protocol.
  *
  * Usage:
  *   <mcp-disk-indexer api-base="http://localhost:3000"></mcp-disk-indexer>
@@ -10,6 +10,7 @@
  * Attributes:
  *   - api-base: Base URL for the API (default: window.location.origin)
  *   - default-path: Default path to index (default: /tmp)
+ *   - poll-progress: Enable job progress polling (default: true)
  */
 class McpDiskIndexer extends HTMLElement {
   constructor() {
@@ -17,11 +18,23 @@ class McpDiskIndexer extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this.apiBase = this.getAttribute('api-base') || window.location.origin;
     this.defaultPath = this.getAttribute('default-path') || '/tmp';
+    this.pollProgress = this.getAttribute('poll-progress') !== 'false';
+    this.requestId = 0;
+    this.currentJobId = null;
+    this.pollInterval = null;
   }
 
   connectedCallback() {
     this.render();
     this.attachEventListeners();
+  }
+
+  disconnectedCallback() {
+    // Clean up polling when component is removed
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
   }
 
   render() {
@@ -153,6 +166,37 @@ class McpDiskIndexer extends HTMLElement {
           to { transform: rotate(360deg); }
         }
 
+        .progress-bar {
+          margin-top: 8px;
+          height: 8px;
+          background: #e1e4e8;
+          border-radius: 4px;
+          overflow: hidden;
+          display: none;
+        }
+
+        .progress-bar.visible {
+          display: block;
+        }
+
+        .progress-fill {
+          height: 100%;
+          background: #2ea44f;
+          transition: width 0.3s ease;
+          width: 0%;
+        }
+
+        .progress-text {
+          margin-top: 4px;
+          font-size: 12px;
+          color: #586069;
+          display: none;
+        }
+
+        .progress-text.visible {
+          display: block;
+        }
+
         .api-info {
           margin-top: 16px;
           padding: 12px;
@@ -169,11 +213,24 @@ class McpDiskIndexer extends HTMLElement {
           border-radius: 3px;
           font-family: 'SF Mono', Monaco, Consolas, monospace;
         }
+
+        .job-info {
+          margin-top: 8px;
+          font-size: 12px;
+          color: #586069;
+        }
+
+        .job-info code {
+          background: #f6f8fa;
+          padding: 2px 4px;
+          border-radius: 3px;
+          font-family: 'SF Mono', Monaco, Consolas, monospace;
+        }
       </style>
 
       <div class="container">
         <h2>🗂️ MCP Disk Indexer</h2>
-        <p class="subtitle">Index filesystem paths and analyze disk space usage</p>
+        <p class="subtitle">Index filesystem paths via MCP protocol</p>
 
         <form id="indexForm">
           <div class="form-group">
@@ -196,10 +253,18 @@ class McpDiskIndexer extends HTMLElement {
         <div id="status" class="status">
           <span class="status-icon"></span>
           <span class="status-message"></span>
+          <div id="jobInfo" class="job-info"></div>
         </div>
 
+        <div id="progressBar" class="progress-bar">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <div id="progressText" class="progress-text"></div>
+
         <div class="api-info">
-          <strong>API Endpoint:</strong> <code>${this.apiBase}/api/index</code>
+          <strong>MCP Endpoint:</strong> <code>${this.apiBase}/mcp</code><br>
+          <strong>Protocol:</strong> JSON-RPC 2.0<br>
+          <strong>Tool:</strong> <code>index</code>
         </div>
       </div>
     `;
@@ -208,6 +273,43 @@ class McpDiskIndexer extends HTMLElement {
   attachEventListeners() {
     const form = this.shadowRoot.getElementById('indexForm');
     form.addEventListener('submit', (e) => this.handleSubmit(e));
+  }
+
+  /**
+   * Call an MCP tool using JSON-RPC 2.0 protocol
+   */
+  async callMCPTool(toolName, args) {
+    const requestId = ++this.requestId;
+
+    const request = {
+      jsonrpc: '2.0',
+      id: requestId,
+      method: 'tools/call',
+      params: {
+        name: toolName,
+        arguments: args
+      }
+    };
+
+    const response = await fetch(`${this.apiBase}/mcp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (data.error) {
+      throw new Error(data.error.message || JSON.stringify(data.error));
+    }
+
+    return data.result;
   }
 
   async handleSubmit(event) {
@@ -226,22 +328,45 @@ class McpDiskIndexer extends HTMLElement {
     submitBtn.disabled = true;
     pathInput.disabled = true;
 
-    this.showStatus('info', 'Indexing in progress...', true);
+    // Clear any existing polling
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
+
+    this.showStatus('info', 'Starting indexing via MCP...', true);
+    this.hideProgress();
 
     try {
-      const response = await fetch(`${this.apiBase}/api/index?path=${encodeURIComponent(path)}`);
+      // Call the MCP index tool
+      const result = await this.callMCPTool('index', {
+        root: path,
+        async: true
+      });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || `HTTP ${response.status}`);
+      // Parse the response
+      const response = JSON.parse(result.content[0].text);
+
+      this.currentJobId = response.jobId;
+
+      const jobInfo = this.shadowRoot.getElementById('jobInfo');
+      jobInfo.innerHTML = `Job ID: <code>${response.jobId}</code> | Status: <code>${response.status}</code>`;
+
+      this.showStatus('success', `✓ Indexing job created for: ${path}`);
+
+      // Start polling for progress if enabled
+      if (this.pollProgress) {
+        this.startProgressPolling(response.jobId);
       }
 
-      const result = await response.text();
-      this.showStatus('success', `✓ Indexing started successfully for: ${path}`);
-
-      // Dispatch custom event for external listeners
+      // Dispatch custom event
       this.dispatchEvent(new CustomEvent('index-started', {
-        detail: { path, result },
+        detail: {
+          path,
+          jobId: response.jobId,
+          status: response.status,
+          response
+        },
         bubbles: true,
         composed: true
       }));
@@ -260,6 +385,93 @@ class McpDiskIndexer extends HTMLElement {
       submitBtn.disabled = false;
       pathInput.disabled = false;
     }
+  }
+
+  async startProgressPolling(jobId) {
+    // Initial poll
+    await this.pollJobProgress(jobId);
+
+    // Poll every 2 seconds
+    this.pollInterval = setInterval(async () => {
+      await this.pollJobProgress(jobId);
+    }, 2000);
+  }
+
+  async pollJobProgress(jobId) {
+    try {
+      const result = await this.callMCPTool('job-progress', {
+        jobId: String(jobId)
+      });
+
+      const progress = JSON.parse(result.content[0].text);
+
+      // Update job info
+      const jobInfo = this.shadowRoot.getElementById('jobInfo');
+      jobInfo.innerHTML = `Job ID: <code>${progress.jobId}</code> | Status: <code>${progress.status}</code>`;
+
+      // Update progress bar if available
+      if (progress.progress !== undefined) {
+        this.showProgress(progress.progress);
+      }
+
+      // Update status message based on job status
+      if (progress.status === 'running') {
+        this.showStatus('info', `⏳ Indexing in progress... (${progress.progress || 0}%)`, true);
+      } else if (progress.status === 'completed') {
+        this.showStatus('success', `✓ Indexing completed successfully!`);
+        this.showProgress(100);
+        this.stopProgressPolling();
+
+        // Dispatch completion event
+        this.dispatchEvent(new CustomEvent('index-completed', {
+          detail: { jobId: progress.jobId, progress },
+          bubbles: true,
+          composed: true
+        }));
+      } else if (progress.status === 'failed') {
+        this.showStatus('error', `✗ Indexing failed`);
+        this.hideProgress();
+        this.stopProgressPolling();
+
+        // Dispatch failure event
+        this.dispatchEvent(new CustomEvent('index-failed', {
+          detail: { jobId: progress.jobId, progress },
+          bubbles: true,
+          composed: true
+        }));
+      }
+
+    } catch (error) {
+      console.error('Failed to poll job progress:', error);
+      // Don't stop polling on transient errors, but log them
+    }
+  }
+
+  stopProgressPolling() {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
+  }
+
+  showProgress(percentage) {
+    const progressBar = this.shadowRoot.getElementById('progressBar');
+    const progressFill = this.shadowRoot.getElementById('progressFill');
+    const progressText = this.shadowRoot.getElementById('progressText');
+
+    progressBar.classList.add('visible');
+    progressText.classList.add('visible');
+
+    progressFill.style.width = `${percentage}%`;
+    progressText.textContent = `Progress: ${percentage}%`;
+  }
+
+  hideProgress() {
+    const progressBar = this.shadowRoot.getElementById('progressBar');
+    const progressText = this.shadowRoot.getElementById('progressText');
+
+    progressBar.classList.remove('visible');
+    progressText.classList.remove('visible');
   }
 
   showStatus(type, message, showSpinner = false) {
@@ -281,7 +493,7 @@ class McpDiskIndexer extends HTMLElement {
 
   // Allow external API base update
   static get observedAttributes() {
-    return ['api-base', 'default-path'];
+    return ['api-base', 'default-path', 'poll-progress'];
   }
 
   attributeChangedCallback(name, oldValue, newValue) {
@@ -293,6 +505,8 @@ class McpDiskIndexer extends HTMLElement {
       this.defaultPath = newValue;
       this.render();
       this.attachEventListeners();
+    } else if (name === 'poll-progress') {
+      this.pollProgress = newValue !== 'false';
     }
   }
 }
