@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP Disk Indexer - Web Component Demo</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 40px 20px;
+      background: #f6f8fa;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    .header h1 {
+      font-size: 32px;
+      font-weight: 700;
+      color: #24292e;
+      margin: 0 0 8px 0;
+    }
+
+    .header p {
+      font-size: 16px;
+      color: #586069;
+      margin: 0;
+    }
+
+    .demo-section {
+      max-width: 800px;
+      margin: 0 auto 40px auto;
+    }
+
+    .code-block {
+      background: #24292e;
+      color: #f6f8fa;
+      padding: 16px;
+      border-radius: 6px;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+      font-size: 13px;
+      overflow-x: auto;
+      margin: 16px 0;
+    }
+
+    .code-block .comment {
+      color: #6a737d;
+    }
+
+    .code-block .tag {
+      color: #85e89d;
+    }
+
+    .code-block .attr {
+      color: #79b8ff;
+    }
+
+    .code-block .string {
+      color: #9ecbff;
+    }
+
+    .info-box {
+      background: #ffffff;
+      border: 1px solid #e1e4e8;
+      border-radius: 8px;
+      padding: 24px;
+      margin: 24px auto;
+      max-width: 600px;
+    }
+
+    .info-box h2 {
+      margin: 0 0 16px 0;
+      font-size: 18px;
+      font-weight: 600;
+      color: #24292e;
+    }
+
+    .info-box ul {
+      margin: 0;
+      padding-left: 20px;
+      color: #24292e;
+    }
+
+    .info-box li {
+      margin-bottom: 8px;
+    }
+
+    .info-box code {
+      background: #f6f8fa;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+      font-size: 13px;
+    }
+
+    .events-log {
+      background: #ffffff;
+      border: 1px solid #e1e4e8;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 24px auto;
+      max-width: 600px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .events-log h3 {
+      margin: 0 0 12px 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #24292e;
+    }
+
+    .event-entry {
+      padding: 8px;
+      margin-bottom: 8px;
+      background: #f6f8fa;
+      border-left: 3px solid #0969da;
+      border-radius: 3px;
+      font-size: 13px;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+    }
+
+    .event-entry.error {
+      border-left-color: #cf222e;
+      background: #ffebe9;
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 60px;
+      padding: 20px;
+      color: #586069;
+      font-size: 14px;
+    }
+
+    .footer a {
+      color: #0969da;
+      text-decoration: none;
+    }
+
+    .footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🗂️ MCP Disk Indexer</h1>
+    <p>A reusable web component microfrontend for filesystem indexing</p>
+  </div>
+
+  <div class="demo-section">
+    <!-- The actual web component -->
+    <mcp-disk-indexer
+      id="indexer"
+      default-path="/tmp">
+    </mcp-disk-indexer>
+
+    <!-- Event log -->
+    <div class="events-log">
+      <h3>Event Log</h3>
+      <div id="eventLog"></div>
+    </div>
+
+    <!-- Usage instructions -->
+    <div class="info-box">
+      <h2>📖 How to Use</h2>
+      <ul>
+        <li>This component can be dropped onto any HTML page</li>
+        <li>Requires the <code>mcp-disk-indexer.js</code> script</li>
+        <li>Connects to the mcp-space-browser API</li>
+        <li>Fully encapsulated with Shadow DOM</li>
+        <li>Emits custom events: <code>index-started</code>, <code>index-error</code></li>
+      </ul>
+    </div>
+
+    <!-- Code example -->
+    <div class="info-box">
+      <h2>💻 Code Example</h2>
+      <div class="code-block">
+<span class="comment">&lt;!-- Include the web component script --&gt;</span>
+<span class="tag">&lt;script</span> <span class="attr">src</span>=<span class="string">"/web/mcp-disk-indexer.js"</span><span class="tag">&gt;&lt;/script&gt;</span>
+
+<span class="comment">&lt;!-- Use the component anywhere in your page --&gt;</span>
+<span class="tag">&lt;mcp-disk-indexer</span>
+  <span class="attr">api-base</span>=<span class="string">"http://localhost:3000"</span>
+  <span class="attr">default-path</span>=<span class="string">"/tmp"</span>
+<span class="tag">&gt;&lt;/mcp-disk-indexer&gt;</span>
+
+<span class="comment">&lt;!-- Listen to events (optional) --&gt;</span>
+<span class="tag">&lt;script&gt;</span>
+  document.querySelector('mcp-disk-indexer')
+    .addEventListener('index-started', (e) =&gt; {
+      console.log('Index started:', e.detail);
+    });
+<span class="tag">&lt;/script&gt;</span>
+      </div>
+    </div>
+
+    <!-- Attributes -->
+    <div class="info-box">
+      <h2>⚙️ Attributes</h2>
+      <ul>
+        <li><code>api-base</code> - Base URL for the API (default: current origin)</li>
+        <li><code>default-path</code> - Default path to index (default: /tmp)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <p>
+      Part of <a href="https://github.com/prismon/mcp-space-browser" target="_blank">mcp-space-browser</a>
+      - A disk space indexing agent with MCP support
+    </p>
+  </div>
+
+  <!-- Load the web component -->
+  <script src="/web/mcp-disk-indexer.js"></script>
+
+  <!-- Event listener demo -->
+  <script>
+    const indexer = document.getElementById('indexer');
+    const eventLog = document.getElementById('eventLog');
+
+    function logEvent(type, message) {
+      const entry = document.createElement('div');
+      entry.className = `event-entry ${type}`;
+      const timestamp = new Date().toLocaleTimeString();
+      entry.textContent = `[${timestamp}] ${message}`;
+      eventLog.insertBefore(entry, eventLog.firstChild);
+    }
+
+    indexer.addEventListener('index-started', (e) => {
+      logEvent('info', `✓ Index started for: ${e.detail.path}`);
+    });
+
+    indexer.addEventListener('index-error', (e) => {
+      logEvent('error', `✗ Error for ${e.detail.path}: ${e.detail.error}`);
+    });
+  </script>
+</body>
+</html>
