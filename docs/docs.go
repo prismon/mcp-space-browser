@@ -62,7 +62,7 @@ const docTemplate = `{
         },
         "/api/tree": {
             "get": {
-                "description": "Returns a hierarchical JSON tree structure showing disk space usage for the specified path and all subdirectories",
+                "description": "Returns a paginated directory listing with statistics and summary information",
                 "consumes": [
                     "application/json"
                 ],
@@ -72,7 +72,7 @@ const docTemplate = `{
                 "tags": [
                     "Tree"
                 ],
-                "summary": "Get hierarchical directory tree",
+                "summary": "Get hierarchical directory tree with pagination",
                 "parameters": [
                     {
                         "type": "string",
@@ -80,13 +80,48 @@ const docTemplate = `{
                         "description": "Filesystem path to analyze (defaults to current directory)",
                         "name": "path",
                         "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "example": 100,
+                        "description": "Maximum number of children to return per page (default: 100, max: 1000)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "example": 0,
+                        "description": "Pagination offset (default: 0)",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "example": "\"size\"",
+                        "description": "Sort children by: size, name, mtime (default: size)",
+                        "name": "sortBy",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "example": "\"desc\"",
+                        "description": "Sort order: asc or desc (default: desc)",
+                        "name": "order",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "example": true,
+                        "description": "Include children in response (default: true)",
+                        "name": "includeChildren",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/pkg_server.TreeNode"
+                            "$ref": "#/definitions/server.PaginatedTreeResponse"
                         }
                     },
                     "400": {
@@ -106,22 +141,104 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "pkg_server.TreeNode": {
+        "server.PaginatedTreeResponse": {
             "type": "object",
             "properties": {
                 "children": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/pkg_server.TreeNode"
+                        "$ref": "#/definitions/server.TreeChildNode"
                     }
                 },
+                "kind": {
+                    "type": "string"
+                },
+                "modifiedAt": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "pagination": {
+                    "$ref": "#/definitions/server.PaginationMetadata"
+                },
                 "path": {
-                    "type": "string",
-                    "example": "/home/user/Documents"
+                    "type": "string"
                 },
                 "size": {
-                    "type": "integer",
-                    "example": 1048576
+                    "type": "integer"
+                },
+                "summary": {
+                    "$ref": "#/definitions/server.TreeStatisticsSummary"
+                }
+            }
+        },
+        "server.PaginationMetadata": {
+            "type": "object",
+            "properties": {
+                "hasMore": {
+                    "type": "boolean"
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "nextPageUrl": {
+                    "type": "string"
+                },
+                "offset": {
+                    "type": "integer"
+                },
+                "prevPageUrl": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "server.TreeChildNode": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string"
+                },
+                "link": {
+                    "type": "string"
+                },
+                "modifiedAt": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "size": {
+                    "type": "integer"
+                }
+            }
+        },
+        "server.TreeStatisticsSummary": {
+            "type": "object",
+            "properties": {
+                "directoryCount": {
+                    "type": "integer"
+                },
+                "fileCount": {
+                    "type": "integer"
+                },
+                "largestChildren": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/server.TreeChildNode"
+                    }
+                },
+                "totalChildren": {
+                    "type": "integer"
+                },
+                "totalSize": {
+                    "type": "integer"
                 }
             }
         }

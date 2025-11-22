@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -265,7 +266,7 @@ func handleIndex(c *gin.Context, db *database.DiskDB) {
 	c.String(http.StatusOK, "OK")
 }
 
-// TreeNode represents a node in the hierarchical directory tree
+// TreeNode represents a node in the hierarchical directory tree (legacy, for backwards compatibility)
 type TreeNode struct {
 	Path     string      `json:"path" example:"/home/user/Documents"`
 	Size     int64       `json:"size" example:"1048576"`
@@ -277,13 +278,18 @@ type treeNode = TreeNode
 
 // handleTree godoc
 //
-// @Summary Get hierarchical directory tree
-// @Description Returns a hierarchical JSON tree structure showing disk space usage for the specified path and all subdirectories
+// @Summary Get hierarchical directory tree with pagination
+// @Description Returns a paginated directory listing with statistics and summary information
 // @Tags Tree
 // @Accept json
 // @Produce json
 // @Param path query string false "Filesystem path to analyze (defaults to current directory)" example("/home/user/Documents")
-// @Success 200 {object} TreeNode
+// @Param limit query int false "Maximum number of children to return per page (default: 100, max: 1000)" example(100)
+// @Param offset query int false "Pagination offset (default: 0)" example(0)
+// @Param sortBy query string false "Sort children by: size, name, mtime (default: size)" example("size")
+// @Param order query string false "Sort order: asc or desc (default: desc)" example("desc")
+// @Param includeChildren query boolean false "Include children in response (default: true)" example(true)
+// @Success 200 {object} PaginatedTreeResponse
 // @Failure 400 {string} string "invalid path"
 // @Failure 500 {string} string "failed to build tree"
 // @Router /api/tree [get]
@@ -300,22 +306,36 @@ func handleTree(c *gin.Context, db *database.DiskDB) {
 		return
 	}
 
-	log.WithField("path", abs).Debug("Building tree structure")
+	// Parse pagination parameters
+	limit, offset := parsePaginationParams(c.Query("limit"), c.Query("offset"), 100, 1000)
+	sortBy := c.DefaultQuery("sortBy", "size")
+	order := c.DefaultQuery("order", "desc")
+	includeChildren := c.DefaultQuery("includeChildren", "true") == "true"
 
-	tree, err := buildTree(db, abs, 0)
+	log.WithFields(logrus.Fields{
+		"path":            abs,
+		"limit":           limit,
+		"offset":          offset,
+		"sortBy":          sortBy,
+		"order":           order,
+		"includeChildren": includeChildren,
+	}).Debug("Building paginated tree structure")
+
+	response, err := buildPaginatedTree(db, abs, limit, offset, sortBy, order == "desc", includeChildren)
 	if err != nil {
 		log.WithError(err).Error("Failed to build tree")
 		c.String(http.StatusInternalServerError, "failed to build tree")
 		return
 	}
 
-	log.WithField("path", abs).Info("Tree structure built successfully")
+	log.WithField("path", abs).Info("Paginated tree structure built successfully")
 
-	c.JSON(http.StatusOK, tree)
+	c.JSON(http.StatusOK, response)
 }
 
 const maxTreeDepth = 100
 
+// buildTree is kept for backwards compatibility but may be deprecated in favor of buildPaginatedTree
 func buildTree(db *database.DiskDB, root string, depth int) (*treeNode, error) {
 	// Prevent stack overflow with depth limit
 	if depth > maxTreeDepth {
@@ -354,6 +374,100 @@ func buildTree(db *database.DiskDB, root string, depth int) (*treeNode, error) {
 	}
 
 	return node, nil
+}
+
+// parsePaginationParams parses limit and offset with defaults and max limit
+func parsePaginationParams(limitStr, offsetStr string, defaultLimit, maxLimit int) (int, int) {
+	limit := defaultLimit
+	offset := 0
+
+	if limitStr != "" {
+		if v, err := strconv.Atoi(limitStr); err == nil && v > 0 {
+			limit = v
+			if limit > maxLimit {
+				limit = maxLimit
+			}
+		}
+	}
+
+	if offsetStr != "" {
+		if v, err := strconv.Atoi(offsetStr); err == nil && v >= 0 {
+			offset = v
+		}
+	}
+
+	return limit, offset
+}
+
+// buildPaginatedTree builds a paginated tree structure with summary statistics
+func buildPaginatedTree(db *database.DiskDB, root string, limit, offset int, sortBy string, descending, includeChildren bool) (*PaginatedTreeResponse, error) {
+	// Get the root entry
+	entry, err := db.Get(root)
+	if err != nil {
+		return nil, err
+	}
+
+	if entry == nil {
+		return nil, fmt.Errorf("path not found in index")
+	}
+
+	response := &PaginatedTreeResponse{
+		Path:       entry.Path,
+		Name:       filepath.Base(entry.Path),
+		Size:       entry.Size,
+		Kind:       entry.Kind,
+		ModifiedAt: time.Unix(entry.Mtime, 0).Format(time.RFC3339),
+	}
+
+	// If it's a file, no children to fetch
+	if entry.Kind == "file" {
+		response.Pagination = &PaginationMetadata{
+			Total:   0,
+			Limit:   limit,
+			Offset:  0,
+			HasMore: false,
+		}
+		return response, nil
+	}
+
+	// Get all children for this directory
+	children, err := db.Children(root)
+	if err != nil {
+		return nil, err
+	}
+
+	total := len(children)
+
+	// Sort children
+	SortEntries(children, sortBy, descending)
+
+	// Build summary statistics from all children
+	response.Summary = BuildEntrySummary(children, 10)
+
+	// Apply pagination
+	start := offset
+	if start > len(children) {
+		start = len(children)
+	}
+	end := offset + limit
+	if end > len(children) {
+		end = len(children)
+	}
+
+	// Build pagination metadata
+	baseURL := fmt.Sprintf("/api/tree?path=%s&sortBy=%s&order=%s", root, sortBy, map[bool]string{true: "desc", false: "asc"}[descending])
+	response.Pagination = BuildPaginationMetadata(total, limit, offset, baseURL)
+
+	// Optionally include children in response
+	if includeChildren {
+		paginatedChildren := children[start:end]
+		response.Children = make([]*TreeChildNode, len(paginatedChildren))
+		for i, child := range paginatedChildren {
+			response.Children[i] = EntryToTreeChildNode(child)
+		}
+	}
+
+	return response, nil
 }
 
 // configureSwaggerHost sets the initial Swagger host configuration based on server config

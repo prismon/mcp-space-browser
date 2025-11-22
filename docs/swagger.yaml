@@ -1,16 +1,69 @@
 basePath: /
 definitions:
-  pkg_server.TreeNode:
+  server.PaginatedTreeResponse:
     properties:
       children:
         items:
-          $ref: '#/definitions/pkg_server.TreeNode'
+          $ref: '#/definitions/server.TreeChildNode'
         type: array
+      kind:
+        type: string
+      modifiedAt:
+        type: string
+      name:
+        type: string
+      pagination:
+        $ref: '#/definitions/server.PaginationMetadata'
       path:
-        example: /home/user/Documents
         type: string
       size:
-        example: 1048576
+        type: integer
+      summary:
+        $ref: '#/definitions/server.TreeStatisticsSummary'
+    type: object
+  server.PaginationMetadata:
+    properties:
+      hasMore:
+        type: boolean
+      limit:
+        type: integer
+      nextPageUrl:
+        type: string
+      offset:
+        type: integer
+      prevPageUrl:
+        type: string
+      total:
+        type: integer
+    type: object
+  server.TreeChildNode:
+    properties:
+      kind:
+        type: string
+      link:
+        type: string
+      modifiedAt:
+        type: string
+      name:
+        type: string
+      path:
+        type: string
+      size:
+        type: integer
+    type: object
+  server.TreeStatisticsSummary:
+    properties:
+      directoryCount:
+        type: integer
+      fileCount:
+        type: integer
+      largestChildren:
+        items:
+          $ref: '#/definitions/server.TreeChildNode'
+        type: array
+      totalChildren:
+        type: integer
+      totalSize:
         type: integer
     type: object
 info:
@@ -59,21 +112,47 @@ paths:
     get:
       consumes:
       - application/json
-      description: Returns a hierarchical JSON tree structure showing disk space usage
-        for the specified path and all subdirectories
+      description: Returns a paginated directory listing with statistics and summary
+        information
       parameters:
       - description: Filesystem path to analyze (defaults to current directory)
         example: '"/home/user/Documents"'
         in: query
         name: path
         type: string
+      - description: 'Maximum number of children to return per page (default: 100,
+          max: 1000)'
+        example: 100
+        in: query
+        name: limit
+        type: integer
+      - description: 'Pagination offset (default: 0)'
+        example: 0
+        in: query
+        name: offset
+        type: integer
+      - description: 'Sort children by: size, name, mtime (default: size)'
+        example: '"size"'
+        in: query
+        name: sortBy
+        type: string
+      - description: 'Sort order: asc or desc (default: desc)'
+        example: '"desc"'
+        in: query
+        name: order
+        type: string
+      - description: 'Include children in response (default: true)'
+        example: true
+        in: query
+        name: includeChildren
+        type: boolean
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/pkg_server.TreeNode'
+            $ref: '#/definitions/server.PaginatedTreeResponse'
         "400":
           description: invalid path
           schema:
@@ -82,7 +161,7 @@ paths:
           description: failed to build tree
           schema:
             type: string
-      summary: Get hierarchical directory tree
+      summary: Get hierarchical directory tree with pagination
       tags:
       - Tree
 schemes:

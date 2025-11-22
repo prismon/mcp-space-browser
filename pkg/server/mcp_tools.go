@@ -415,7 +415,7 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 
 func registerCdTool(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("cd",
-		mcp.WithDescription("Change directory within the indexed tree and return a lightweight listing."),
+		mcp.WithDescription("Change directory within the indexed tree and return a lightweight listing with summary statistics."),
 		mcp.WithString("path",
 			mcp.Required(),
 			mcp.Description("Target path (absolute or relative to previous call)"),
@@ -426,13 +426,21 @@ func registerCdTool(s *server.MCPServer, db *database.DiskDB) {
 		mcp.WithNumber("offset",
 			mcp.Description("Offset into the child list for pagination"),
 		),
+		mcp.WithString("sortBy",
+			mcp.Description("Sort by: size, name, or mtime (default: size)"),
+		),
+		mcp.WithString("order",
+			mcp.Description("Sort order: asc or desc (default: desc)"),
+		),
 	)
 
 	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args struct {
-			Path   string `json:"path"`
-			Limit  *int   `json:"limit,omitempty"`
-			Offset *int   `json:"offset,omitempty"`
+			Path   string  `json:"path"`
+			Limit  *int    `json:"limit,omitempty"`
+			Offset *int    `json:"offset,omitempty"`
+			SortBy *string `json:"sortBy,omitempty"`
+			Order  *string `json:"order,omitempty"`
 		}
 
 		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
@@ -466,6 +474,16 @@ func registerCdTool(s *server.MCPServer, db *database.DiskDB) {
 			limit = 20
 		}
 
+		sortBy := getStringOrDefault(args.SortBy, "size")
+		order := getStringOrDefault(args.Order, "desc")
+		descending := order == "desc"
+
+		// Sort children using shared utility
+		SortEntries(children, sortBy, descending)
+
+		// Build summary statistics using shared utility
+		summary := BuildEntrySummary(children, 10)
+
 		end := offset + limit
 		if end > len(children) {
 			end = len(children)
@@ -496,10 +514,16 @@ func registerCdTool(s *server.MCPServer, db *database.DiskDB) {
 			"count":       len(children),
 			"entries":     listings,
 			"nextPageUrl": "",
+			"summary": map[string]any{
+				"totalChildren":  summary.TotalChildren,
+				"fileCount":      summary.FileCount,
+				"directoryCount": summary.DirectoryCount,
+				"totalSize":      summary.TotalSize,
+			},
 		}
 
 		if end < len(children) {
-			response["nextPageUrl"] = fmt.Sprintf("shell://list?path=%s&offset=%d&limit=%d", expandedPath, end, limit)
+			response["nextPageUrl"] = fmt.Sprintf("shell://list?path=%s&offset=%d&limit=%d&sortBy=%s&order=%s", expandedPath, end, limit, sortBy, order)
 		}
 
 		payload, err := json.Marshal(response)
