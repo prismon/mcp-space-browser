@@ -12,7 +12,6 @@
 //
 // @license.name MIT
 //
-// @host localhost:3000
 // @BasePath /
 // @schemes http https
 //
@@ -39,7 +38,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
-	_ "github.com/prismon/mcp-space-browser/docs" // Import generated docs
+	"github.com/prismon/mcp-space-browser/docs" // Import generated docs
 )
 
 var log *logrus.Entry
@@ -102,8 +101,13 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 		}).Info("Request completed")
 	})
 
+	// Configure Swagger host dynamically based on config
+	// This allows the Swagger UI to work correctly regardless of how the service is accessed
+	configureSwaggerHost(config)
+
 	// Swagger documentation endpoint (public, no auth required)
-	router.GET("/docs/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	// Middleware updates host dynamically based on incoming request
+	router.GET("/docs/*any", swaggerHostMiddleware(), ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// REST API endpoints with optional OAuth middleware
 	apiGroup := router.Group("/api")
@@ -350,4 +354,80 @@ func buildTree(db *database.DiskDB, root string, depth int) (*treeNode, error) {
 	}
 
 	return node, nil
+}
+
+// configureSwaggerHost sets the initial Swagger host configuration based on server config
+func configureSwaggerHost(config *auth.Config) {
+	var host string
+	var schemes []string
+
+	// Prefer ExternalHost over deprecated BaseURL
+	if config.Server.ExternalHost != "" {
+		host = config.Server.ExternalHost
+		// Determine scheme from ExternalHost
+		if len(host) > 8 && host[:8] == "https://" {
+			host = host[8:]
+			schemes = []string{"https"}
+		} else if len(host) > 7 && host[:7] == "http://" {
+			host = host[7:]
+			schemes = []string{"http"}
+		} else {
+			// No scheme specified, support both
+			schemes = []string{"http", "https"}
+		}
+	} else if config.Server.BaseURL != "" {
+		// Fall back to deprecated BaseURL
+		baseURL := config.Server.BaseURL
+		if len(baseURL) > 8 && baseURL[:8] == "https://" {
+			host = baseURL[8:]
+			schemes = []string{"https"}
+		} else if len(baseURL) > 7 && baseURL[:7] == "http://" {
+			host = baseURL[7:]
+			schemes = []string{"http"}
+		} else {
+			host = baseURL
+			schemes = []string{"http", "https"}
+		}
+	} else {
+		// Default to listen address
+		host = fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
+		schemes = []string{"http"}
+	}
+
+	// Update Swagger info
+	docs.SwaggerInfo.Host = host
+	docs.SwaggerInfo.Schemes = schemes
+
+	log.WithFields(logrus.Fields{
+		"swagger_host":    host,
+		"swagger_schemes": schemes,
+	}).Info("Swagger documentation configured")
+}
+
+// swaggerHostMiddleware returns middleware that dynamically updates Swagger host based on request
+func swaggerHostMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Determine scheme from request
+		scheme := "http"
+		if c.Request.TLS != nil {
+			scheme = "https"
+		}
+		// Check X-Forwarded-Proto header (common in reverse proxy setups)
+		if proto := c.GetHeader("X-Forwarded-Proto"); proto != "" {
+			scheme = proto
+		}
+
+		// Get host from request (includes port if non-standard)
+		host := c.Request.Host
+		// Check X-Forwarded-Host header (common in reverse proxy setups)
+		if forwarded := c.GetHeader("X-Forwarded-Host"); forwarded != "" {
+			host = forwarded
+		}
+
+		// Update Swagger info for this request
+		docs.SwaggerInfo.Host = host
+		docs.SwaggerInfo.Schemes = []string{scheme}
+
+		c.Next()
+	}
 }
