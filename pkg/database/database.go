@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -27,6 +28,7 @@ func init() {
 type DiskDB struct {
 	db         *sql.DB
 	insertStmt *sql.Stmt
+	indexMu    sync.Mutex // Protects concurrent indexing operations
 }
 
 // NewDiskDB creates a new database instance
@@ -423,6 +425,21 @@ func (d *DiskDB) CommitTransaction() error {
 func (d *DiskDB) RollbackTransaction() error {
 	_, err := d.db.Exec("ROLLBACK")
 	return err
+}
+
+// LockIndexing attempts to acquire the indexing lock.
+// Returns an error if another indexing operation is already in progress.
+func (d *DiskDB) LockIndexing() error {
+	// Try to acquire lock without blocking
+	if !d.indexMu.TryLock() {
+		return fmt.Errorf("another indexing operation is already in progress")
+	}
+	return nil
+}
+
+// UnlockIndexing releases the indexing lock.
+func (d *DiskDB) UnlockIndexing() {
+	d.indexMu.Unlock()
 }
 
 // All retrieves all entries

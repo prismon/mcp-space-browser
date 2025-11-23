@@ -71,6 +71,12 @@ func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions)
 		return nil, fmt.Errorf("failed to resolve absolute path: %w", err)
 	}
 
+	// Acquire indexing lock to prevent concurrent indexing operations
+	if err := db.LockIndexing(); err != nil {
+		return nil, fmt.Errorf("failed to acquire indexing lock: %w", err)
+	}
+	defer db.UnlockIndexing()
+
 	runID := time.Now().Unix()
 
 	// Create job in database
