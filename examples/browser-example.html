@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP Space Browser - Browser Example</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      padding: 20px;
+    }
+
+    h1 {
+      color: #333;
+      margin-bottom: 20px;
+      border-bottom: 2px solid #007bff;
+      padding-bottom: 10px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      min-width: 300px;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    button {
+      padding: 10px 20px;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.2s;
+    }
+
+    button:hover {
+      background: #0056b3;
+    }
+
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    .status {
+      padding: 10px;
+      background: #e7f3ff;
+      border-left: 4px solid #007bff;
+      margin-bottom: 20px;
+      border-radius: 4px;
+    }
+
+    .status.error {
+      background: #ffe7e7;
+      border-left-color: #dc3545;
+    }
+
+    .status.success {
+      background: #e7ffe7;
+      border-left-color: #28a745;
+    }
+
+    .breadcrumb {
+      padding: 10px;
+      background: #f8f9fa;
+      border-radius: 4px;
+      margin-bottom: 20px;
+      font-family: monospace;
+      font-size: 14px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .summary-card {
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 4px;
+      border-left: 4px solid #007bff;
+    }
+
+    .summary-card h3 {
+      font-size: 12px;
+      color: #666;
+      text-transform: uppercase;
+      margin-bottom: 5px;
+    }
+
+    .summary-card .value {
+      font-size: 24px;
+      font-weight: bold;
+      color: #333;
+    }
+
+    .entries {
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .entry {
+      display: grid;
+      grid-template-columns: 40px 1fr 150px 200px;
+      gap: 10px;
+      padding: 12px;
+      border-bottom: 1px solid #eee;
+      align-items: center;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .entry:hover {
+      background: #f8f9fa;
+    }
+
+    .entry:last-child {
+      border-bottom: none;
+    }
+
+    .entry-icon {
+      font-size: 24px;
+      text-align: center;
+    }
+
+    .entry-name {
+      font-weight: 500;
+      color: #333;
+      word-break: break-all;
+    }
+
+    .entry-size {
+      color: #666;
+      text-align: right;
+      font-family: monospace;
+    }
+
+    .entry-modified {
+      color: #999;
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+
+    .spinner {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #007bff;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 10px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🗂️ MCP Space Browser</h1>
+
+    <div class="controls">
+      <input type="text" id="serverUrl" placeholder="Server URL (e.g., http://localhost:3000)" value="http://localhost:3000">
+      <button onclick="connect()">Connect</button>
+      <input type="text" id="pathInput" placeholder="Path to navigate or index">
+      <button onclick="navigateToPath()">Navigate</button>
+      <button onclick="indexPath()">Index</button>
+    </div>
+
+    <div id="status" class="status" style="display: none;"></div>
+
+    <div class="breadcrumb">
+      <strong>Current:</strong> <span id="currentPath">/</span>
+    </div>
+
+    <div class="summary" id="summary" style="display: none;">
+      <div class="summary-card">
+        <h3>Total Entries</h3>
+        <div class="value" id="totalEntries">0</div>
+      </div>
+      <div class="summary-card">
+        <h3>Files</h3>
+        <div class="value" id="fileCount">0</div>
+      </div>
+      <div class="summary-card">
+        <h3>Directories</h3>
+        <div class="value" id="dirCount">0</div>
+      </div>
+      <div class="summary-card">
+        <h3>Total Size</h3>
+        <div class="value" id="totalSize">0 MB</div>
+      </div>
+    </div>
+
+    <div id="loading" class="loading" style="display: none;">
+      <div class="spinner"></div>
+      <div>Loading...</div>
+    </div>
+
+    <div id="entries" class="entries"></div>
+  </div>
+
+  <script src="../mcp-client.js"></script>
+  <script>
+    let client = null;
+    let currentPath = '/';
+
+    function showStatus(message, type = 'info') {
+      const statusEl = document.getElementById('status');
+      statusEl.textContent = message;
+      statusEl.className = 'status ' + type;
+      statusEl.style.display = 'block';
+      setTimeout(() => {
+        statusEl.style.display = 'none';
+      }, 5000);
+    }
+
+    function showLoading(show) {
+      document.getElementById('loading').style.display = show ? 'block' : 'none';
+      document.getElementById('entries').style.display = show ? 'none' : 'block';
+    }
+
+    function formatSize(bytes) {
+      const mb = bytes / (1024 * 1024);
+      if (mb < 1) {
+        return (bytes / 1024).toFixed(2) + ' KB';
+      } else if (mb < 1024) {
+        return mb.toFixed(2) + ' MB';
+      } else {
+        return (mb / 1024).toFixed(2) + ' GB';
+      }
+    }
+
+    function formatDate(dateString) {
+      const date = new Date(dateString);
+      return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+    }
+
+    async function connect() {
+      const serverUrl = document.getElementById('serverUrl').value;
+      try {
+        client = new MCPSpaceBrowserClient(serverUrl);
+        const healthy = await client.healthCheck();
+        if (healthy) {
+          showStatus('Connected to server successfully!', 'success');
+          const sessionInfo = await client.getSessionInfo();
+          currentPath = sessionInfo.cwd || '/';
+          document.getElementById('currentPath').textContent = currentPath;
+          document.getElementById('pathInput').value = currentPath;
+        } else {
+          showStatus('Server is not responding', 'error');
+        }
+      } catch (error) {
+        showStatus('Failed to connect: ' + error.message, 'error');
+      }
+    }
+
+    async function navigateToPath() {
+      const path = document.getElementById('pathInput').value;
+      if (!path) {
+        showStatus('Please enter a path', 'error');
+        return;
+      }
+      await navigate(path);
+    }
+
+    async function navigate(path) {
+      if (!client) {
+        showStatus('Please connect to server first', 'error');
+        return;
+      }
+
+      showLoading(true);
+      try {
+        const result = await client.navigate(path, {
+          limit: 100,
+          sortBy: 'size',
+          order: 'desc'
+        });
+
+        currentPath = result.cwd;
+        document.getElementById('currentPath').textContent = currentPath;
+        document.getElementById('pathInput').value = currentPath;
+
+        // Update summary
+        document.getElementById('summary').style.display = 'grid';
+        document.getElementById('totalEntries').textContent = result.summary.totalChildren;
+        document.getElementById('fileCount').textContent = result.summary.fileCount;
+        document.getElementById('dirCount').textContent = result.summary.directoryCount;
+        document.getElementById('totalSize').textContent = formatSize(result.summary.totalSize);
+
+        // Display entries
+        const entriesEl = document.getElementById('entries');
+        entriesEl.innerHTML = '';
+
+        // Add parent directory link if not at root
+        if (currentPath !== '/') {
+          const parentPath = currentPath.substring(0, currentPath.lastIndexOf('/')) || '/';
+          const parentEntry = document.createElement('div');
+          parentEntry.className = 'entry';
+          parentEntry.innerHTML = `
+            <div class="entry-icon">⬆️</div>
+            <div class="entry-name">..</div>
+            <div class="entry-size"></div>
+            <div class="entry-modified"></div>
+          `;
+          parentEntry.onclick = () => navigate(parentPath);
+          entriesEl.appendChild(parentEntry);
+        }
+
+        result.entries.forEach(entry => {
+          const entryEl = document.createElement('div');
+          entryEl.className = 'entry';
+          const icon = entry.kind === 'directory' ? '📁' : '📄';
+          entryEl.innerHTML = `
+            <div class="entry-icon">${icon}</div>
+            <div class="entry-name">${entry.name}</div>
+            <div class="entry-size">${formatSize(entry.size)}</div>
+            <div class="entry-modified">${formatDate(entry.modifiedAt)}</div>
+          `;
+          if (entry.kind === 'directory') {
+            entryEl.onclick = () => navigate(entry.path);
+          }
+          entriesEl.appendChild(entryEl);
+        });
+
+        showStatus('Loaded ' + result.entries.length + ' entries', 'success');
+      } catch (error) {
+        showStatus('Failed to navigate: ' + error.message, 'error');
+      } finally {
+        showLoading(false);
+      }
+    }
+
+    async function indexPath() {
+      const path = document.getElementById('pathInput').value;
+      if (!path) {
+        showStatus('Please enter a path to index', 'error');
+        return;
+      }
+
+      if (!client) {
+        showStatus('Please connect to server first', 'error');
+        return;
+      }
+
+      try {
+        showStatus('Starting indexing...', 'info');
+        const result = await client.index(path, { async: true });
+        showStatus('Indexing started! Job ID: ' + result.jobId, 'success');
+
+        // Poll for job completion
+        let completed = false;
+        const pollInterval = setInterval(async () => {
+          try {
+            const status = await client.getJobProgress(result.jobId);
+            showStatus(`Indexing progress: ${status.progress}% (${status.status})`, 'info');
+
+            if (status.status === 'completed') {
+              clearInterval(pollInterval);
+              showStatus('Indexing completed successfully!', 'success');
+              // Refresh the current directory
+              if (currentPath) {
+                await navigate(currentPath);
+              }
+            } else if (status.status === 'failed') {
+              clearInterval(pollInterval);
+              showStatus('Indexing failed: ' + (status.error || 'Unknown error'), 'error');
+            }
+          } catch (error) {
+            clearInterval(pollInterval);
+            showStatus('Failed to get job status: ' + error.message, 'error');
+          }
+        }, 2000);
+      } catch (error) {
+        showStatus('Failed to start indexing: ' + error.message, 'error');
+      }
+    }
+
+    // Auto-connect on load
+    window.addEventListener('load', () => {
+      connect();
+    });
+  </script>
+</body>
+</html>
