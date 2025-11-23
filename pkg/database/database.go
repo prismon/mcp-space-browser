@@ -29,6 +29,8 @@ type DiskDB struct {
 	db         *sql.DB
 	insertStmt *sql.Stmt
 	indexMu    sync.Mutex // Protects concurrent indexing operations
+	tx         *sql.Tx    // Current transaction (if any)
+	txStmt     *sql.Stmt  // Insert statement for current transaction
 }
 
 // NewDiskDB creates a new database instance
@@ -41,6 +43,19 @@ func NewDiskDB(path string) (*DiskDB, error) {
 	}
 
 	diskDB := &DiskDB{db: db}
+
+	// Enable WAL mode for better concurrency
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
+	}
+
+	// Set busy timeout to 5 seconds
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to set busy timeout: %w", err)
+	}
+
 	if err := diskDB.init(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
@@ -217,7 +232,13 @@ func (d *DiskDB) InsertOrUpdate(entry *models.Entry) error {
 		}).Trace("Inserting/updating entry")
 	}
 
-	_, err := d.insertStmt.Exec(
+	// Use transaction statement if in a transaction, otherwise use regular statement
+	stmt := d.insertStmt
+	if d.txStmt != nil {
+		stmt = d.txStmt
+	}
+
+	_, err := stmt.Exec(
 		entry.Path,
 		entry.Parent,
 		entry.Size,
@@ -409,21 +430,74 @@ func (d *DiskDB) ComputeAggregates(root string) error {
 
 // Transaction Methods
 
-// BeginTransaction starts a new transaction
+// BeginTransaction starts a new transaction with proper Go transaction object
 func (d *DiskDB) BeginTransaction() error {
-	_, err := d.db.Exec("BEGIN")
-	return err
+	if d.tx != nil {
+		return fmt.Errorf("transaction already in progress")
+	}
+
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+
+	d.tx = tx
+
+	// Create a prepared statement bound to this transaction
+	stmt, err := tx.Prepare(`
+		INSERT INTO entries
+			(path, parent, size, kind, ctime, mtime, last_scanned, dirty)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+		ON CONFLICT(path) DO UPDATE SET
+			parent=excluded.parent,
+			size=excluded.size,
+			kind=excluded.kind,
+			ctime=excluded.ctime,
+			mtime=excluded.mtime,
+			last_scanned=excluded.last_scanned,
+			dirty=0
+	`)
+	if err != nil {
+		tx.Rollback()
+		d.tx = nil
+		return err
+	}
+
+	d.txStmt = stmt
+	return nil
 }
 
 // CommitTransaction commits the current transaction
 func (d *DiskDB) CommitTransaction() error {
-	_, err := d.db.Exec("COMMIT")
+	if d.tx == nil {
+		return fmt.Errorf("no transaction in progress")
+	}
+
+	// Close the transaction statement
+	if d.txStmt != nil {
+		d.txStmt.Close()
+		d.txStmt = nil
+	}
+
+	err := d.tx.Commit()
+	d.tx = nil
 	return err
 }
 
 // RollbackTransaction rolls back the current transaction
 func (d *DiskDB) RollbackTransaction() error {
-	_, err := d.db.Exec("ROLLBACK")
+	if d.tx == nil {
+		return nil // Nothing to rollback
+	}
+
+	// Close the transaction statement
+	if d.txStmt != nil {
+		d.txStmt.Close()
+		d.txStmt = nil
+	}
+
+	err := d.tx.Rollback()
+	d.tx = nil
 	return err
 }
 
