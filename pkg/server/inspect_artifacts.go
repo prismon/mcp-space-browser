@@ -6,15 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	_ "image/gif"
-	"image/jpeg"
-	_ "image/png"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,10 +17,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/prismon/mcp-space-browser/internal/models"
+	"github.com/prismon/mcp-space-browser/pkg/classifier"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
 	"github.com/prismon/mcp-space-browser/pkg/pathutil"
-	"golang.org/x/image/draw"
 )
 
 const (
@@ -35,9 +30,10 @@ const (
 )
 
 var (
-	contentBaseURL   string
-	artifactCacheDir string
-	artifactDB       *database.DiskDB // Database reference for persisting artifact metadata
+	contentBaseURL      string
+	artifactCacheDir    string
+	artifactDB          *database.DiskDB           // Database reference for persisting artifact metadata
+	classifierManager   *classifier.Manager        // Classifier manager for media processing
 )
 
 // SetArtifactDB sets the database instance for artifact persistence
@@ -77,6 +73,12 @@ type inspectResponse struct {
 func initArtifactCache() {
 	if err := os.MkdirAll(artifactCacheDir, 0o755); err != nil {
 		panic(fmt.Errorf("failed to create artifact cache: %w", err))
+	}
+
+	// Initialize classifier manager if not already done
+	if classifierManager == nil {
+		classifierManager = classifier.NewManager()
+		inspectLog.Debug("Initialized classifier manager")
 	}
 }
 
@@ -166,11 +168,9 @@ func buildInspectResponse(inputPath string, db *database.DiskDB, limit, offset i
 func generateArtifacts(path string, kind string, mtime int64, limit, offset int) ([]inspectArtifact, int, int, error) {
 	artifacts := make([]inspectArtifact, 0)
 	hashKey := artifactHashKey(path, mtime)
-	lower := strings.ToLower(filepath.Ext(path))
-	isImage := lower == ".jpg" || lower == ".jpeg" || lower == ".png" || lower == ".gif" || lower == ".bmp"
-	isVideo := lower == ".mp4" || lower == ".mov" || lower == ".mkv" || lower == ".avi" || lower == ".webm"
+	mediaType := classifier.DetectMediaType(path)
 
-	if kind == "file" && isImage {
+	if kind == "file" && mediaType == classifier.MediaTypeImage {
 		thumbPath, mimeType, err := createImageThumbnail(path, mtime, hashKey)
 		if err != nil {
 			return nil, -1, 0, err
@@ -179,7 +179,7 @@ func generateArtifacts(path string, kind string, mtime int64, limit, offset int)
 		artifacts = append(artifacts, artifact)
 	}
 
-	if kind == "file" && isVideo {
+	if kind == "file" && mediaType == classifier.MediaTypeVideo {
 		posterPath, mimeType, err := createVideoPoster(path, mtime, hashKey)
 		if err != nil {
 			return nil, -1, 0, err
@@ -333,24 +333,21 @@ func createImageThumbnail(path string, mtime int64, hashKey string) (string, str
 		return cachePath, "image/jpeg", nil
 	}
 
-	file, err := os.Open(path)
-	if err != nil {
-		return "", "", err
-	}
-	defer file.Close()
-
-	img, _, err := image.Decode(file)
-	if err != nil {
-		return "", "", err
+	req := &classifier.ArtifactRequest{
+		SourcePath:   path,
+		OutputPath:   cachePath,
+		MediaType:    classifier.MediaTypeImage,
+		ArtifactType: classifier.ArtifactTypeThumbnail,
+		MaxWidth:     thumbnailMaxWidth,
+		MaxHeight:    thumbnailMaxHeight,
 	}
 
-	scaled := resizeImage(img, thumbnailMaxWidth, thumbnailMaxHeight)
-
-	if err := writeJPEG(cachePath, scaled); err != nil {
-		return "", "", err
+	result := classifierManager.GenerateThumbnail(req)
+	if result.Error != nil {
+		return "", "", result.Error
 	}
 
-	return cachePath, "image/jpeg", nil
+	return result.OutputPath, result.MimeType, nil
 }
 
 func createVideoPoster(path string, mtime int64, hashKey string) (string, string, error) {
@@ -362,14 +359,22 @@ func createVideoPoster(path string, mtime int64, hashKey string) (string, string
 		return cachePath, "image/jpeg", nil
 	}
 
-	if err := ensureFFmpegFrame(path, cachePath, 1); err != nil {
-		inspectLog.WithError(err).Warn("ffmpeg unavailable, generating placeholder poster")
-		if err := writePlaceholderImage(cachePath); err != nil {
-			return "", "", err
-		}
+	req := &classifier.ArtifactRequest{
+		SourcePath:   path,
+		OutputPath:   cachePath,
+		MediaType:    classifier.MediaTypeVideo,
+		ArtifactType: classifier.ArtifactTypeThumbnail,
+		MaxWidth:     thumbnailMaxWidth,
+		MaxHeight:    thumbnailMaxHeight,
 	}
 
-	return cachePath, "image/jpeg", nil
+	result := classifierManager.GenerateThumbnail(req)
+	if result.Error != nil {
+		inspectLog.WithError(result.Error).Warn("Failed to generate video poster")
+		return "", "", result.Error
+	}
+
+	return result.OutputPath, result.MimeType, nil
 }
 
 func createVideoTimeline(path string, mtime int64, hashKey string, frames int) ([]string, error) {
@@ -380,97 +385,26 @@ func createVideoTimeline(path string, mtime int64, hashKey string, frames int) (
 			return nil, err
 		}
 		if _, err := os.Stat(framePath); os.IsNotExist(err) {
-			if err := ensureFFmpegTimelineFrame(path, framePath, i, frames); err != nil {
-				inspectLog.WithError(err).Warn("ffmpeg unavailable, generating placeholder timeline frame")
-				if err := writePlaceholderImage(framePath); err != nil {
-					return nil, err
-				}
+			req := &classifier.ArtifactRequest{
+				SourcePath:   path,
+				OutputPath:   framePath,
+				MediaType:    classifier.MediaTypeVideo,
+				ArtifactType: classifier.ArtifactTypeTimeline,
+				FrameIndex:   i,
+				TotalFrames:  frames,
+				MaxWidth:     thumbnailMaxWidth,
+				MaxHeight:    thumbnailMaxHeight,
+			}
+
+			result := classifierManager.GenerateTimelineFrame(req)
+			if result.Error != nil {
+				inspectLog.WithError(result.Error).Warn("Failed to generate timeline frame")
+				return nil, result.Error
 			}
 		}
 		results = append(results, framePath)
 	}
 	return results, nil
-}
-
-func ensureFFmpegFrame(inputPath, outputPath string, frameCount int) error {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		return err
-	}
-
-	// Validate paths to prevent command injection
-	if err := validateFilePath(inputPath); err != nil {
-		return fmt.Errorf("invalid input path: %w", err)
-	}
-	if err := validateFilePath(outputPath); err != nil {
-		return fmt.Errorf("invalid output path: %w", err)
-	}
-
-	cmd := exec.Command("ffmpeg", "-y", "-i", inputPath, "-vf", "thumbnail,scale=320:-1", "-frames:v", strconv.Itoa(frameCount), outputPath)
-	return cmd.Run()
-}
-
-func ensureFFmpegTimelineFrame(inputPath, outputPath string, index, total int) error {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		return err
-	}
-
-	// Validate paths to prevent command injection
-	if err := validateFilePath(inputPath); err != nil {
-		return fmt.Errorf("invalid input path: %w", err)
-	}
-	if err := validateFilePath(outputPath); err != nil {
-		return fmt.Errorf("invalid output path: %w", err)
-	}
-
-	// Spread frames across the duration using select to approximate even sampling
-	selectFilter := fmt.Sprintf("select='not(mod(n,%d))',scale=320:-1", 5)
-	tmpDir := filepath.Dir(outputPath)
-	pattern := filepath.Join(tmpDir, "timeline_%02d.jpg")
-	cmd := exec.Command("ffmpeg", "-y", "-i", inputPath, "-vf", selectFilter, "-frames:v", strconv.Itoa(total), pattern)
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-
-	src := filepath.Join(tmpDir, fmt.Sprintf("timeline_%02d.jpg", index))
-	if _, err := os.Stat(src); err != nil {
-		return err
-	}
-	return os.Rename(src, outputPath)
-}
-
-func resizeImage(img image.Image, maxWidth, maxHeight int) image.Image {
-	bounds := img.Bounds()
-	width := bounds.Dx()
-	height := bounds.Dy()
-
-	ratio := float64(width) / float64(height)
-	targetW := maxWidth
-	targetH := int(float64(targetW) / ratio)
-	if targetH > maxHeight {
-		targetH = maxHeight
-		targetW = int(float64(targetH) * ratio)
-	}
-
-	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
-	draw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, bounds, draw.Over, nil)
-	return dst
-}
-
-func writeJPEG(path string, img image.Image) error {
-	out, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	return jpeg.Encode(out, img, &jpeg.Options{Quality: 80})
-}
-
-func writePlaceholderImage(path string) error {
-	placeholder := image.NewRGBA(image.Rect(0, 0, thumbnailMaxWidth, thumbnailMaxHeight))
-	if err := writeJPEG(path, placeholder); err != nil {
-		return err
-	}
-	return nil
 }
 
 func parsePagination(limitRaw, offsetRaw string) (int, int) {
@@ -489,31 +423,6 @@ func parsePagination(limitRaw, offsetRaw string) (int, int) {
 	}
 
 	return limit, offset
-}
-
-// validateFilePath validates a file path to prevent command injection
-func validateFilePath(path string) error {
-	if path == "" {
-		return fmt.Errorf("path cannot be empty")
-	}
-
-	// Check for suspicious characters that could be used for command injection
-	if strings.ContainsAny(path, ";|&$`<>(){}[]!*?") {
-		return fmt.Errorf("path contains invalid characters")
-	}
-
-	// Ensure path is absolute or verify it exists
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return fmt.Errorf("failed to resolve absolute path: %w", err)
-	}
-
-	// Check if file exists
-	if _, err := os.Stat(absPath); err != nil {
-		return fmt.Errorf("file does not exist: %w", err)
-	}
-
-	return nil
 }
 
 var inspectLog = logger.WithName("inspect")
