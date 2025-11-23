@@ -110,6 +110,9 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 	// Middleware updates host dynamically based on incoming request
 	router.GET("/docs/*any", swaggerHostMiddleware(), ginSwagger.WrapHandler(swaggerFiles.Handler))
 
+	// Serve web component microfrontend (public, no auth required)
+	router.Static("/web", "./web")
+
 	// REST API endpoints with optional OAuth middleware
 	apiGroup := router.Group("/api")
 	if validator != nil {
@@ -172,13 +175,14 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 
 	addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
 	logFields := logrus.Fields{
-		"host":         config.Server.Host,
-		"port":         config.Server.Port,
-		"externalHost": config.Server.ExternalHost,
-		"rest_api":     "/api/*",
-		"mcp_endpoint": "/mcp",
-		"swagger_docs": "/docs/index.html",
-		"openapi_spec": "/docs/swagger.json",
+		"host":          config.Server.Host,
+		"port":          config.Server.Port,
+		"externalHost":  config.Server.ExternalHost,
+		"rest_api":      "/api/*",
+		"mcp_endpoint":  "/mcp",
+		"swagger_docs":  "/docs/index.html",
+		"openapi_spec":  "/docs/swagger.json",
+		"web_component": "/web/index.html",
 	}
 	if config.Auth.Enabled {
 		logFields["auth_enabled"] = true
