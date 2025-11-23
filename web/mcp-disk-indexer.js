@@ -344,6 +344,15 @@ class McpDiskIndexer extends HTMLElement {
         async: true
       });
 
+      // Validate response structure
+      if (!result || !result.content || !Array.isArray(result.content) || result.content.length === 0) {
+        throw new Error('Invalid MCP response structure: missing content array');
+      }
+
+      if (!result.content[0].text) {
+        throw new Error('Invalid MCP response: missing text content');
+      }
+
       // Parse the response
       const response = JSON.parse(result.content[0].text);
 
@@ -402,6 +411,15 @@ class McpDiskIndexer extends HTMLElement {
       const result = await this.callMCPTool('job-progress', {
         jobId: String(jobId)
       });
+
+      // Validate response structure
+      if (!result || !result.content || !Array.isArray(result.content) || result.content.length === 0) {
+        throw new Error('Invalid MCP response structure: missing content array');
+      }
+
+      if (!result.content[0].text) {
+        throw new Error('Invalid MCP response: missing text content');
+      }
 
       const progress = JSON.parse(result.content[0].text);
 
