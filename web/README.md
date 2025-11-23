@@ -4,12 +4,12 @@ A comprehensive suite of reusable web components for disk space analysis via MCP
 
 ## Overview
 
-This directory contains 5 web components that provide a complete front-end interface for all 17 MCP tools exposed by the mcp-space-browser server. Each component is built using native Web Components API (Custom Elements) with Shadow DOM for full encapsulation.
+This directory contains 5 web components that provide a complete front-end interface for all 18 MCP tools exposed by the mcp-space-browser server. Each component is built using native Web Components API (Custom Elements) with Shadow DOM for full encapsulation.
 
 ## Files
 
 - `mcp-disk-indexer.js` - Disk indexing component (index, job-progress tools)
-- `mcp-disk-navigator.js` - Directory navigation component (cd, inspect tools)
+- `mcp-disk-navigator.js` - Directory navigation component (navigate, inspect tools)
 - `mcp-selection-sets.js` - Selection sets management (5 tools)
 - `mcp-queries.js` - Query management and execution (6 tools)
 - `mcp-session.js` - Session info and preferences (2 tools)
@@ -22,7 +22,7 @@ This directory contains 5 web components that provide a complete front-end inter
 |------|-----------|----------|
 | `index` | mcp-disk-indexer | Core |
 | `job-progress` | mcp-disk-indexer | Core |
-| `cd` | mcp-disk-navigator | Core |
+| `navigate` | mcp-disk-navigator | Core |
 | `inspect` | mcp-disk-navigator | Core |
 | `selection-set-create` | mcp-selection-sets | Selection Sets |
 | `selection-set-list` | mcp-selection-sets | Selection Sets |
@@ -38,7 +38,7 @@ This directory contains 5 web components that provide a complete front-end inter
 | `session-info` | mcp-session | Session |
 | `session-set-preferences` | mcp-session | Session |
 
-**Total:** 17 MCP tools across 5 web components
+**Total:** 18 MCP tools across 5 web components
 
 ## Quick Start
 
@@ -74,7 +74,7 @@ Index filesystem paths and track progress asynchronously.
 ---
 
 ### 2. `<mcp-disk-navigator>`
-**MCP Tools:** `cd`, `inspect`
+**MCP Tools:** `navigate`, `inspect`
 
 Navigate indexed directories and inspect file/directory metadata.
 
