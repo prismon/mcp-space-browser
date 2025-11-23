@@ -26,6 +26,8 @@ func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 	registerCdTool(s, db)
 	registerInspectTool(s, db)
 	registerJobProgressTool(s, db)
+	registerListJobsTool(s, db)
+	registerCancelJobTool(s, db)
 
 	// Selection set tools
 	registerSelectionSetCreate(s, db)
@@ -615,6 +617,220 @@ func registerJobProgressTool(s *server.MCPServer, db *database.DiskDB) {
 			"path":      job.RootPath,
 			"progress":  job.Progress,
 			"statusUrl": fmt.Sprintf("shell://jobs/%d", job.ID),
+		}
+
+		payload, err := json.Marshal(response)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal response: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerListJobsTool(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("list-jobs",
+		mcp.WithDescription("List indexing jobs with optional filtering by status and progress."),
+		mcp.WithBoolean("activeOnly",
+			mcp.Description("Show only active jobs (running or pending). Default: false"),
+		),
+		mcp.WithString("status",
+			mcp.Description("Filter by specific status: pending, running, paused, completed, failed, or cancelled"),
+		),
+		mcp.WithNumber("minProgress",
+			mcp.Description("Filter jobs with progress >= this value (0-100)"),
+		),
+		mcp.WithNumber("maxProgress",
+			mcp.Description("Filter jobs with progress <= this value (0-100)"),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum number of jobs to return (default: 50)"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			ActiveOnly  *bool   `json:"activeOnly,omitempty"`
+			Status      *string `json:"status,omitempty"`
+			MinProgress *int    `json:"minProgress,omitempty"`
+			MaxProgress *int    `json:"maxProgress,omitempty"`
+			Limit       *int    `json:"limit,omitempty"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		// Set default limit
+		limit := getIntOrDefault(args.Limit, 50)
+
+		// Determine status filter
+		var statusFilter *string
+		if args.ActiveOnly != nil && *args.ActiveOnly {
+			// For activeOnly, we'll need to filter in-memory since we can't pass multiple statuses to ListIndexJobs
+			statusFilter = nil
+		} else if args.Status != nil {
+			statusFilter = args.Status
+		}
+
+		// Get jobs from database
+		jobs, err := db.ListIndexJobs(statusFilter, limit*2) // Get more for filtering
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to list jobs: %v", err)), nil
+		}
+
+		// Apply filters
+		var filteredJobs []*database.IndexJob
+		for _, job := range jobs {
+			// Filter by activeOnly
+			if args.ActiveOnly != nil && *args.ActiveOnly {
+				if job.Status != "running" && job.Status != "pending" {
+					continue
+				}
+			}
+
+			// Filter by progress range
+			if args.MinProgress != nil && job.Progress < *args.MinProgress {
+				continue
+			}
+			if args.MaxProgress != nil && job.Progress > *args.MaxProgress {
+				continue
+			}
+
+			filteredJobs = append(filteredJobs, job)
+
+			// Respect the limit
+			if len(filteredJobs) >= limit {
+				break
+			}
+		}
+
+		// Build response with detailed job information
+		var jobList []map[string]any
+		for _, job := range filteredJobs {
+			jobInfo := map[string]any{
+				"jobId":     job.ID,
+				"path":      job.RootPath,
+				"status":    job.Status,
+				"progress":  job.Progress,
+				"statusUrl": fmt.Sprintf("shell://jobs/%d", job.ID),
+			}
+
+			// Add timestamps if available
+			if job.StartedAt != nil {
+				jobInfo["startedAt"] = time.Unix(*job.StartedAt, 0).Format(time.RFC3339)
+			}
+			if job.CompletedAt != nil {
+				jobInfo["completedAt"] = time.Unix(*job.CompletedAt, 0).Format(time.RFC3339)
+			}
+
+			// Add metadata if available
+			if job.Metadata != nil {
+				var metadata database.IndexJobMetadata
+				if err := json.Unmarshal([]byte(*job.Metadata), &metadata); err == nil {
+					jobInfo["metadata"] = metadata
+				}
+			}
+
+			// Add error if available
+			if job.Error != nil {
+				jobInfo["error"] = *job.Error
+			}
+
+			// Calculate what the job is currently doing (for running jobs)
+			if job.Status == "running" {
+				jobInfo["currentActivity"] = "Indexing filesystem"
+				if job.Metadata != nil {
+					var metadata database.IndexJobMetadata
+					if err := json.Unmarshal([]byte(*job.Metadata), &metadata); err == nil {
+						jobInfo["currentActivity"] = fmt.Sprintf("Processed %d files, %d directories",
+							metadata.FilesProcessed, metadata.DirectoriesProcessed)
+					}
+				}
+			}
+
+			jobList = append(jobList, jobInfo)
+		}
+
+		response := map[string]any{
+			"jobs":       jobList,
+			"totalCount": len(jobList),
+			"filters": map[string]any{
+				"activeOnly":  args.ActiveOnly,
+				"status":      args.Status,
+				"minProgress": args.MinProgress,
+				"maxProgress": args.MaxProgress,
+			},
+		}
+
+		payload, err := json.Marshal(response)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal response: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerCancelJobTool(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("cancel-job",
+		mcp.WithDescription("Cancel a running or pending indexing job."),
+		mcp.WithString("jobId",
+			mcp.Required(),
+			mcp.Description("Job identifier to cancel"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			JobID string `json:"jobId"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		id, err := strconv.ParseInt(args.JobID, 10, 64)
+		if err != nil {
+			return mcp.NewToolResultError("jobId must be an integer"), nil
+		}
+
+		// Get the job to check its status
+		job, err := db.GetIndexJob(id)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to load job: %v", err)), nil
+		}
+		if job == nil {
+			return mcp.NewToolResultError("Job not found"), nil
+		}
+
+		// Check if job can be cancelled
+		if job.Status == "completed" {
+			return mcp.NewToolResultError("Cannot cancel a completed job"), nil
+		}
+		if job.Status == "failed" {
+			return mcp.NewToolResultError("Cannot cancel a failed job"), nil
+		}
+		if job.Status == "cancelled" {
+			return mcp.NewToolResultError("Job is already cancelled"), nil
+		}
+
+		// Update job status to cancelled
+		if err := db.UpdateIndexJobStatus(id, "cancelled", nil); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to cancel job: %v", err)), nil
+		}
+
+		log.WithFields(logrus.Fields{
+			"jobID": id,
+			"path":  job.RootPath,
+		}).Info("Job cancelled via MCP")
+
+		response := map[string]any{
+			"jobId":     id,
+			"status":    "cancelled",
+			"path":      job.RootPath,
+			"message":   "Job has been cancelled",
+			"statusUrl": fmt.Sprintf("shell://jobs/%d", id),
 		}
 
 		payload, err := json.Marshal(response)

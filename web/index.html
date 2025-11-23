@@ -164,6 +164,7 @@
   <div class="nav-tabs">
     <div class="nav-tab active" data-section="indexer">📥 Indexer</div>
     <div class="nav-tab" data-section="navigator">📁 Navigator</div>
+    <div class="nav-tab" data-section="jobs">🎯 Jobs</div>
     <div class="nav-tab" data-section="selection-sets">📦 Selection Sets</div>
     <div class="nav-tab" data-section="queries">🔍 Queries</div>
     <div class="nav-tab" data-section="session">⚙️ Session</div>
@@ -201,6 +202,25 @@
       <ul>
         <li><code>cd</code> - Change directory and list children with pagination and sorting</li>
         <li><code>inspect</code> - Get detailed metadata for a specific file or directory</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Jobs Section -->
+  <div class="demo-section" id="jobs">
+    <div class="section-header">
+      <h2>🎯 Job Manager <span class="badge">list-jobs, cancel-job</span></h2>
+      <p>Monitor and manage indexing jobs with real-time status updates</p>
+    </div>
+
+    <mcp-job-manager></mcp-job-manager>
+
+    <div class="info-box">
+      <h3>MCP Tools Used</h3>
+      <ul>
+        <li><code>list-jobs</code> - List all indexing jobs with filtering by status, progress, and active state</li>
+        <li><code>cancel-job</code> - Cancel a running or pending indexing job</li>
+        <li><code>job-progress</code> - Get detailed progress information for a specific job</li>
       </ul>
     </div>
   </div>
@@ -270,13 +290,14 @@
     <p>
       Part of <a href="https://github.com/prismon/mcp-space-browser" target="_blank">mcp-space-browser</a>
       - A disk space indexing agent with MCP support<br>
-      <strong>Total MCP Tools:</strong> 17 | <strong>Web Components:</strong> 5
+      <strong>Total MCP Tools:</strong> 19 | <strong>Web Components:</strong> 6
     </p>
   </div>
 
   <!-- Load all web components -->
   <script src="/web/mcp-disk-indexer.js"></script>
   <script src="/web/mcp-disk-navigator.js"></script>
+  <script src="/web/mcp-job-manager.js"></script>
   <script src="/web/mcp-selection-sets.js"></script>
   <script src="/web/mcp-queries.js"></script>
   <script src="/web/mcp-session.js"></script>
