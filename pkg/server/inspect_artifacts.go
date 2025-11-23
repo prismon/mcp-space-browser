@@ -34,6 +34,7 @@ var (
 	artifactCacheDir    string
 	artifactDB          *database.DiskDB           // Database reference for persisting artifact metadata
 	classifierManager   *classifier.Manager        // Classifier manager for media processing
+	metadataManager     *classifier.MetadataManager // Metadata manager for extracting file metadata
 )
 
 // SetArtifactDB sets the database instance for artifact persistence
@@ -79,6 +80,12 @@ func initArtifactCache() {
 	if classifierManager == nil {
 		classifierManager = classifier.NewManager()
 		inspectLog.Debug("Initialized classifier manager")
+	}
+
+	// Initialize metadata manager if not already done
+	if metadataManager == nil {
+		metadataManager = classifier.NewMetadataManager()
+		inspectLog.Debug("Initialized metadata manager")
 	}
 }
 
@@ -195,6 +202,16 @@ func generateArtifacts(path string, kind string, mtime int64, limit, offset int)
 			frameHash := fmt.Sprintf("%s-frame-%d", hashKey, idx)
 			artifact := buildArtifact("video-timeline", "image/jpeg", f, path, frameHash, map[string]any{"frame": idx})
 			artifacts = append(artifacts, artifact)
+		}
+	}
+
+	// Extract metadata for text and audio files
+	if kind == "file" && metadataManager != nil && metadataManager.CanExtractMetadata(path) {
+		metadataArtifact, err := extractFileMetadata(path, mtime, hashKey)
+		if err != nil {
+			inspectLog.WithError(err).Warn("Failed to extract metadata")
+		} else if metadataArtifact != nil {
+			artifacts = append(artifacts, *metadataArtifact)
 		}
 	}
 
@@ -405,6 +422,85 @@ func createVideoTimeline(path string, mtime int64, hashKey string, frames int) (
 		results = append(results, framePath)
 	}
 	return results, nil
+}
+
+// extractFileMetadata extracts metadata from text and audio files
+func extractFileMetadata(path string, mtime int64, hashKey string) (*inspectArtifact, error) {
+	// Check if metadata already exists in database
+	if artifactDB != nil {
+		existing, err := artifactDB.GetMetadata(hashKey)
+		if err != nil {
+			inspectLog.WithError(err).Debug("Failed to check existing metadata")
+		}
+		if existing != nil {
+			// Metadata already extracted, return it
+			var metadataMap map[string]interface{}
+			if existing.MetadataJson != "" {
+				if err := json.Unmarshal([]byte(existing.MetadataJson), &metadataMap); err != nil {
+					inspectLog.WithError(err).Warn("Failed to unmarshal existing metadata")
+				}
+			}
+
+			return &inspectArtifact{
+				Type:        existing.MetadataType,
+				MimeType:    "application/json",
+				Url:         fmt.Sprintf("%s/api/content?path=%s", contentBaseURL, url.QueryEscape(path)),
+				ResourceUri: fmt.Sprintf("shell://nodes/%s/metadata/%s", path, existing.MetadataType),
+				Metadata:    metadataMap,
+			}, nil
+		}
+	}
+
+	// Extract metadata using the metadata manager
+	result := metadataManager.ExtractMetadata(path, 0) // 0 = use default max size
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	// Convert to JSON
+	metadataJSON, err := result.ToJSON()
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert metadata to JSON: %w", err)
+	}
+
+	// Get file size
+	stat, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat file: %w", err)
+	}
+
+	// Store metadata in database asynchronously
+	if artifactDB != nil {
+		metadata := &models.Metadata{
+			Hash:         hashKey,
+			SourcePath:   path,
+			MetadataType: result.MetadataType,
+			MimeType:     "application/json",
+			CachePath:    path, // No cache file for metadata, use source path
+			FileSize:     stat.Size(),
+			MetadataJson: metadataJSON,
+		}
+
+		go func() {
+			if err := artifactDB.CreateOrUpdateMetadata(metadata); err != nil {
+				inspectLog.WithError(err).Warn("Failed to persist metadata")
+			} else {
+				inspectLog.WithFields(map[string]interface{}{
+					"path": path,
+					"type": result.MetadataType,
+				}).Debug("Persisted metadata")
+			}
+		}()
+	}
+
+	// Return artifact
+	return &inspectArtifact{
+		Type:        result.MetadataType,
+		MimeType:    "application/json",
+		Url:         fmt.Sprintf("%s/api/content?path=%s", contentBaseURL, url.QueryEscape(path)),
+		ResourceUri: fmt.Sprintf("shell://nodes/%s/metadata/%s", path, result.MetadataType),
+		Metadata:    result.Data,
+	}, nil
 }
 
 func parsePagination(limitRaw, offsetRaw string) (int, int) {
