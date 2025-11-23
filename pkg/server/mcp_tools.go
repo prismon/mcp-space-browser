@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,6 +49,11 @@ func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 	// Session tools
 	registerSessionInfo(s, db, dbPath)
 	registerSessionSetPreferences(s, db)
+
+	// File action tools
+	registerRenameFilesTool(s, db)
+	registerDeleteFilesTool(s, db)
+	registerMoveFilesTool(s, db)
 }
 
 // Tree compression utilities
@@ -1422,4 +1429,498 @@ func checkIfHasMetadata(path string, kind string, mtime int64) bool {
 		lower == ".avi" || lower == ".webm"
 
 	return isImage || isVideo
+}
+
+// File Action Tools
+
+func registerRenameFilesTool(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("rename-files",
+		mcp.WithDescription("Rename files based on a pattern. Supports regex pattern matching and replacement."),
+		mcp.WithString("paths",
+			mcp.Required(),
+			mcp.Description("Comma-separated list of file paths to rename"),
+		),
+		mcp.WithString("pattern",
+			mcp.Required(),
+			mcp.Description("Regex pattern to match in the filename (not the full path, just the basename)"),
+		),
+		mcp.WithString("replacement",
+			mcp.Required(),
+			mcp.Description("Replacement string. Can use $1, $2, etc. for captured groups from the pattern"),
+		),
+		mcp.WithBoolean("dryRun",
+			mcp.Description("Preview changes without executing (default: false)"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Paths       string `json:"paths"`
+			Pattern     string `json:"pattern"`
+			Replacement string `json:"replacement"`
+			DryRun      *bool  `json:"dryRun,omitempty"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		dryRun := getBoolOrDefault(args.DryRun, false)
+
+		// Parse paths
+		paths := splitPaths(args.Paths)
+		if len(paths) == 0 {
+			return mcp.NewToolResultError("No paths provided"), nil
+		}
+
+		// Compile regex pattern
+		re, err := regexp.Compile(args.Pattern)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid regex pattern: %v", err)), nil
+		}
+
+		// Process each path
+		var results []map[string]interface{}
+		successCount := 0
+		errorCount := 0
+
+		for _, pathStr := range paths {
+			// Expand and validate path
+			expandedPath, err := pathutil.ExpandPath(pathStr)
+			if err != nil {
+				results = append(results, map[string]interface{}{
+					"oldPath": pathStr,
+					"status":  "error",
+					"error":   fmt.Sprintf("Invalid path: %v", err),
+				})
+				errorCount++
+				continue
+			}
+
+			// Check if path exists
+			if err := pathutil.ValidatePath(expandedPath); err != nil {
+				results = append(results, map[string]interface{}{
+					"oldPath": expandedPath,
+					"status":  "error",
+					"error":   fmt.Sprintf("Path does not exist: %v", err),
+				})
+				errorCount++
+				continue
+			}
+
+			// Get basename and directory
+			dir := filepath.Dir(expandedPath)
+			basename := filepath.Base(expandedPath)
+
+			// Apply regex replacement
+			newBasename := re.ReplaceAllString(basename, args.Replacement)
+
+			// Skip if no change
+			if newBasename == basename {
+				results = append(results, map[string]interface{}{
+					"oldPath": expandedPath,
+					"status":  "skipped",
+					"message": "Pattern did not match",
+				})
+				continue
+			}
+
+			newPath := filepath.Join(dir, newBasename)
+
+			// Check if target already exists
+			if _, err := os.Stat(newPath); err == nil {
+				results = append(results, map[string]interface{}{
+					"oldPath": expandedPath,
+					"newPath": newPath,
+					"status":  "error",
+					"error":   "Target path already exists",
+				})
+				errorCount++
+				continue
+			}
+
+			if dryRun {
+				results = append(results, map[string]interface{}{
+					"oldPath": expandedPath,
+					"newPath": newPath,
+					"status":  "preview",
+				})
+				successCount++
+			} else {
+				// Perform the rename on filesystem
+				if err := os.Rename(expandedPath, newPath); err != nil {
+					results = append(results, map[string]interface{}{
+						"oldPath": expandedPath,
+						"newPath": newPath,
+						"status":  "error",
+						"error":   fmt.Sprintf("Failed to rename: %v", err),
+					})
+					errorCount++
+					continue
+				}
+
+				// Update database
+				if err := db.UpdateEntryPath(expandedPath, newPath); err != nil {
+					log.WithError(err).WithFields(logrus.Fields{
+						"oldPath": expandedPath,
+						"newPath": newPath,
+					}).Warn("Failed to update database after rename")
+				}
+
+				results = append(results, map[string]interface{}{
+					"oldPath": expandedPath,
+					"newPath": newPath,
+					"status":  "success",
+				})
+				successCount++
+
+				log.WithFields(logrus.Fields{
+					"oldPath": expandedPath,
+					"newPath": newPath,
+				}).Info("File renamed successfully")
+			}
+		}
+
+		response := map[string]interface{}{
+			"results":      results,
+			"successCount": successCount,
+			"errorCount":   errorCount,
+			"dryRun":       dryRun,
+		}
+
+		payload, err := json.Marshal(response)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal response: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerDeleteFilesTool(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("delete-files",
+		mcp.WithDescription("Delete files or directories from the filesystem and database index."),
+		mcp.WithString("paths",
+			mcp.Required(),
+			mcp.Description("Comma-separated list of file or directory paths to delete"),
+		),
+		mcp.WithBoolean("recursive",
+			mcp.Description("Delete directories recursively (default: false)"),
+		),
+		mcp.WithBoolean("dryRun",
+			mcp.Description("Preview changes without executing (default: false)"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Paths     string `json:"paths"`
+			Recursive *bool  `json:"recursive,omitempty"`
+			DryRun    *bool  `json:"dryRun,omitempty"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		recursive := getBoolOrDefault(args.Recursive, false)
+		dryRun := getBoolOrDefault(args.DryRun, false)
+
+		// Parse paths
+		paths := splitPaths(args.Paths)
+		if len(paths) == 0 {
+			return mcp.NewToolResultError("No paths provided"), nil
+		}
+
+		// Process each path
+		var results []map[string]interface{}
+		successCount := 0
+		errorCount := 0
+
+		for _, pathStr := range paths {
+			// Expand and validate path
+			expandedPath, err := pathutil.ExpandPath(pathStr)
+			if err != nil {
+				results = append(results, map[string]interface{}{
+					"path":   pathStr,
+					"status": "error",
+					"error":  fmt.Sprintf("Invalid path: %v", err),
+				})
+				errorCount++
+				continue
+			}
+
+			// Check if path exists
+			fileInfo, err := os.Stat(expandedPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					results = append(results, map[string]interface{}{
+						"path":   expandedPath,
+						"status": "error",
+						"error":  "Path does not exist",
+					})
+					errorCount++
+					continue
+				}
+				results = append(results, map[string]interface{}{
+					"path":   expandedPath,
+					"status": "error",
+					"error":  fmt.Sprintf("Failed to stat path: %v", err),
+				})
+				errorCount++
+				continue
+			}
+
+			isDir := fileInfo.IsDir()
+
+			// Check if recursive is needed for directories
+			if isDir && !recursive {
+				results = append(results, map[string]interface{}{
+					"path":   expandedPath,
+					"status": "error",
+					"error":  "Path is a directory; use recursive=true to delete",
+				})
+				errorCount++
+				continue
+			}
+
+			if dryRun {
+				results = append(results, map[string]interface{}{
+					"path":   expandedPath,
+					"type":   map[bool]string{true: "directory", false: "file"}[isDir],
+					"status": "preview",
+				})
+				successCount++
+			} else {
+				// Delete from filesystem
+				var deleteErr error
+				if isDir {
+					deleteErr = os.RemoveAll(expandedPath)
+				} else {
+					deleteErr = os.Remove(expandedPath)
+				}
+
+				if deleteErr != nil {
+					results = append(results, map[string]interface{}{
+						"path":   expandedPath,
+						"status": "error",
+						"error":  fmt.Sprintf("Failed to delete: %v", deleteErr),
+					})
+					errorCount++
+					continue
+				}
+
+				// Delete from database
+				var dbErr error
+				if isDir {
+					dbErr = db.DeleteEntryRecursive(expandedPath)
+				} else {
+					dbErr = db.DeleteEntry(expandedPath)
+				}
+
+				if dbErr != nil {
+					log.WithError(dbErr).WithField("path", expandedPath).Warn("Failed to delete from database")
+				}
+
+				results = append(results, map[string]interface{}{
+					"path":   expandedPath,
+					"type":   map[bool]string{true: "directory", false: "file"}[isDir],
+					"status": "success",
+				})
+				successCount++
+
+				log.WithFields(logrus.Fields{
+					"path": expandedPath,
+					"type": map[bool]string{true: "directory", false: "file"}[isDir],
+				}).Info("Path deleted successfully")
+			}
+		}
+
+		response := map[string]interface{}{
+			"results":      results,
+			"successCount": successCount,
+			"errorCount":   errorCount,
+			"dryRun":       dryRun,
+		}
+
+		payload, err := json.Marshal(response)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal response: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerMoveFilesTool(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("move-files",
+		mcp.WithDescription("Move files or directories to a destination directory."),
+		mcp.WithString("sources",
+			mcp.Required(),
+			mcp.Description("Comma-separated list of source file or directory paths to move"),
+		),
+		mcp.WithString("destination",
+			mcp.Required(),
+			mcp.Description("Destination directory path"),
+		),
+		mcp.WithBoolean("dryRun",
+			mcp.Description("Preview changes without executing (default: false)"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Sources     string `json:"sources"`
+			Destination string `json:"destination"`
+			DryRun      *bool  `json:"dryRun,omitempty"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		dryRun := getBoolOrDefault(args.DryRun, false)
+
+		// Expand and validate destination
+		destPath, err := pathutil.ExpandPath(args.Destination)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid destination path: %v", err)), nil
+		}
+
+		// Check if destination exists and is a directory
+		destInfo, err := os.Stat(destPath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Destination does not exist: %v", err)), nil
+		}
+		if !destInfo.IsDir() {
+			return mcp.NewToolResultError("Destination must be a directory"), nil
+		}
+
+		// Parse source paths
+		sources := splitPaths(args.Sources)
+		if len(sources) == 0 {
+			return mcp.NewToolResultError("No source paths provided"), nil
+		}
+
+		// Process each source path
+		var results []map[string]interface{}
+		successCount := 0
+		errorCount := 0
+
+		for _, sourceStr := range sources {
+			// Expand and validate source path
+			sourcePath, err := pathutil.ExpandPath(sourceStr)
+			if err != nil {
+				results = append(results, map[string]interface{}{
+					"sourcePath": sourceStr,
+					"status":     "error",
+					"error":      fmt.Sprintf("Invalid source path: %v", err),
+				})
+				errorCount++
+				continue
+			}
+
+			// Check if source exists
+			sourceInfo, err := os.Stat(sourcePath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					results = append(results, map[string]interface{}{
+						"sourcePath": sourcePath,
+						"status":     "error",
+						"error":      "Source path does not exist",
+					})
+					errorCount++
+					continue
+				}
+				results = append(results, map[string]interface{}{
+					"sourcePath": sourcePath,
+					"status":     "error",
+					"error":      fmt.Sprintf("Failed to stat source: %v", err),
+				})
+				errorCount++
+				continue
+			}
+
+			// Calculate target path
+			basename := filepath.Base(sourcePath)
+			targetPath := filepath.Join(destPath, basename)
+
+			// Check if target already exists
+			if _, err := os.Stat(targetPath); err == nil {
+				results = append(results, map[string]interface{}{
+					"sourcePath": sourcePath,
+					"targetPath": targetPath,
+					"status":     "error",
+					"error":      "Target path already exists",
+				})
+				errorCount++
+				continue
+			}
+
+			if dryRun {
+				results = append(results, map[string]interface{}{
+					"sourcePath": sourcePath,
+					"targetPath": targetPath,
+					"type":       map[bool]string{true: "directory", false: "file"}[sourceInfo.IsDir()],
+					"status":     "preview",
+				})
+				successCount++
+			} else {
+				// Move on filesystem
+				if err := os.Rename(sourcePath, targetPath); err != nil {
+					results = append(results, map[string]interface{}{
+						"sourcePath": sourcePath,
+						"targetPath": targetPath,
+						"status":     "error",
+						"error":      fmt.Sprintf("Failed to move: %v", err),
+					})
+					errorCount++
+					continue
+				}
+
+				// Update database
+				var dbErr error
+				if sourceInfo.IsDir() {
+					dbErr = db.UpdatePathsRecursive(sourcePath, targetPath)
+				} else {
+					dbErr = db.UpdateEntryPath(sourcePath, targetPath)
+				}
+
+				if dbErr != nil {
+					log.WithError(dbErr).WithFields(logrus.Fields{
+						"sourcePath": sourcePath,
+						"targetPath": targetPath,
+					}).Warn("Failed to update database after move")
+				}
+
+				results = append(results, map[string]interface{}{
+					"sourcePath": sourcePath,
+					"targetPath": targetPath,
+					"type":       map[bool]string{true: "directory", false: "file"}[sourceInfo.IsDir()],
+					"status":     "success",
+				})
+				successCount++
+
+				log.WithFields(logrus.Fields{
+					"sourcePath": sourcePath,
+					"targetPath": targetPath,
+				}).Info("Path moved successfully")
+			}
+		}
+
+		response := map[string]interface{}{
+			"results":      results,
+			"destination":  destPath,
+			"successCount": successCount,
+			"errorCount":   errorCount,
+			"dryRun":       dryRun,
+		}
+
+		payload, err := json.Marshal(response)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal response: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(string(payload)), nil
+	})
 }

@@ -1551,3 +1551,122 @@ func (d *DiskDB) DeleteMetadata(hash string) error {
 	_, err := d.db.Exec(`DELETE FROM metadata WHERE hash = ?`, hash)
 	return err
 }
+
+// File Operations
+
+// DeleteEntry deletes a single entry from the database by path
+func (d *DiskDB) DeleteEntry(path string) error {
+	log.WithField("path", path).Info("Deleting entry from database")
+	_, err := d.db.Exec(`DELETE FROM entries WHERE path = ?`, path)
+	return err
+}
+
+// DeleteEntryRecursive deletes an entry and all its children from the database
+func (d *DiskDB) DeleteEntryRecursive(path string) error {
+	log.WithField("path", path).Info("Deleting entry and children from database")
+
+	// First delete all children (entries where parent starts with path)
+	_, err := d.db.Exec(`DELETE FROM entries WHERE path = ? OR path LIKE ?`, path, path+"/%")
+	if err != nil {
+		return fmt.Errorf("failed to delete entries: %w", err)
+	}
+
+	return nil
+}
+
+// UpdateEntryPath updates the path of an entry in the database
+func (d *DiskDB) UpdateEntryPath(oldPath, newPath string) error {
+	log.WithFields(logrus.Fields{
+		"oldPath": oldPath,
+		"newPath": newPath,
+	}).Info("Updating entry path in database")
+
+	// Get the old entry first to preserve its parent
+	oldEntry, err := d.Get(oldPath)
+	if err != nil {
+		return fmt.Errorf("failed to get old entry: %w", err)
+	}
+	if oldEntry == nil {
+		return fmt.Errorf("entry not found: %s", oldPath)
+	}
+
+	// Calculate new parent
+	newParent := filepath.Dir(newPath)
+	if newParent == "." || newParent == "/" {
+		newParent = ""
+	}
+
+	// Update the entry
+	_, err = d.db.Exec(`UPDATE entries SET path = ?, parent = ? WHERE path = ?`,
+		newPath, newParent, oldPath)
+	if err != nil {
+		return fmt.Errorf("failed to update entry path: %w", err)
+	}
+
+	return nil
+}
+
+// UpdatePathsRecursive updates paths recursively for a directory move/rename
+func (d *DiskDB) UpdatePathsRecursive(oldPath, newPath string) error {
+	log.WithFields(logrus.Fields{
+		"oldPath": oldPath,
+		"newPath": newPath,
+	}).Info("Updating paths recursively in database")
+
+	// Get all entries that need to be updated (the directory itself and all children)
+	rows, err := d.db.Query(`
+		SELECT path FROM entries
+		WHERE path = ? OR path LIKE ?
+		ORDER BY path
+	`, oldPath, oldPath+"/%")
+	if err != nil {
+		return fmt.Errorf("failed to query entries: %w", err)
+	}
+	defer rows.Close()
+
+	// Collect all paths to update
+	var pathsToUpdate []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return fmt.Errorf("failed to scan path: %w", err)
+		}
+		pathsToUpdate = append(pathsToUpdate, path)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	// Update each path
+	for _, oldEntryPath := range pathsToUpdate {
+		// Calculate the new path by replacing the old prefix with the new one
+		var newEntryPath string
+		if oldEntryPath == oldPath {
+			newEntryPath = newPath
+		} else {
+			// Replace the old path prefix with the new one
+			suffix := strings.TrimPrefix(oldEntryPath, oldPath)
+			newEntryPath = newPath + suffix
+		}
+
+		// Calculate new parent
+		newParent := filepath.Dir(newEntryPath)
+		if newParent == "." || newParent == "/" {
+			newParent = ""
+		}
+
+		// Update the entry
+		_, err = d.db.Exec(`UPDATE entries SET path = ?, parent = ? WHERE path = ?`,
+			newEntryPath, newParent, oldEntryPath)
+		if err != nil {
+			return fmt.Errorf("failed to update path %s -> %s: %w", oldEntryPath, newEntryPath, err)
+		}
+
+		log.WithFields(logrus.Fields{
+			"oldPath": oldEntryPath,
+			"newPath": newEntryPath,
+		}).Debug("Updated entry path")
+	}
+
+	return nil
+}
