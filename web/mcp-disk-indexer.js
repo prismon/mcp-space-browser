@@ -361,6 +361,25 @@ class McpDiskIndexer extends HTMLElement {
       const jobInfo = this.shadowRoot.getElementById('jobInfo');
       jobInfo.innerHTML = `Job ID: <code>${response.jobId}</code> | Status: <code>${response.status}</code>`;
 
+      // Check if job failed immediately (e.g., invalid path)
+      if (response.status === 'failed') {
+        const errorMsg = response.error || 'Unknown error';
+        this.showStatus('error', `✗ Job ${response.jobId} failed: ${errorMsg}`);
+
+        // Dispatch error event for failed job
+        this.dispatchEvent(new CustomEvent('index-error', {
+          detail: {
+            path,
+            jobId: response.jobId,
+            error: errorMsg
+          },
+          bubbles: true,
+          composed: true
+        }));
+
+        return; // Don't start polling for a failed job
+      }
+
       this.showStatus('success', `✓ Indexing job created for: ${path}`);
 
       // Start polling for progress if enabled
