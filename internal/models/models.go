@@ -141,3 +141,88 @@ type Metadata struct {
 	CreatedAt    int64  `db:"created_at" json:"created_at"`         // Unix timestamp
 	ResourceUri  string `db:"-" json:"resource_uri,omitempty"`      // MCP resource URI (computed)
 }
+
+// Rule represents a rule definition
+type Rule struct {
+	ID            int64  `db:"id" json:"id,omitempty"`
+	Name          string `db:"name" json:"name"`
+	Description   *string `db:"description" json:"description,omitempty"`
+	Enabled       bool   `db:"enabled" json:"enabled"`
+	Priority      int    `db:"priority" json:"priority"`
+	ConditionJSON string `db:"condition_json" json:"condition_json"`
+	OutcomeJSON   string `db:"outcome_json" json:"outcome_json"`
+	CreatedAt     int64  `db:"created_at" json:"created_at"`
+	UpdatedAt     int64  `db:"updated_at" json:"updated_at"`
+}
+
+// RuleCondition represents the condition for a rule
+type RuleCondition struct {
+	Type       string           `json:"type"` // "all", "any", "none", "media_type", "size", "time", "path"
+	Conditions []*RuleCondition `json:"conditions,omitempty"` // For composite conditions (all, any, none)
+
+	// Media type condition
+	MediaType *string `json:"mediaType,omitempty"` // "image", "video", "audio", "document"
+
+	// Size condition
+	MinSize *int64 `json:"minSize,omitempty"` // Bytes
+	MaxSize *int64 `json:"maxSize,omitempty"` // Bytes
+
+	// Time condition
+	MinMtime *int64 `json:"minMtime,omitempty"` // Unix timestamp
+	MaxMtime *int64 `json:"maxMtime,omitempty"` // Unix timestamp
+	MinCtime *int64 `json:"minCtime,omitempty"` // Unix timestamp
+	MaxCtime *int64 `json:"maxCtime,omitempty"` // Unix timestamp
+
+	// Path condition
+	PathContains   *string `json:"pathContains,omitempty"`
+	PathPrefix     *string `json:"pathPrefix,omitempty"`
+	PathSuffix     *string `json:"pathSuffix,omitempty"`
+	PathPattern    *string `json:"pathPattern,omitempty"` // Regex
+}
+
+// RuleOutcome represents the outcome of a rule
+// IMPORTANT: All outcomes must have a SelectionSetName to ensure traceability
+type RuleOutcome struct {
+	Type             string         `json:"type"` // "selection_set", "classifier", "chained"
+	SelectionSetName string         `json:"selectionSetName"` // REQUIRED for all outcome types
+
+	// For selection_set outcome
+	Operation *string `json:"operation,omitempty"` // "add", "remove"
+
+	// For classifier outcome
+	ClassifierOperation *string `json:"classifierOperation,omitempty"` // "generate_thumbnail", "extract_metadata"
+	MaxWidth            *int    `json:"maxWidth,omitempty"`
+	MaxHeight           *int    `json:"maxHeight,omitempty"`
+	Quality             *int    `json:"quality,omitempty"`
+
+	// For chained outcome
+	Outcomes     []*RuleOutcome `json:"outcomes,omitempty"`
+	StopOnError  *bool          `json:"stopOnError,omitempty"`
+}
+
+// RuleExecution represents a single execution of a rule
+type RuleExecution struct {
+	ID               int64   `db:"id" json:"id,omitempty"`
+	RuleID           int64   `db:"rule_id" json:"rule_id"`
+	SelectionSetID   int64   `db:"selection_set_id" json:"selection_set_id"`
+	ExecutedAt       int64   `db:"executed_at" json:"executed_at"`
+	EntriesMatched   int     `db:"entries_matched" json:"entries_matched"`
+	EntriesProcessed int     `db:"entries_processed" json:"entries_processed"`
+	Status           string  `db:"status" json:"status"` // "success", "partial", "error"
+	ErrorMessage     *string `db:"error_message" json:"error_message,omitempty"`
+	DurationMs       *int    `db:"duration_ms" json:"duration_ms,omitempty"`
+}
+
+// RuleOutcomeRecord represents a specific outcome action for a file
+// This ensures every action taken by a rule is tracked and associated with a selection set
+type RuleOutcomeRecord struct {
+	ID             int64   `db:"id" json:"id,omitempty"`
+	ExecutionID    int64   `db:"execution_id" json:"execution_id"`
+	SelectionSetID int64   `db:"selection_set_id" json:"selection_set_id"` // ALWAYS required
+	EntryPath      string  `db:"entry_path" json:"entry_path"`
+	OutcomeType    string  `db:"outcome_type" json:"outcome_type"`
+	OutcomeData    *string `db:"outcome_data" json:"outcome_data,omitempty"`
+	Status         string  `db:"status" json:"status"` // "success", "error"
+	ErrorMessage   *string `db:"error_message" json:"error_message,omitempty"`
+	CreatedAt      int64   `db:"created_at" json:"created_at"`
+}

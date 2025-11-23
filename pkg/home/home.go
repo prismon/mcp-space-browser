@@ -306,6 +306,23 @@ Each rule consists of:
 - **condition**: When to trigger (if)
 - **outcome**: What to do (then)
 
+## Important: Selection Set Association
+
+**ALL rule outcomes MUST include a selectionSetName field.**
+
+This ensures traceability and accountability:
+- Every action taken by a rule is tracked
+- All processed files are associated with a named selection set
+- You can review what each rule has done
+- Selection sets can be queried, exported, or further processed
+
+Example outcome:
+  type: classifier
+  selectionSetName: my-thumbnails  # REQUIRED
+  classifierOperation: generate_thumbnail
+
+If the selection set doesn't exist, it will be auto-created.
+
 See individual example files for more details.
 `,
 		"auto-thumbnail.yaml": `name: auto-thumbnail-large-images
@@ -323,7 +340,8 @@ condition:
 
 outcome:
   type: classifier
-  operation: generate_thumbnail
+  selectionSetName: large-images-thumbnails
+  classifierOperation: generate_thumbnail
   maxWidth: 320
   maxHeight: 320
 `,
@@ -372,10 +390,12 @@ condition:
 
 outcome:
   type: chained
+  selectionSetName: old-large-media
   stopOnError: false
   outcomes:
     - type: classifier
-      operation: generate_thumbnail
+      selectionSetName: old-large-media-thumbnails
+      classifierOperation: generate_thumbnail
     - type: selection_set
       selectionSetName: old-large-media
       operation: add
