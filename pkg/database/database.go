@@ -182,6 +182,76 @@ func (d *DiskDB) init() error {
 		return err
 	}
 
+	// Create rules table
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS rules (
+		id INTEGER PRIMARY KEY,
+		name TEXT UNIQUE NOT NULL,
+		description TEXT,
+		enabled INTEGER DEFAULT 1,
+		priority INTEGER DEFAULT 0,
+		condition_json TEXT NOT NULL,
+		outcome_json TEXT NOT NULL,
+		created_at INTEGER DEFAULT (strftime('%s', 'now')),
+		updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+	)`); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_rules_enabled ON rules(enabled, priority DESC)"); err != nil {
+		return err
+	}
+
+	// Create rule_executions table
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS rule_executions (
+		id INTEGER PRIMARY KEY,
+		rule_id INTEGER NOT NULL,
+		selection_set_id INTEGER NOT NULL,
+		executed_at INTEGER DEFAULT (strftime('%s', 'now')),
+		entries_matched INTEGER DEFAULT 0,
+		entries_processed INTEGER DEFAULT 0,
+		status TEXT CHECK(status IN ('success', 'partial', 'error')),
+		error_message TEXT,
+		duration_ms INTEGER,
+		FOREIGN KEY (rule_id) REFERENCES rules(id) ON DELETE CASCADE,
+		FOREIGN KEY (selection_set_id) REFERENCES selection_sets(id) ON DELETE CASCADE
+	)`); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_rule_executions_rule ON rule_executions(rule_id, executed_at DESC)"); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_rule_executions_selection_set ON rule_executions(selection_set_id)"); err != nil {
+		return err
+	}
+
+	// Create rule_outcomes table - tracks specific outcomes/actions for each execution
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS rule_outcomes (
+		id INTEGER PRIMARY KEY,
+		execution_id INTEGER NOT NULL,
+		selection_set_id INTEGER NOT NULL,
+		entry_path TEXT NOT NULL,
+		outcome_type TEXT NOT NULL,
+		outcome_data TEXT,
+		status TEXT CHECK(status IN ('success', 'error')),
+		error_message TEXT,
+		created_at INTEGER DEFAULT (strftime('%s', 'now')),
+		FOREIGN KEY (execution_id) REFERENCES rule_executions(id) ON DELETE CASCADE,
+		FOREIGN KEY (selection_set_id) REFERENCES selection_sets(id) ON DELETE CASCADE,
+		FOREIGN KEY (entry_path) REFERENCES entries(path) ON DELETE CASCADE
+	)`); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_rule_outcomes_execution ON rule_outcomes(execution_id)"); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_rule_outcomes_selection_set ON rule_outcomes(selection_set_id)"); err != nil {
+		return err
+	}
+
 	log.Debug("Database initialization complete")
 	return nil
 }
