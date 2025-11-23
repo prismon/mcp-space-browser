@@ -148,11 +148,11 @@ curl -X POST http://localhost:3000/mcp \
 
 ### MCP Tools
 
-The unified server exposes 18 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
+The unified server exposes 21 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
 
 These tools are accessible via Claude Desktop, Claude Code, or any other MCP-compatible client when the server is running.
 
-#### Available MCP Tools (18 Total)
+#### Available MCP Tools (21 Total)
 
 **Core Tools (5):**
 1. `disk-index`: Index a directory tree
@@ -176,9 +176,14 @@ These tools are accessible via Claude Desktop, Claude Code, or any other MCP-com
 15. `query-update`: Update a query
 16. `query-delete`: Delete a query
 
+**File Action Tools (3):**
+17. `rename-files`: Rename files based on a regex pattern
+18. `delete-files`: Delete files or directories from the filesystem
+19. `move-files`: Move files or directories to a destination
+
 **Session Tools (2):**
-17. `session-info`: Get session information
-18. `session-set-preferences`: Set session preferences
+20. `session-info`: Get session information
+21. `session-set-preferences`: Set session preferences
 
 ## Configuration
 
@@ -349,6 +354,129 @@ GOOS=windows GOARCH=amd64 go build -o mcp-space-browser.exe ./cmd/mcp-space-brow
 - **Indexing**: ~10,000-50,000 files/second (SSD)
 - **Tree retrieval**: Sub-second for most directory trees
 - **Filtering**: Milliseconds for typical queries
+
+## File Action Tools Reference
+
+The MCP server provides three file action tools for manipulating files and directories. All operations update both the filesystem and the database index.
+
+### rename-files
+
+Rename files based on a regex pattern with support for captured groups.
+
+**Parameters:**
+- `paths` (required): Comma-separated list of file paths to rename
+- `pattern` (required): Regex pattern to match in the filename (basename only, not full path)
+- `replacement` (required): Replacement string. Supports `$1`, `$2`, etc. for captured groups
+- `dryRun` (optional): Preview changes without executing (default: false)
+
+**Example:**
+```json
+{
+  "paths": "/home/user/file1.txt,/home/user/file2.txt",
+  "pattern": "file(\\d+)",
+  "replacement": "document_$1",
+  "dryRun": true
+}
+```
+This would rename `file1.txt` to `document_1.txt` and `file2.txt` to `document_2.txt`.
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "oldPath": "/home/user/file1.txt",
+      "newPath": "/home/user/document_1.txt",
+      "status": "success"
+    }
+  ],
+  "successCount": 1,
+  "errorCount": 0,
+  "dryRun": false
+}
+```
+
+### delete-files
+
+Delete files or directories from both the filesystem and database index.
+
+**Parameters:**
+- `paths` (required): Comma-separated list of file or directory paths to delete
+- `recursive` (optional): Delete directories recursively (default: false)
+- `dryRun` (optional): Preview changes without executing (default: false)
+
+**Example:**
+```json
+{
+  "paths": "/home/user/temp_file.txt,/home/user/old_directory",
+  "recursive": true,
+  "dryRun": false
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "path": "/home/user/temp_file.txt",
+      "type": "file",
+      "status": "success"
+    },
+    {
+      "path": "/home/user/old_directory",
+      "type": "directory",
+      "status": "success"
+    }
+  ],
+  "successCount": 2,
+  "errorCount": 0,
+  "dryRun": false
+}
+```
+
+### move-files
+
+Move files or directories to a destination directory.
+
+**Parameters:**
+- `sources` (required): Comma-separated list of source paths to move
+- `destination` (required): Destination directory path (must exist)
+- `dryRun` (optional): Preview changes without executing (default: false)
+
+**Example:**
+```json
+{
+  "sources": "/home/user/file1.txt,/home/user/file2.txt",
+  "destination": "/home/user/archive",
+  "dryRun": false
+}
+```
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "sourcePath": "/home/user/file1.txt",
+      "targetPath": "/home/user/archive/file1.txt",
+      "type": "file",
+      "status": "success"
+    }
+  ],
+  "destination": "/home/user/archive",
+  "successCount": 1,
+  "errorCount": 0,
+  "dryRun": false
+}
+```
+
+**Notes:**
+- All file action tools support dry-run mode for safe preview of changes
+- Database updates occur automatically after successful filesystem operations
+- If a filesystem operation succeeds but the database update fails, a warning is logged
+- Paths support tilde (`~`) expansion for home directory
+- All tools return detailed results for each path processed
 
 ## Migration from TypeScript Version
 
