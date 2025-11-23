@@ -319,23 +319,59 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 
 		log.WithField("root", args.Root).Info("Executing index via MCP")
 
-		// Expand tilde and validate path
-		expandedPath, err := pathutil.ExpandAndValidatePath(args.Root)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Invalid path: %v", err)), nil
-		}
-
 		// Default to async mode
 		asyncMode := getBoolOrDefault(args.Async, true)
 
 		if asyncMode {
-			// Create job in database first
+			// Expand path (but don't validate yet)
+			expandedPath, expandErr := pathutil.ExpandPath(args.Root)
+			if expandErr != nil {
+				// If we can't even expand the path, use original for job creation
+				expandedPath = args.Root
+			}
+
+			// Create job in database FIRST (before validation)
+			// This ensures all indexing attempts are tracked
 			jobID, err := db.CreateIndexJob(expandedPath, nil)
 			if err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("Failed to create index job: %v", err)), nil
 			}
 
-			// Start indexing in background
+			// Now validate the path
+			validationErr := pathutil.ValidatePath(expandedPath)
+			if expandErr != nil || validationErr != nil {
+				// Path is invalid - mark job as failed immediately
+				var errMsg string
+				if expandErr != nil {
+					errMsg = fmt.Sprintf("Path expansion failed: %v", expandErr)
+				} else {
+					errMsg = fmt.Sprintf("Invalid path: %v", validationErr)
+				}
+
+				if updateErr := db.UpdateIndexJobStatus(jobID, "failed", &errMsg); updateErr != nil {
+					log.WithError(updateErr).WithField("jobID", jobID).Error("Failed to mark job as failed")
+				}
+
+				log.WithField("jobID", jobID).WithField("path", args.Root).WithError(validationErr).Warn("Job created but path validation failed")
+
+				// Return job info with failed status and error message
+				response := map[string]any{
+					"jobId":     jobID,
+					"root":      expandedPath,
+					"status":    "failed",
+					"error":     errMsg,
+					"statusUrl": fmt.Sprintf("shell://jobs/%d", jobID),
+				}
+
+				payload, err := json.Marshal(response)
+				if err != nil {
+					return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal response: %v", err)), nil
+				}
+
+				return mcp.NewToolResultText(string(payload)), nil
+			}
+
+			// Path is valid - start indexing in background
 			go func() {
 				// Mark job as running
 				if err := db.UpdateIndexJobStatus(jobID, "running", nil); err != nil {
@@ -391,7 +427,12 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultText(string(payload)), nil
 		}
 
-		// Synchronous mode (for backward compatibility) - no job tracking
+		// Synchronous mode (for backward compatibility) - validate before indexing
+		expandedPath, err := pathutil.ExpandAndValidatePath(args.Root)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid path: %v", err)), nil
+		}
+
 		stats, err := crawler.Index(expandedPath, db, 0, nil)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Indexing failed: %v", err)), nil
