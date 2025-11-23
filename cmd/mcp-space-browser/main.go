@@ -11,6 +11,7 @@ import (
 	"github.com/prismon/mcp-space-browser/pkg/auth"
 	"github.com/prismon/mcp-space-browser/pkg/crawler"
 	"github.com/prismon/mcp-space-browser/pkg/database"
+	"github.com/prismon/mcp-space-browser/pkg/home"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
 	"github.com/prismon/mcp-space-browser/pkg/server"
 	"github.com/sirupsen/logrus"
@@ -19,6 +20,10 @@ import (
 
 var (
 	log *logrus.Entry
+
+	// Global flags
+	homeDir     string
+	homeManager *home.Manager
 
 	// Tree command options
 	sortBy    string
@@ -46,6 +51,25 @@ func init() {
 	log = logger.WithName("cli")
 }
 
+// initHome initializes the home directory manager
+func initHome() error {
+	var err error
+	homeManager, err = home.NewManager(homeDir)
+	if err != nil {
+		return fmt.Errorf("failed to initialize home: %w", err)
+	}
+
+	// Initialize home directory if it doesn't exist
+	if !homeManager.Exists() {
+		log.Info("Initializing home directory: " + homeManager.Path())
+		if err := homeManager.Initialize(); err != nil {
+			return fmt.Errorf("failed to initialize home directory: %w", err)
+		}
+	}
+
+	return nil
+}
+
 func main() {
 	var rootCmd = &cobra.Command{
 		Use:   "mcp-space-browser",
@@ -57,7 +81,8 @@ exploring disk utilization (similar to Baobab/WinDirStat).`,
 	}
 
 	// Add global flags
-	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "disk.db", "Path to SQLite database file")
+	rootCmd.PersistentFlags().StringVar(&homeDir, "home", "", "Home directory for mcp-space-browser (default: ~/.mcp-space-browser)")
+	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "", "Path to SQLite database file (default: <home>/disk.db)")
 
 	// disk-index command
 	var diskIndexCmd = &cobra.Command{
@@ -120,7 +145,32 @@ exploring disk utilization (similar to Baobab/WinDirStat).`,
 		Run:   runJobStatus,
 	}
 
-	rootCmd.AddCommand(diskIndexCmd, diskDuCmd, diskTreeCmd, serverCmd, jobListCmd, jobStatusCmd)
+	// home-init command
+	var homeInitCmd = &cobra.Command{
+		Use:   "home-init",
+		Short: "Initialize or reinitialize the home directory",
+		Long: `Creates the home directory structure with default configuration,
+example rules, and necessary subdirectories.`,
+		Run: runHomeInit,
+	}
+
+	// home-info command
+	var homeInfoCmd = &cobra.Command{
+		Use:   "home-info",
+		Short: "Display information about the home directory",
+		Run:   runHomeInfo,
+	}
+
+	// home-clean command
+	var homeCleanCmd = &cobra.Command{
+		Use:   "home-clean",
+		Short: "Clean temporary files and optionally cache",
+		Run:   runHomeClean,
+	}
+
+	homeCleanCmd.Flags().Bool("cache", false, "Also clean cache directory")
+
+	rootCmd.AddCommand(diskIndexCmd, diskDuCmd, diskTreeCmd, serverCmd, jobListCmd, jobStatusCmd, homeInitCmd, homeInfoCmd, homeCleanCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
@@ -135,6 +185,13 @@ func runDiskIndex(cmd *cobra.Command, args []string) {
 		"target":   target,
 		"parallel": parallel,
 	}).Info("Executing command")
+
+	dbPath, err := getDBPath()
+	if err != nil {
+		log.WithError(err).Error("Failed to get database path")
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	db, err := database.NewDiskDB(dbPath)
 	if err != nil {
@@ -205,6 +262,13 @@ func runDiskDu(cmd *cobra.Command, args []string) {
 		"target":  target,
 	}).Info("Executing command")
 
+	dbPath, err := getDBPath()
+	if err != nil {
+		log.WithError(err).Error("Failed to get database path")
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
 	db, err := database.NewDiskDB(dbPath)
 	if err != nil {
 		log.WithError(err).Error("Failed to open database")
@@ -258,6 +322,13 @@ func runDiskTree(cmd *cobra.Command, args []string) {
 		"command": "disk-tree",
 		"target":  target,
 	}).Info("Executing command")
+
+	dbPath, err := getDBPath()
+	if err != nil {
+		log.WithError(err).Error("Failed to get database path")
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	db, err := database.NewDiskDB(dbPath)
 	if err != nil {
@@ -389,6 +460,15 @@ func diskTree(db *database.DiskDB, target string, indent string, isRoot bool, op
 }
 
 func runServer(cmd *cobra.Command, args []string) {
+	// Initialize home if not already done (for config path resolution)
+	if configPath == "" && homeManager == nil {
+		if err := initHome(); err != nil {
+			log.WithError(err).Error("Failed to initialize home")
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		configPath = homeManager.ConfigPath()
+	}
 
 	// Load configuration
 	config, err := auth.LoadConfig(configPath)
@@ -425,6 +505,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 	if dbPath != "" {
 		config.Database.Path = dbPath
+	} else if homeManager != nil {
+		// Use home-based database path if not specified
+		config.Database.Path = homeManager.DatabasePath()
 	}
 
 	// Determine the external host if not specified
@@ -471,6 +554,13 @@ func runServer(cmd *cobra.Command, args []string) {
 func runJobList(cmd *cobra.Command, args []string) {
 	log.Info("Listing indexing jobs")
 
+	dbPath, err := getDBPath()
+	if err != nil {
+		log.WithError(err).Error("Failed to get database path")
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
 	db, err := database.NewDiskDB(dbPath)
 	if err != nil {
 		log.WithError(err).Error("Failed to open database")
@@ -515,6 +605,13 @@ func runJobStatus(cmd *cobra.Command, args []string) {
 	}
 
 	log.WithField("jobID", jobID).Info("Getting job status")
+
+	dbPath, err := getDBPath()
+	if err != nil {
+		log.WithError(err).Error("Failed to get database path")
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	db, err := database.NewDiskDB(dbPath)
 	if err != nil {
@@ -575,4 +672,126 @@ func parseInt64(s string) (int64, error) {
 	var i int64
 	_, err := fmt.Sscanf(s, "%d", &i)
 	return i, err
+}
+
+// getDBPath returns the database path, using home directory if dbPath is not specified
+func getDBPath() (string, error) {
+	if dbPath != "" {
+		return dbPath, nil
+	}
+
+	// Initialize home if not already done
+	if homeManager == nil {
+		if err := initHome(); err != nil {
+			return "", err
+		}
+	}
+
+	return homeManager.DatabasePath(), nil
+}
+
+func runHomeInit(cmd *cobra.Command, args []string) {
+	if err := initHome(); err != nil {
+		log.WithError(err).Error("Failed to initialize home directory")
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Force reinitialize
+	if err := homeManager.Initialize(); err != nil {
+		log.WithError(err).Error("Failed to initialize home directory")
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Home directory initialized at: %s\n", homeManager.Path())
+	fmt.Printf("\nDirectory structure:\n")
+	fmt.Printf("  Config: %s\n", homeManager.ConfigPath())
+	fmt.Printf("  Database: %s\n", homeManager.DatabasePath())
+	fmt.Printf("  Rules (enabled): %s\n", homeManager.RulesEnabledPath())
+	fmt.Printf("  Rules (disabled): %s\n", homeManager.RulesDisabledPath())
+	fmt.Printf("  Rules (examples): %s\n", homeManager.RulesExamplesPath())
+	fmt.Printf("  Cache: %s\n", homeManager.JoinPath(home.CacheDir))
+	fmt.Printf("  Temp: %s\n", homeManager.TempPath())
+	fmt.Printf("  Logs: %s\n", homeManager.LogsPath())
+}
+
+func runHomeInfo(cmd *cobra.Command, args []string) {
+	if err := initHome(); err != nil {
+		log.WithError(err).Error("Failed to initialize home directory")
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	cacheSize, err := homeManager.GetCacheSize()
+	if err != nil {
+		log.WithError(err).Warn("Failed to calculate cache size")
+		cacheSize = 0
+	}
+
+	fmt.Printf("Home Directory: %s\n", homeManager.Path())
+	fmt.Printf("Exists: %v\n\n", homeManager.Exists())
+
+	fmt.Printf("Paths:\n")
+	fmt.Printf("  Config: %s\n", homeManager.ConfigPath())
+	fmt.Printf("  Database: %s\n", homeManager.DatabasePath())
+	fmt.Printf("  Rules (enabled): %s\n", homeManager.RulesEnabledPath())
+	fmt.Printf("  Rules (disabled): %s\n", homeManager.RulesDisabledPath())
+	fmt.Printf("  Rules (examples): %s\n", homeManager.RulesExamplesPath())
+	fmt.Printf("  Cache: %s\n", homeManager.JoinPath(home.CacheDir))
+	fmt.Printf("  Temp: %s\n", homeManager.TempPath())
+	fmt.Printf("  Logs: %s\n\n", homeManager.LogsPath())
+
+	fmt.Printf("Cache Size: %d bytes (%.2f MB)\n", cacheSize, float64(cacheSize)/(1024*1024))
+
+	// Try to load config
+	config, err := homeManager.LoadConfig()
+	if err != nil {
+		fmt.Printf("\nConfiguration: Error loading config: %v\n", err)
+	} else {
+		fmt.Printf("\nConfiguration:\n")
+		fmt.Printf("  Server Port: %d\n", config.Server.Port)
+		fmt.Printf("  Server Host: %s\n", config.Server.Host)
+		fmt.Printf("  Rules Auto-Execute: %v\n", config.Rules.AutoExecute)
+		fmt.Printf("  Rules Hot-Reload: %v\n", config.Rules.HotReload)
+		fmt.Printf("  Cache Enabled: %v\n", config.Cache.Enabled)
+		fmt.Printf("  Cache Max Size: %.2f GB\n", float64(config.Cache.MaxSize)/(1024*1024*1024))
+		fmt.Printf("  Log Level: %s\n", config.Logging.Level)
+	}
+}
+
+func runHomeClean(cmd *cobra.Command, args []string) {
+	if err := initHome(); err != nil {
+		log.WithError(err).Error("Failed to initialize home directory")
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	cleanCache, _ := cmd.Flags().GetBool("cache")
+
+	// Clean temp directory
+	if err := homeManager.CleanTemp(); err != nil {
+		log.WithError(err).Error("Failed to clean temp directory")
+		fmt.Fprintf(os.Stderr, "Error cleaning temp: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("✓ Cleaned temp directory")
+
+	// Clean cache if requested
+	if cleanCache {
+		cachePath := homeManager.JoinPath(home.CacheDir)
+		if err := os.RemoveAll(cachePath); err != nil {
+			log.WithError(err).Error("Failed to clean cache")
+			fmt.Fprintf(os.Stderr, "Error cleaning cache: %v\n", err)
+			os.Exit(1)
+		}
+		if err := os.MkdirAll(cachePath, 0755); err != nil {
+			log.WithError(err).Error("Failed to recreate cache directory")
+			fmt.Fprintf(os.Stderr, "Error recreating cache: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("✓ Cleaned cache directory")
+	}
+
+	fmt.Println("\nCleanup complete!")
 }
