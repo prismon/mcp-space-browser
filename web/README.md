@@ -1,16 +1,44 @@
-# MCP Disk Indexer Web Component
+# MCP Space Browser - Web Components
 
-A reusable web component microfrontend for filesystem indexing via the MCP Space Browser API.
+A comprehensive suite of reusable web components for disk space analysis via MCP JSON-RPC protocol.
 
 ## Overview
 
-This directory contains a standalone web component that can be embedded in any HTML page to provide a UI for triggering disk indexing operations. The component is built using native Web Components API (Custom Elements) with Shadow DOM for full encapsulation.
+This directory contains 5 web components that provide a complete front-end interface for all 17 MCP tools exposed by the mcp-space-browser server. Each component is built using native Web Components API (Custom Elements) with Shadow DOM for full encapsulation.
 
 ## Files
 
-- `mcp-disk-indexer.js` - The web component implementation
-- `index.html` - Demo page showing usage examples
+- `mcp-disk-indexer.js` - Disk indexing component (index, job-progress tools)
+- `mcp-disk-navigator.js` - Directory navigation component (cd, inspect tools)
+- `mcp-selection-sets.js` - Selection sets management (5 tools)
+- `mcp-queries.js` - Query management and execution (6 tools)
+- `mcp-session.js` - Session info and preferences (2 tools)
+- `index.html` - Comprehensive demo page with all components
 - `README.md` - This file
+
+## Complete MCP Tool Coverage
+
+| Tool | Component | Category |
+|------|-----------|----------|
+| `index` | mcp-disk-indexer | Core |
+| `job-progress` | mcp-disk-indexer | Core |
+| `cd` | mcp-disk-navigator | Core |
+| `inspect` | mcp-disk-navigator | Core |
+| `selection-set-create` | mcp-selection-sets | Selection Sets |
+| `selection-set-list` | mcp-selection-sets | Selection Sets |
+| `selection-set-get` | mcp-selection-sets | Selection Sets |
+| `selection-set-modify` | mcp-selection-sets | Selection Sets |
+| `selection-set-delete` | mcp-selection-sets | Selection Sets |
+| `query-create` | mcp-queries | Queries |
+| `query-execute` | mcp-queries | Queries |
+| `query-list` | mcp-queries | Queries |
+| `query-get` | mcp-queries | Queries |
+| `query-update` | mcp-queries | Queries |
+| `query-delete` | mcp-queries | Queries |
+| `session-info` | mcp-session | Session |
+| `session-set-preferences` | mcp-session | Session |
+
+**Total:** 17 MCP tools across 5 web components
 
 ## Quick Start
 
@@ -24,11 +52,88 @@ This directory contains a standalone web component that can be embedded in any H
    http://localhost:3000/web/index.html
    ```
 
-3. Enter a filesystem path and click "Start Indexing"
+3. Use the tab navigation to explore all components
+
+## Components
+
+### 1. `<mcp-disk-indexer>`
+**MCP Tools:** `index`, `job-progress`
+
+Index filesystem paths and track progress asynchronously.
+
+```html
+<mcp-disk-indexer
+  api-base="http://localhost:3000"
+  default-path="/tmp"
+  poll-progress="true">
+</mcp-disk-indexer>
+```
+
+**Events:** `index-started`, `index-completed`, `index-failed`, `index-error`
+
+---
+
+### 2. `<mcp-disk-navigator>`
+**MCP Tools:** `cd`, `inspect`
+
+Navigate indexed directories and inspect file/directory metadata.
+
+```html
+<mcp-disk-navigator
+  api-base="http://localhost:3000"
+  default-path="/tmp">
+</mcp-disk-navigator>
+```
+
+**Events:** `navigate`, `inspect`
+
+---
+
+### 3. `<mcp-selection-sets>`
+**MCP Tools:** `selection-set-create`, `selection-set-list`, `selection-set-get`, `selection-set-modify`, `selection-set-delete`
+
+Create and manage selection sets for organizing indexed files.
+
+```html
+<mcp-selection-sets api-base="http://localhost:3000"></mcp-selection-sets>
+```
+
+**Events:** `set-created`, `set-modified`, `set-deleted`
+
+---
+
+### 4. `<mcp-queries>`
+**MCP Tools:** `query-create`, `query-execute`, `query-list`, `query-get`, `query-update`, `query-delete`
+
+Create, manage, and execute saved queries on indexed data.
+
+```html
+<mcp-queries api-base="http://localhost:3000"></mcp-queries>
+```
+
+**Events:** `query-created`, `query-updated`, `query-executed`, `query-deleted`
+
+---
+
+### 5. `<mcp-session>`
+**MCP Tools:** `session-info`, `session-set-preferences`
+
+View session information and manage user preferences.
+
+```html
+<mcp-session
+  api-base="http://localhost:3000"
+  auto-load="true">
+</mcp-session>
+```
+
+**Events:** `session-loaded`, `preferences-updated`
+
+---
 
 ## Usage
 
-### Basic Usage
+### Single Component
 
 Include the script and use the custom element:
 
