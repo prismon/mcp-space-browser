@@ -148,36 +148,37 @@ curl -X POST http://localhost:3000/mcp \
 
 ### MCP Tools
 
-The unified server exposes 17 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
+The unified server exposes 18 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
 
 These tools are accessible via Claude Desktop, Claude Code, or any other MCP-compatible client when the server is running.
 
-#### Available MCP Tools (17 Total)
+#### Available MCP Tools (18 Total)
 
-**Core Tools (4):**
+**Core Tools (5):**
 1. `disk-index`: Index a directory tree
 2. `disk-du`: Get disk usage for a path
 3. `disk-tree`: Get hierarchical tree structure
 4. `disk-time-range`: Find files modified within a date range
+5. `navigate`: Navigate to a directory and list its contents with summary statistics
 
 **Selection Set Tools (5):**
-5. `selection-set-create`: Create a named file grouping
-6. `selection-set-list`: List all selection sets
-7. `selection-set-get`: Get entries in a selection set
-8. `selection-set-modify`: Add/remove entries from a set
-9. `selection-set-delete`: Delete a selection set
+6. `selection-set-create`: Create a named file grouping
+7. `selection-set-list`: List all selection sets
+8. `selection-set-get`: Get entries in a selection set
+9. `selection-set-modify`: Add/remove entries from a set
+10. `selection-set-delete`: Delete a selection set
 
 **Query Tools (6):**
-10. `query-create`: Create a saved file filter query
-11. `query-execute`: Execute a saved query
-12. `query-list`: List all saved queries
-13. `query-get`: Get query details
-14. `query-update`: Update a query
-15. `query-delete`: Delete a query
+11. `query-create`: Create a saved file filter query
+12. `query-execute`: Execute a saved query
+13. `query-list`: List all saved queries
+14. `query-get`: Get query details
+15. `query-update`: Update a query
+16. `query-delete`: Delete a query
 
 **Session Tools (2):**
-16. `session-info`: Get session information
-17. `session-set-preferences`: Set session preferences
+17. `session-info`: Get session information
+18. `session-set-preferences`: Set session preferences
 
 ## Configuration
 

@@ -325,7 +325,7 @@ class McpDiskNavigator extends HTMLElement {
     this.shadowRoot.getElementById('inspectPanel').classList.remove('visible');
 
     try {
-      const result = await this.callMCPTool('cd', {
+      const result = await this.callMCPTool('navigate', {
         path: path,
         limit: 50,
         offset: 0,

@@ -61,7 +61,7 @@ go test -v -cover ./...              # With coverage
 3. **Database Layer**: SQLite abstraction with 5 tables (entries, selection_sets, queries, etc.)
 4. **Unified Server**: Single HTTP server providing:
    - REST API endpoints (`/api/index`, `/api/tree`)
-   - MCP endpoint (`/mcp`) with 17 tools for disk space analysis
+   - MCP endpoint (`/mcp`) with 18 tools for disk space analysis
 
 ### Key Design Patterns
 - **Single Table Design**: All filesystem entries in one table with parent references
@@ -119,9 +119,9 @@ CREATE TABLE entries (
 
 ## MCP Integration
 
-Provides full MCP (Model Context Protocol) integration with 17 tools:
+Provides full MCP (Model Context Protocol) integration with 18 tools:
 
-**Core Tools**: disk-index, disk-du, disk-tree, disk-time-range
+**Core Tools**: disk-index, disk-du, disk-tree, disk-time-range, navigate
 **Selection Sets**: create, list, get, modify, delete
 **Queries**: create, execute, list, get, update, delete
 **Session**: info, set-preferences

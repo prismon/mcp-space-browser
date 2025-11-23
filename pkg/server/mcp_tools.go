@@ -23,7 +23,7 @@ import (
 func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 	// Shell-style navigation tools
 	registerIndexTool(s, db)
-	registerCdTool(s, db)
+	registerNavigateTool(s, db)
 	registerInspectTool(s, db)
 	registerJobProgressTool(s, db)
 	registerListJobsTool(s, db)
@@ -456,9 +456,9 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-func registerCdTool(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("cd",
-		mcp.WithDescription("Change directory within the indexed tree and return a lightweight listing with summary statistics."),
+func registerNavigateTool(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("navigate",
+		mcp.WithDescription("Navigate to a directory within the indexed tree and return a lightweight listing with summary statistics."),
 		mcp.WithString("path",
 			mcp.Required(),
 			mcp.Description("Target path (absolute or relative to previous call)"),
