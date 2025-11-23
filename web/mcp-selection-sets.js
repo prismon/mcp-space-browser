@@ -523,18 +523,18 @@ class McpSelectionSets extends HTMLElement {
     }
 
     listDiv.innerHTML = sets.map(set => `
-      <div class="set-item ${this.currentSet === set.Name ? 'active' : ''}" data-name="${set.Name}">
+      <div class="set-item ${this.currentSet === set.name ? 'active' : ''}" data-name="${set.name}">
         <div class="set-info">
-          <div class="set-name">${set.Name}</div>
+          <div class="set-name">${set.name}</div>
           <div class="set-meta">
-            ${set.Description || 'No description'} •
-            ${set.CriteriaType} •
-            Created: ${new Date(set.CreatedAt * 1000).toLocaleDateString()}
+            ${set.description || 'No description'} •
+            ${set.criteria_type} •
+            Created: ${new Date(set.created_at * 1000).toLocaleDateString()}
           </div>
         </div>
         <div class="set-actions">
-          <button class="secondary view-btn" data-name="${set.Name}">View</button>
-          <button class="danger delete-btn" data-name="${set.Name}">Delete</button>
+          <button class="secondary view-btn" data-name="${set.name}">View</button>
+          <button class="danger delete-btn" data-name="${set.name}">Delete</button>
         </div>
       </div>
     `).join('');
@@ -558,7 +558,7 @@ class McpSelectionSets extends HTMLElement {
   updateModifyDropdown(sets) {
     const select = this.shadowRoot.getElementById('modifySetName');
     select.innerHTML = '<option value="">-- Select a set --</option>' +
-      sets.map(set => `<option value="${set.Name}">${set.Name}</option>`).join('');
+      sets.map(set => `<option value="${set.name}">${set.name}</option>`).join('');
   }
 
   formatSize(bytes) {

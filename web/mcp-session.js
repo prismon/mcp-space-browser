@@ -395,12 +395,13 @@ class McpSession extends HTMLElement {
       { label: 'Database', value: info.database || 'N/A' },
       { label: 'Version', value: info.version || 'N/A' },
       { label: 'Uptime', value: info.uptime || 'N/A' },
+      { label: 'Current Directory', value: info.cwd || 'N/A' },
       { label: 'Server', value: this.apiBase }
     ];
 
     // Add any additional fields from the response
     Object.keys(info).forEach(key => {
-      if (!['database', 'version', 'uptime'].includes(key)) {
+      if (!['database', 'version', 'uptime', 'cwd'].includes(key)) {
         items.push({ label: this.capitalizeFirst(key), value: info[key] });
       }
     });

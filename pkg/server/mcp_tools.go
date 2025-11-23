@@ -1035,10 +1035,17 @@ func registerSessionInfo(s *server.MCPServer, db *database.DiskDB, dbPath string
 	)
 
 	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// Get current working directory
+		cwd, err := filepath.Abs(".")
+		if err != nil {
+			cwd = "unknown"
+		}
+
 		info := map[string]interface{}{
 			"database": dbPath,
 			"version":  "0.1.0",
 			"uptime":   "N/A", // Could track this if needed
+			"cwd":      cwd,
 		}
 
 		result, err := json.Marshal(info)
