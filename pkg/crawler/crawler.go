@@ -14,6 +14,12 @@ import (
 
 var log *logrus.Entry
 
+const (
+	// batchSize is the number of entries to process before committing a transaction
+	// This prevents holding locks for too long during large scans
+	batchSize = 1000
+)
+
 func init() {
 	log = logger.WithName("crawler")
 }
@@ -65,8 +71,9 @@ func Index(root string, db *database.DiskDB, jobID int64, progressCallback Progr
 	}
 	lastProgressLog := time.Now()
 	lastProgressUpdate := time.Now()
+	entriesInBatch := 0
 
-	// Begin transaction for better performance
+	// Begin transaction for better performance with batching
 	if err := db.BeginTransaction(); err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -132,6 +139,26 @@ func Index(root string, db *database.DiskDB, jobID int64, progressCallback Progr
 				"error": err,
 			}).Error("Failed to insert/update entry")
 			continue
+		}
+
+		entriesInBatch++
+
+		// Commit in batches to avoid holding locks for too long
+		if entriesInBatch >= batchSize {
+			if err := db.CommitTransaction(); err != nil {
+				return nil, fmt.Errorf("failed to commit batch transaction: %w", err)
+			}
+
+			if logger.IsLevelEnabled(logrus.DebugLevel) {
+				log.WithField("entriesCommitted", entriesInBatch).Debug("Committed batch")
+			}
+
+			// Start a new transaction for the next batch
+			if err := db.BeginTransaction(); err != nil {
+				return nil, fmt.Errorf("failed to begin new batch transaction: %w", err)
+			}
+
+			entriesInBatch = 0
 		}
 
 		if isDir {
@@ -214,10 +241,17 @@ func Index(root string, db *database.DiskDB, jobID int64, progressCallback Progr
 		}
 	}
 
-	// Commit the transaction
+	// Commit the final batch (if any entries remain uncommitted)
 	if err := db.CommitTransaction(); err != nil {
 		db.RollbackTransaction()
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+		return nil, fmt.Errorf("failed to commit final batch: %w", err)
+	}
+
+	if logger.IsLevelEnabled(logrus.DebugLevel) {
+		log.WithFields(logrus.Fields{
+			"finalBatchSize": entriesInBatch,
+			"totalEntries":   stats.FilesProcessed + stats.DirectoriesProcessed,
+		}).Debug("Committed final batch")
 	}
 
 	log.WithFields(logrus.Fields{
