@@ -159,10 +159,9 @@ func TestRuleExecutionWithSelectionSet(t *testing.T) {
 
 	// Create a selection set
 	selectionSet := &models.SelectionSet{
-		Name:         "test-set",
-		CriteriaType: "user_selected",
-		CreatedAt:    time.Now().Unix(),
-		UpdatedAt:    time.Now().Unix(),
+		Name:      "test-set",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
 	}
 	setID, err := db.CreateSelectionSet(selectionSet)
 	require.NoError(t, err)
@@ -265,10 +264,9 @@ func TestRuleOutcomeRecord(t *testing.T) {
 	ruleID, _ := db.CreateRule(rule)
 
 	selectionSet := &models.SelectionSet{
-		Name:         "test-thumbnails",
-		CriteriaType: "user_selected",
-		CreatedAt:    time.Now().Unix(),
-		UpdatedAt:    time.Now().Unix(),
+		Name:      "test-thumbnails",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
 	}
 	setID, _ := db.CreateSelectionSet(selectionSet)
 

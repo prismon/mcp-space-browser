@@ -18,6 +18,7 @@ import (
 	"github.com/prismon/mcp-space-browser/pkg/crawler"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/pathutil"
+	"github.com/prismon/mcp-space-browser/pkg/plans"
 	"github.com/sirupsen/logrus"
 )
 
@@ -45,6 +46,13 @@ func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 	registerQueryGet(s, db)
 	registerQueryUpdate(s, db)
 	registerQueryDelete(s, db)
+
+	// Plan tools
+	registerPlanCreate(s, db)
+	registerPlanExecute(s, db)
+	registerPlanList(s, db)
+	registerPlanGet(s, db)
+	registerPlanDelete(s, db)
 
 	// Session tools
 	registerSessionInfo(s, db, dbPath)
@@ -1915,6 +1923,224 @@ func registerMoveFilesTool(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal response: %v", err)), nil
 		}
 
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+// Plan Tools
+
+func registerPlanCreate(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("plan-create",
+		mcp.WithDescription("Create a new plan that defines automated file processing"),
+		mcp.WithString("planJson",
+			mcp.Required(),
+			mcp.Description("JSON string containing plan definition with sources, conditions (RuleCondition), and outcomes (RuleOutcome)"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			PlanJson string `json:"planJson"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		// Parse plan JSON
+		var plan models.Plan
+		if err := json.Unmarshal([]byte(args.PlanJson), &plan); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid plan JSON: %v", err)), nil
+		}
+
+		// Set defaults
+		if plan.Mode == "" {
+			plan.Mode = "oneshot"
+		}
+		if plan.Status == "" {
+			plan.Status = "active"
+		}
+
+		// Create plan
+		if err := db.CreatePlan(&plan); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to create plan: %v", err)), nil
+		}
+
+		result := map[string]interface{}{
+			"id":     plan.ID,
+			"name":   plan.Name,
+			"mode":   plan.Mode,
+			"status": plan.Status,
+		}
+
+		payload, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerPlanExecute(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("plan-execute",
+		mcp.WithDescription("Execute a plan to process files according to its rules"),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("Name of the plan to execute"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Name string `json:"name"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		// Get plan
+		plan, err := db.GetPlan(args.Name)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Plan not found: %v", err)), nil
+		}
+
+		// Execute plan
+		logger := logrus.New().WithField("tool", "plan-execute")
+		executor := plans.NewExecutor(db, logger)
+		execution, err := executor.Execute(plan)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Plan execution failed: %v", err)), nil
+		}
+
+		result := map[string]interface{}{
+			"execution_id":       execution.ID,
+			"plan":               plan.Name,
+			"status":             execution.Status,
+			"entries_processed":  execution.EntriesProcessed,
+			"entries_matched":    execution.EntriesMatched,
+			"outcomes_applied":   execution.OutcomesApplied,
+			"duration_ms":        execution.DurationMs,
+			"error_message":      execution.ErrorMessage,
+		}
+
+		payload, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerPlanList(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("plan-list",
+		mcp.WithDescription("List all plans"),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		plans, err := db.ListPlans()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to list plans: %v", err)), nil
+		}
+
+		result := make([]map[string]interface{}, len(plans))
+		for i, plan := range plans {
+			result[i] = map[string]interface{}{
+				"id":          plan.ID,
+				"name":        plan.Name,
+				"description": plan.Description,
+				"mode":        plan.Mode,
+				"status":      plan.Status,
+				"created_at":  plan.CreatedAt,
+				"last_run_at": plan.LastRunAt,
+			}
+		}
+
+		payload, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerPlanGet(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("plan-get",
+		mcp.WithDescription("Get plan details including execution history"),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("Name of the plan"),
+		),
+		mcp.WithNumber("executionLimit",
+			mcp.Description("Number of recent executions to include (default: 10)"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Name           string  `json:"name"`
+			ExecutionLimit *int    `json:"executionLimit,omitempty"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		// Get plan
+		plan, err := db.GetPlan(args.Name)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Plan not found: %v", err)), nil
+		}
+
+		// Get execution history
+		limit := 10
+		if args.ExecutionLimit != nil {
+			limit = *args.ExecutionLimit
+		}
+		executions, err := db.GetPlanExecutions(plan.Name, limit)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to get executions: %v", err)), nil
+		}
+
+		result := map[string]interface{}{
+			"id":          plan.ID,
+			"name":        plan.Name,
+			"description": plan.Description,
+			"mode":        plan.Mode,
+			"status":      plan.Status,
+			"sources":     plan.Sources,
+			"conditions":  plan.Conditions,
+			"outcomes":    plan.Outcomes,
+			"created_at":  plan.CreatedAt,
+			"updated_at":  plan.UpdatedAt,
+			"last_run_at": plan.LastRunAt,
+			"executions":  executions,
+		}
+
+		payload, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerPlanDelete(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("plan-delete",
+		mcp.WithDescription("Delete a plan"),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("Name of the plan to delete"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Name string `json:"name"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		if err := db.DeletePlan(args.Name); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to delete plan: %v", err)), nil
+		}
+
+		result := map[string]interface{}{
+			"name":    args.Name,
+			"deleted": true,
+		}
+
+		payload, _ := json.Marshal(result)
 		return mcp.NewToolResultText(string(payload)), nil
 	})
 }
