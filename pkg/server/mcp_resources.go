@@ -334,7 +334,7 @@ func registerEntryTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
 		"shell://nodes/{path}",
 		"Filesystem Entry",
-		mcp.WithTemplateDescription("Individual filesystem entry by path"),
+		mcp.WithTemplateDescription("Individual filesystem entry by path, including children and metadata"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
@@ -360,7 +360,36 @@ func registerEntryTemplate(s *server.MCPServer, db *database.DiskDB) {
 			return nil, fmt.Errorf("entry not found: %s", path)
 		}
 
-		data, err := json.MarshalIndent(entry, "", "  ")
+		// Build a comprehensive response
+		response := map[string]interface{}{
+			"entry": entry,
+		}
+
+		// If it's a directory, include its children
+		if entry.Kind == "directory" {
+			children, err := db.Children(path)
+			if err != nil {
+				return nil, fmt.Errorf("failed to fetch children: %w", err)
+			}
+			response["children"] = children
+			response["child_count"] = len(children)
+		}
+
+		// Include associated metadata (thumbnails, video timelines, etc.)
+		metadata, err := db.GetMetadataByPath(path)
+		if err != nil {
+			// Log error but don't fail the request
+			response["metadata_error"] = err.Error()
+		} else if len(metadata) > 0 {
+			// Add resource URIs to metadata entries
+			for _, m := range metadata {
+				m.ResourceUri = fmt.Sprintf("shell://metadata/%s", m.Hash)
+			}
+			response["metadata"] = metadata
+			response["metadata_count"] = len(metadata)
+		}
+
+		data, err := json.MarshalIndent(response, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal entry: %w", err)
 		}
