@@ -167,6 +167,7 @@
     <div class="nav-tab" data-section="jobs">🎯 Jobs</div>
     <div class="nav-tab" data-section="selection-sets">📦 Selection Sets</div>
     <div class="nav-tab" data-section="queries">🔍 Queries</div>
+    <div class="nav-tab" data-section="rules">📋 Rules</div>
     <div class="nav-tab" data-section="session">⚙️ Session</div>
   </div>
 
@@ -268,6 +269,38 @@
     </div>
   </div>
 
+  <!-- Rules Section -->
+  <div class="demo-section" id="rules">
+    <div class="section-header">
+      <h2>📋 Rules Management <span class="badge">6 tools</span></h2>
+      <p>Create, edit, and manage rules for automatic file classification and processing</p>
+    </div>
+
+    <mcp-ruleset></mcp-ruleset>
+
+    <div class="info-box">
+      <h3>MCP Tools Used</h3>
+      <ul>
+        <li><code>rule-create</code> - Create a new rule with conditions and outcomes</li>
+        <li><code>rule-list</code> - List all rules</li>
+        <li><code>rule-get</code> - Get rule details with execution history</li>
+        <li><code>rule-update</code> - Update an existing rule</li>
+        <li><code>rule-delete</code> - Delete a rule</li>
+        <li><code>rule-execute</code> - Manually execute a rule against indexed entries</li>
+      </ul>
+    </div>
+
+    <div class="info-box">
+      <h3>MCP Resources</h3>
+      <ul>
+        <li><code>shell://rules</code> - List all rules</li>
+        <li><code>shell://rules/{name}</code> - Get individual rule details</li>
+        <li><code>shell://rules/{name}/executions</code> - Get rule execution history</li>
+        <li><code>shell://rule-executions</code> - All rule execution records</li>
+      </ul>
+    </div>
+  </div>
+
   <!-- Session Section -->
   <div class="demo-section" id="session">
     <div class="section-header">
@@ -290,7 +323,7 @@
     <p>
       Part of <a href="https://github.com/prismon/mcp-space-browser" target="_blank">mcp-space-browser</a>
       - A disk space indexing agent with MCP support<br>
-      <strong>Total MCP Tools:</strong> 19 | <strong>Web Components:</strong> 6
+      <strong>Total MCP Tools:</strong> 25+ | <strong>Web Components:</strong> 7
     </p>
   </div>
 
@@ -300,6 +333,7 @@
   <script src="/web/mcp-job-manager.js"></script>
   <script src="/web/mcp-selection-sets.js"></script>
   <script src="/web/mcp-queries.js"></script>
+  <script src="/web/mcp-ruleset.js"></script>
   <script src="/web/mcp-session.js"></script>
 
   <!-- Tab navigation -->

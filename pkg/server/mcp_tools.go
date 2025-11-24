@@ -19,6 +19,7 @@ import (
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/pathutil"
 	"github.com/prismon/mcp-space-browser/pkg/plans"
+	"github.com/prismon/mcp-space-browser/pkg/rules"
 	"github.com/sirupsen/logrus"
 )
 
@@ -54,6 +55,14 @@ func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 	registerPlanGet(s, db)
 	registerPlanUpdate(s, db)
 	registerPlanDelete(s, db)
+
+	// Rule tools
+	registerRuleCreate(s, db)
+	registerRuleList(s, db)
+	registerRuleGet(s, db)
+	registerRuleUpdate(s, db)
+	registerRuleDelete(s, db)
+	registerRuleExecute(s, db)
 
 	// Session tools
 	registerSessionInfo(s, db, dbPath)
@@ -2222,6 +2231,467 @@ func registerPlanDelete(s *server.MCPServer, db *database.DiskDB) {
 		result := map[string]interface{}{
 			"name":    args.Name,
 			"deleted": true,
+		}
+
+		payload, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+// Rule Tools
+
+func registerRuleCreate(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("rule-create",
+		mcp.WithDescription("Create a new rule with conditions and outcomes for automatic file processing"),
+		mcp.WithString("ruleJson",
+			mcp.Required(),
+			mcp.Description("JSON string containing rule definition with name, description, enabled, priority, condition (RuleCondition), and outcome (RuleOutcome with selectionSetName)"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			RuleJson string `json:"ruleJson"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		// Parse rule JSON
+		var ruleInput struct {
+			Name        string                 `json:"name"`
+			Description *string                `json:"description,omitempty"`
+			Enabled     *bool                  `json:"enabled,omitempty"`
+			Priority    *int                   `json:"priority,omitempty"`
+			Condition   *models.RuleCondition  `json:"condition"`
+			Outcome     *models.RuleOutcome    `json:"outcome"`
+		}
+
+		if err := json.Unmarshal([]byte(args.RuleJson), &ruleInput); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid rule JSON: %v", err)), nil
+		}
+
+		if ruleInput.Name == "" {
+			return mcp.NewToolResultError("Rule name is required"), nil
+		}
+
+		if ruleInput.Condition == nil {
+			return mcp.NewToolResultError("Rule condition is required"), nil
+		}
+
+		if ruleInput.Outcome == nil {
+			return mcp.NewToolResultError("Rule outcome is required"), nil
+		}
+
+		// Validate that outcome has required selection set
+		if err := database.ValidateRuleOutcome(ruleInput.Outcome); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid outcome: %v", err)), nil
+		}
+
+		// Marshal condition and outcome to JSON strings
+		conditionJSON, err := json.Marshal(ruleInput.Condition)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal condition: %v", err)), nil
+		}
+
+		outcomeJSON, err := json.Marshal(ruleInput.Outcome)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal outcome: %v", err)), nil
+		}
+
+		// Set defaults
+		enabled := true
+		if ruleInput.Enabled != nil {
+			enabled = *ruleInput.Enabled
+		}
+
+		priority := 0
+		if ruleInput.Priority != nil {
+			priority = *ruleInput.Priority
+		}
+
+		// Create the rule
+		rule := &models.Rule{
+			Name:          ruleInput.Name,
+			Description:   ruleInput.Description,
+			Enabled:       enabled,
+			Priority:      priority,
+			ConditionJSON: string(conditionJSON),
+			OutcomeJSON:   string(outcomeJSON),
+		}
+
+		id, err := db.CreateRule(rule)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to create rule: %v", err)), nil
+		}
+
+		// Ensure selection set exists for the outcome
+		_, err = db.EnsureSelectionSetForOutcome(ruleInput.Outcome, ruleInput.Name)
+		if err != nil {
+			log.WithError(err).WithField("rule", ruleInput.Name).Warn("Failed to ensure selection set for rule")
+		}
+
+		result := map[string]interface{}{
+			"id":          id,
+			"name":        rule.Name,
+			"enabled":     rule.Enabled,
+			"priority":    rule.Priority,
+			"resourceUri": fmt.Sprintf("shell://rules/%s", rule.Name),
+		}
+
+		payload, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerRuleList(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("rule-list",
+		mcp.WithDescription("List all rules"),
+		mcp.WithBoolean("enabledOnly",
+			mcp.Description("Only return enabled rules (default: false)"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			EnabledOnly *bool `json:"enabledOnly,omitempty"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		enabledOnly := getBoolOrDefault(args.EnabledOnly, false)
+
+		rules, err := db.ListRules(enabledOnly)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to list rules: %v", err)), nil
+		}
+
+		// Build response with resource URIs
+		rulesList := make([]map[string]interface{}, len(rules))
+		for i, rule := range rules {
+			rulesList[i] = map[string]interface{}{
+				"id":          rule.ID,
+				"name":        rule.Name,
+				"description": rule.Description,
+				"enabled":     rule.Enabled,
+				"priority":    rule.Priority,
+				"created_at":  rule.CreatedAt,
+				"updated_at":  rule.UpdatedAt,
+				"resourceUri": fmt.Sprintf("shell://rules/%s", rule.Name),
+			}
+		}
+
+		result := map[string]interface{}{
+			"count": len(rules),
+			"rules": rulesList,
+		}
+
+		payload, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerRuleGet(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("rule-get",
+		mcp.WithDescription("Get rule details including parsed conditions and outcomes"),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("Name of the rule"),
+		),
+		mcp.WithNumber("executionLimit",
+			mcp.Description("Number of recent executions to include (default: 10)"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Name           string `json:"name"`
+			ExecutionLimit *int   `json:"executionLimit,omitempty"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		rule, err := db.GetRule(args.Name)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to get rule: %v", err)), nil
+		}
+
+		if rule == nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Rule '%s' not found", args.Name)), nil
+		}
+
+		// Parse condition and outcome JSON
+		var condition interface{}
+		var outcome interface{}
+		if err := json.Unmarshal([]byte(rule.ConditionJSON), &condition); err == nil {
+			// Successfully parsed
+		}
+		if err := json.Unmarshal([]byte(rule.OutcomeJSON), &outcome); err == nil {
+			// Successfully parsed
+		}
+
+		// Get execution history
+		limit := 10
+		if args.ExecutionLimit != nil {
+			limit = *args.ExecutionLimit
+		}
+		executions, err := db.ListRuleExecutions(rule.ID, limit)
+		if err != nil {
+			executions = nil // Continue without executions
+		}
+
+		result := map[string]interface{}{
+			"id":             rule.ID,
+			"name":           rule.Name,
+			"description":    rule.Description,
+			"enabled":        rule.Enabled,
+			"priority":       rule.Priority,
+			"condition_json": rule.ConditionJSON,
+			"outcome_json":   rule.OutcomeJSON,
+			"condition":      condition,
+			"outcome":        outcome,
+			"created_at":     rule.CreatedAt,
+			"updated_at":     rule.UpdatedAt,
+			"executions":     executions,
+			"resourceUri":    fmt.Sprintf("shell://rules/%s", rule.Name),
+		}
+
+		payload, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerRuleUpdate(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("rule-update",
+		mcp.WithDescription("Update an existing rule"),
+		mcp.WithString("ruleJson",
+			mcp.Required(),
+			mcp.Description("JSON string containing updated rule definition (must include name to identify rule)"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			RuleJson string `json:"ruleJson"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		// Parse rule JSON
+		var ruleInput struct {
+			Name        string                 `json:"name"`
+			Description *string                `json:"description,omitempty"`
+			Enabled     *bool                  `json:"enabled,omitempty"`
+			Priority    *int                   `json:"priority,omitempty"`
+			Condition   *models.RuleCondition  `json:"condition,omitempty"`
+			Outcome     *models.RuleOutcome    `json:"outcome,omitempty"`
+		}
+
+		if err := json.Unmarshal([]byte(args.RuleJson), &ruleInput); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid rule JSON: %v", err)), nil
+		}
+
+		if ruleInput.Name == "" {
+			return mcp.NewToolResultError("Rule name is required to identify the rule to update"), nil
+		}
+
+		// Get existing rule
+		existingRule, err := db.GetRule(ruleInput.Name)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to get rule: %v", err)), nil
+		}
+		if existingRule == nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Rule '%s' not found", ruleInput.Name)), nil
+		}
+
+		// Update fields if provided
+		if ruleInput.Description != nil {
+			existingRule.Description = ruleInput.Description
+		}
+		if ruleInput.Enabled != nil {
+			existingRule.Enabled = *ruleInput.Enabled
+		}
+		if ruleInput.Priority != nil {
+			existingRule.Priority = *ruleInput.Priority
+		}
+		if ruleInput.Condition != nil {
+			conditionJSON, err := json.Marshal(ruleInput.Condition)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal condition: %v", err)), nil
+			}
+			existingRule.ConditionJSON = string(conditionJSON)
+		}
+		if ruleInput.Outcome != nil {
+			// Validate that outcome has required selection set
+			if err := database.ValidateRuleOutcome(ruleInput.Outcome); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("Invalid outcome: %v", err)), nil
+			}
+			outcomeJSON, err := json.Marshal(ruleInput.Outcome)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal outcome: %v", err)), nil
+			}
+			existingRule.OutcomeJSON = string(outcomeJSON)
+
+			// Ensure selection set exists
+			_, err = db.EnsureSelectionSetForOutcome(ruleInput.Outcome, ruleInput.Name)
+			if err != nil {
+				log.WithError(err).WithField("rule", ruleInput.Name).Warn("Failed to ensure selection set for rule")
+			}
+		}
+
+		// Update the rule
+		if err := db.UpdateRule(existingRule); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to update rule: %v", err)), nil
+		}
+
+		result := map[string]interface{}{
+			"name":        existingRule.Name,
+			"enabled":     existingRule.Enabled,
+			"priority":    existingRule.Priority,
+			"updated":     true,
+			"resourceUri": fmt.Sprintf("shell://rules/%s", existingRule.Name),
+		}
+
+		payload, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerRuleDelete(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("rule-delete",
+		mcp.WithDescription("Delete a rule"),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("Name of the rule to delete"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Name string `json:"name"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		// Check if rule exists
+		existingRule, err := db.GetRule(args.Name)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to get rule: %v", err)), nil
+		}
+		if existingRule == nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Rule '%s' not found", args.Name)), nil
+		}
+
+		if err := db.DeleteRule(args.Name); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to delete rule: %v", err)), nil
+		}
+
+		result := map[string]interface{}{
+			"name":    args.Name,
+			"deleted": true,
+		}
+
+		payload, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerRuleExecute(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("rule-execute",
+		mcp.WithDescription("Manually execute a rule against all indexed entries"),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("Name of the rule to execute"),
+		),
+		mcp.WithString("path",
+			mcp.Description("Optional path to limit execution scope (execute only against entries under this path)"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Name string  `json:"name"`
+			Path *string `json:"path,omitempty"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		// Get the rule
+		rule, err := db.GetRule(args.Name)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to get rule: %v", err)), nil
+		}
+		if rule == nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Rule '%s' not found", args.Name)), nil
+		}
+
+		if !rule.Enabled {
+			return mcp.NewToolResultError(fmt.Sprintf("Rule '%s' is disabled", args.Name)), nil
+		}
+
+		// Create the rules engine with nil classifier (selection_set outcomes only)
+		engine := rules.NewEngine(db.DB(), nil)
+
+		// Execute the rule
+		startTime := time.Now()
+		var entries []*models.Entry
+		var entriesErr error
+
+		if args.Path != nil && *args.Path != "" {
+			// Get entries under the specified path using Children recursively
+			// For now, just get direct children - full recursive would need more work
+			entries, entriesErr = db.Children(*args.Path)
+		} else {
+			// Get all entries
+			entries, entriesErr = db.All()
+		}
+
+		if entriesErr != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to get entries: %v", entriesErr)), nil
+		}
+
+		// Execute rule against entries
+		matched := 0
+		processed := 0
+		errors := 0
+
+		for _, entry := range entries {
+			// Only process files, not directories
+			if entry.Kind != "file" {
+				continue
+			}
+			processed++
+
+			// Execute rule for this entry
+			err := engine.ExecuteRulesForPath(context.Background(), entry.Path)
+			if err != nil {
+				errors++
+				log.WithError(err).WithField("path", entry.Path).Debug("Rule execution failed for entry")
+			} else {
+				matched++
+			}
+		}
+
+		durationMs := time.Since(startTime).Milliseconds()
+
+		result := map[string]interface{}{
+			"rule":              args.Name,
+			"entries_processed": processed,
+			"entries_matched":   matched,
+			"errors":            errors,
+			"duration_ms":       durationMs,
+			"scope":             getStringOrDefault(args.Path, "all"),
 		}
 
 		payload, _ := json.Marshal(result)

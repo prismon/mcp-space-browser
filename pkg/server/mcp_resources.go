@@ -21,6 +21,8 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	registerQueriesResource(s, db)
 	registerPlansResource(s, db)
 	registerPlanExecutionsResource(s, db)
+	registerRulesResource(s, db)
+	registerRuleExecutionsResource(s, db)
 	registerIndexJobsResource(s, db)
 	registerMetadataResource(s, db) // All generated metadata (generic)
 
@@ -43,6 +45,8 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	registerQueryExecutionsTemplate(s, db)
 	registerPlanTemplate(s, db)
 	registerPlanExecutionsTemplate(s, db)
+	registerRuleTemplate(s, db)
+	registerRuleExecutionsTemplate(s, db)
 	registerIndexJobTemplate(s, db)
 	registerMetadataByHashTemplate(s, db)      // Metadata by hash
 	registerNodeMetadataTemplate(s, db)        // All metadata for a node
@@ -1115,6 +1119,216 @@ func registerNodeVideoTimelineTemplate(s *server.MCPServer, db *database.DiskDB)
 		data, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal video timeline: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+// Rule Resources
+
+func registerRulesResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"shell://rules",
+		"All Rules",
+		mcp.WithResourceDescription("List of all rules (condition-outcome pairs for automatic file processing)"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		rules, err := db.ListRules(false) // Get all rules, not just enabled
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch rules: %w", err)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"count": len(rules),
+			"rules": rules,
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal rules: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerRuleExecutionsResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"shell://rule-executions",
+		"All Rule Executions",
+		mcp.WithResourceDescription("List of all rule execution records across all rules"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Get all rules first
+		rules, err := db.ListRules(false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch rules: %w", err)
+		}
+
+		// Collect all executions from all rules
+		allExecutions := make([]*models.RuleExecution, 0)
+		for _, rule := range rules {
+			executions, err := db.ListRuleExecutions(rule.ID, 50) // Limit to 50 per rule
+			if err != nil {
+				// Log error but continue with other rules
+				continue
+			}
+			allExecutions = append(allExecutions, executions...)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"count":      len(allExecutions),
+			"executions": allExecutions,
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal executions: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerRuleTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://rules/{name}",
+		"Rule",
+		mcp.WithTemplateDescription("Individual rule by name"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract name from URI: shell://rules/{name}
+		uri := request.Params.URI
+		prefix := "shell://rules/"
+		if !strings.HasPrefix(uri, prefix) {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		name := strings.TrimPrefix(uri, prefix)
+		// Remove /executions suffix if present
+		name = strings.TrimSuffix(name, "/executions")
+
+		if name == "" {
+			return nil, fmt.Errorf("name parameter is required")
+		}
+
+		rule, err := db.GetRule(name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch rule: %w", err)
+		}
+
+		if rule == nil {
+			return nil, fmt.Errorf("rule not found: %s", name)
+		}
+
+		// Parse condition and outcome JSON for more readable output
+		var condition interface{}
+		var outcome interface{}
+		if err := json.Unmarshal([]byte(rule.ConditionJSON), &condition); err == nil {
+			// Successfully parsed, will include parsed version
+		}
+		if err := json.Unmarshal([]byte(rule.OutcomeJSON), &outcome); err == nil {
+			// Successfully parsed, will include parsed version
+		}
+
+		result := map[string]interface{}{
+			"id":             rule.ID,
+			"name":           rule.Name,
+			"description":    rule.Description,
+			"enabled":        rule.Enabled,
+			"priority":       rule.Priority,
+			"condition_json": rule.ConditionJSON,
+			"outcome_json":   rule.OutcomeJSON,
+			"condition":      condition,
+			"outcome":        outcome,
+			"created_at":     rule.CreatedAt,
+			"updated_at":     rule.UpdatedAt,
+		}
+
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal rule: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerRuleExecutionsTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://rules/{name}/executions",
+		"Rule Execution History",
+		mcp.WithTemplateDescription("Execution history for a specific rule"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract name from URI: shell://rules/{name}/executions
+		uri := request.Params.URI
+		prefix := "shell://rules/"
+		suffix := "/executions"
+
+		if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, suffix) {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		name := strings.TrimPrefix(uri, prefix)
+		name = strings.TrimSuffix(name, suffix)
+
+		if name == "" {
+			return nil, fmt.Errorf("name parameter is required")
+		}
+
+		// Get rule to verify it exists and get its ID
+		rule, err := db.GetRule(name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch rule: %w", err)
+		}
+		if rule == nil {
+			return nil, fmt.Errorf("rule not found: %s", name)
+		}
+
+		// Get execution history
+		executions, err := db.ListRuleExecutions(rule.ID, 100) // Limit to 100 recent executions
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch rule executions: %w", err)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"rule_name":  name,
+			"rule_id":    rule.ID,
+			"count":      len(executions),
+			"executions": executions,
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal executions: %w", err)
 		}
 
 		return []mcp.ResourceContents{
