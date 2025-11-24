@@ -11,6 +11,8 @@ This is a **Go implementation** providing:
 - **Single static binary** deployment (no runtime dependencies)
 - **Better resource management** and lower memory usage
 - **Unified server** exposing both REST API and MCP endpoints
+- **Live filesystem monitoring** with real-time updates using fsnotify
+- **Rule-based automation** for automatic file classification and processing
 
 ## Essential Commands
 
@@ -50,6 +52,9 @@ go test -v -cover ./...              # With coverage
 │   ├── logger/                # Structured logging (logrus)
 │   ├── database/              # SQLite abstraction
 │   ├── crawler/               # Filesystem traversal
+│   ├── sources/               # Source abstraction and live filesystem monitoring
+│   ├── rules/                 # Rule execution engine for automation
+│   ├── classifier/            # Media file classification and thumbnail generation
 │   └── server/                # Unified HTTP server (REST API + MCP)
 └── internal/
     └── models/                # Shared data structures
@@ -58,10 +63,18 @@ go test -v -cover ./...              # With coverage
 ### Core Components
 1. **CLI Entry Point**: Command-line interface with disk-index, disk-du, disk-tree commands
 2. **Filesystem Crawler**: Stack-based DFS traversal, metadata collection, database updates
-3. **Database Layer**: SQLite abstraction with 5 tables (entries, selection_sets, queries, etc.)
-4. **Unified Server**: Single HTTP server providing:
+3. **Database Layer**: SQLite abstraction with multiple tables (entries, selection_sets, queries, sources, rules, etc.)
+4. **Source Management**:
+   - **Manual Sources**: One-time filesystem scans
+   - **Live Sources**: Real-time monitoring using fsnotify (watches for Create, Modify, Delete, Rename events)
+   - **Source Manager**: Manages multiple sources, lifecycle, and persistence
+5. **Rule Engine**:
+   - Evaluates conditions (media type, size, time, path patterns)
+   - Applies outcomes (add to selection sets, generate thumbnails, chain actions)
+   - Automatic execution on file changes for live sources
+6. **Unified Server**: Single HTTP server providing:
    - REST API endpoints (`/api/index`, `/api/tree`)
-   - MCP endpoint (`/mcp`) with 18 tools for disk space analysis
+   - MCP endpoint (`/mcp`) with 24+ tools for disk space analysis and source management
 
 ### Key Design Patterns
 - **Single Table Design**: All filesystem entries in one table with parent references
@@ -70,7 +83,10 @@ go test -v -cover ./...              # With coverage
 - **In-Memory Testing**: Tests use temporary directories and `:memory:` SQLite
 
 ### Database Schema
+
+**Core Tables:**
 ```sql
+-- Filesystem entries
 CREATE TABLE entries (
   id INTEGER PRIMARY KEY,
   path TEXT UNIQUE NOT NULL,
@@ -81,6 +97,32 @@ CREATE TABLE entries (
   mtime INTEGER,
   last_scanned INTEGER,
   dirty INTEGER DEFAULT 0
+)
+
+-- Filesystem sources (manual or live monitoring)
+CREATE TABLE sources (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  type TEXT CHECK(type IN ('manual', 'live', 'scheduled')) NOT NULL,
+  root_path TEXT NOT NULL,
+  config_json TEXT,
+  status TEXT CHECK(status IN ('stopped', 'starting', 'running', 'stopping', 'error')),
+  enabled INTEGER DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  last_error TEXT
+)
+
+-- Rules for automatic file processing
+CREATE TABLE rules (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  enabled INTEGER DEFAULT 1,
+  priority INTEGER DEFAULT 0,
+  condition_json TEXT NOT NULL,
+  outcome_json TEXT NOT NULL,
+  created_at INTEGER,
+  updated_at INTEGER
 )
 ```
 
@@ -104,6 +146,7 @@ CREATE TABLE entries (
 #### Dependencies
 - `github.com/mark3labs/mcp-go@v0.43.0`: MCP server
 - `github.com/mattn/go-sqlite3`: SQLite driver
+- `github.com/fsnotify/fsnotify`: Filesystem monitoring for live sources
 - `github.com/sirupsen/logrus`: Structured logging
 - `github.com/spf13/cobra`: CLI framework
 - `github.com/gin-gonic/gin`: HTTP server
@@ -119,16 +162,37 @@ CREATE TABLE entries (
 
 ## MCP Integration
 
-Provides full MCP (Model Context Protocol) integration with 18 tools:
+Provides full MCP (Model Context Protocol) integration with 24+ tools:
 
 **Core Tools**: disk-index, disk-du, disk-tree, disk-time-range, navigate
 **Selection Sets**: create, list, get, modify, delete
 **Queries**: create, execute, list, get, update, delete
+**Source Management**: source-create, source-start, source-stop, source-list, source-get, source-delete, source-stats
 **Session**: info, set-preferences
 
 The unified server exposes MCP tools at `http://localhost:3000/mcp` when running:
 ```bash
 go run ./cmd/mcp-space-browser server --port=3000
 ```
+
+### Live Filesystem Monitoring
+
+Create a live source to monitor a directory for changes:
+```json
+{
+  "name": "my-photos",
+  "type": "live",
+  "path": "/home/user/Photos",
+  "watch_recursive": true,
+  "ignore_patterns": ["*.tmp", ".DS_Store"],
+  "debounce_ms": 500
+}
+```
+
+Live sources automatically:
+- Index new files as they're created
+- Update metadata when files are modified
+- Remove entries when files are deleted
+- Execute rules for automatic classification and processing
 
 See `README.go.md` for complete tool documentation.

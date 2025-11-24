@@ -54,6 +54,9 @@ func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 	registerRenameFilesTool(s, db)
 	registerDeleteFilesTool(s, db)
 	registerMoveFilesTool(s, db)
+
+	// Source management tools
+	registerSourceTools(s, db)
 }
 
 // Tree compression utilities
