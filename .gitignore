@@ -143,3 +143,7 @@ disk.db
 
 # Go build artifacts
 mcp-space-browser
+
+# Go test coverage
+*.out
+coverage*.out
