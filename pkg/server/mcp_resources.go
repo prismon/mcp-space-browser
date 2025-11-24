@@ -19,6 +19,8 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	registerEntriesResource(s, db)
 	registerSelectionSetsResource(s, db)
 	registerQueriesResource(s, db)
+	registerPlansResource(s, db)
+	registerPlanExecutionsResource(s, db)
 	registerIndexJobsResource(s, db)
 	registerMetadataResource(s, db) // All generated metadata (generic)
 
@@ -39,6 +41,8 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	registerSelectionSetEntriesTemplate(s, db)
 	registerQueryTemplate(s, db)
 	registerQueryExecutionsTemplate(s, db)
+	registerPlanTemplate(s, db)
+	registerPlanExecutionsTemplate(s, db)
 	registerIndexJobTemplate(s, db)
 	registerMetadataByHashTemplate(s, db)      // Metadata by hash
 	registerNodeMetadataTemplate(s, db)        // All metadata for a node
@@ -605,6 +609,188 @@ func registerIndexJobTemplate(s *server.MCPServer, db *database.DiskDB) {
 		data, err := json.MarshalIndent(job, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal index job: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+// Plan Resources
+
+func registerPlansResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"shell://plans",
+		"All Plans",
+		mcp.WithResourceDescription("List of all plans (automated file processing definitions)"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		plans, err := db.ListPlans()
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch plans: %w", err)
+		}
+
+		data, err := json.MarshalIndent(plans, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal plans: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerPlanExecutionsResource(s *server.MCPServer, db *database.DiskDB) {
+	resource := mcp.NewResource(
+		"shell://plan-executions",
+		"All Plan Executions",
+		mcp.WithResourceDescription("List of all plan execution records across all plans"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Get all plans first
+		plans, err := db.ListPlans()
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch plans: %w", err)
+		}
+
+		// Collect all executions from all plans
+		allExecutions := make([]*models.PlanExecution, 0)
+		for _, plan := range plans {
+			executions, err := db.GetPlanExecutions(plan.Name, 50) // Limit to 50 per plan
+			if err != nil {
+				// Log error but continue with other plans
+				continue
+			}
+			allExecutions = append(allExecutions, executions...)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"count":      len(allExecutions),
+			"executions": allExecutions,
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal executions: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerPlanTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://plans/{name}",
+		"Plan",
+		mcp.WithTemplateDescription("Individual plan by name"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract name from URI: shell://plans/{name}
+		uri := request.Params.URI
+		prefix := "shell://plans/"
+		if !strings.HasPrefix(uri, prefix) {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		name := strings.TrimPrefix(uri, prefix)
+		// Remove /executions suffix if present
+		name = strings.TrimSuffix(name, "/executions")
+
+		if name == "" {
+			return nil, fmt.Errorf("name parameter is required")
+		}
+
+		plan, err := db.GetPlan(name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch plan: %w", err)
+		}
+
+		if plan == nil {
+			return nil, fmt.Errorf("plan not found: %s", name)
+		}
+
+		data, err := json.MarshalIndent(plan, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal plan: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerPlanExecutionsTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://plans/{name}/executions",
+		"Plan Execution History",
+		mcp.WithTemplateDescription("Execution history for a specific plan"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract name from URI: shell://plans/{name}/executions
+		uri := request.Params.URI
+		prefix := "shell://plans/"
+		suffix := "/executions"
+
+		if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, suffix) {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		name := strings.TrimPrefix(uri, prefix)
+		name = strings.TrimSuffix(name, suffix)
+
+		if name == "" {
+			return nil, fmt.Errorf("name parameter is required")
+		}
+
+		// Get plan to verify it exists
+		plan, err := db.GetPlan(name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch plan: %w", err)
+		}
+		if plan == nil {
+			return nil, fmt.Errorf("plan not found: %s", name)
+		}
+
+		// Get execution history
+		executions, err := db.GetPlanExecutions(name, 100) // Limit to 100 recent executions
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch plan executions: %w", err)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"plan_name": name,
+			"count":     len(executions),
+			"executions": executions,
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal executions: %w", err)
 		}
 
 		return []mcp.ResourceContents{
