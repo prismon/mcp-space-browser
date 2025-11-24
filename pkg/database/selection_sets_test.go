@@ -16,11 +16,10 @@ func TestCreateSelectionSet(t *testing.T) {
 
 	desc := "Test selection set"
 	set := &models.SelectionSet{
-		Name:         "test-set",
-		Description:  &desc,
-		CriteriaType: "user_selected",
-		CreatedAt:    time.Now().Unix(),
-		UpdatedAt:    time.Now().Unix(),
+		Name:        "test-set",
+		Description: &desc,
+		CreatedAt:   time.Now().Unix(),
+		UpdatedAt:   time.Now().Unix(),
 	}
 
 	id, err := db.CreateSelectionSet(set)
@@ -41,11 +40,10 @@ func TestGetSelectionSet(t *testing.T) {
 	// Create and retrieve
 	desc := "My set"
 	newSet := &models.SelectionSet{
-		Name:         "my-set",
-		Description:  &desc,
-		CriteriaType: "tool_query",
-		CreatedAt:    time.Now().Unix(),
-		UpdatedAt:    time.Now().Unix(),
+		Name:        "my-set",
+		Description: &desc,
+		CreatedAt:   time.Now().Unix(),
+		UpdatedAt:   time.Now().Unix(),
 	}
 
 	id, err := db.CreateSelectionSet(newSet)
@@ -56,7 +54,6 @@ func TestGetSelectionSet(t *testing.T) {
 	assert.NotNil(t, retrieved)
 	assert.Equal(t, id, retrieved.ID)
 	assert.Equal(t, "my-set", retrieved.Name)
-	assert.Equal(t, "tool_query", retrieved.CriteriaType)
 }
 
 func TestListSelectionSets(t *testing.T) {
@@ -68,10 +65,9 @@ func TestListSelectionSets(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		name := string(rune('a' + i))
 		set := &models.SelectionSet{
-			Name:         name,
-			CriteriaType: "user_selected",
-			CreatedAt:    time.Now().Unix(),
-			UpdatedAt:    time.Now().Unix(),
+			Name:      name,
+			CreatedAt: time.Now().Unix(),
+			UpdatedAt: time.Now().Unix(),
 		}
 		_, err := db.CreateSelectionSet(set)
 		require.NoError(t, err)
@@ -88,10 +84,9 @@ func TestDeleteSelectionSet(t *testing.T) {
 	defer db.Close()
 
 	set := &models.SelectionSet{
-		Name:         "to-delete",
-		CriteriaType: "user_selected",
-		CreatedAt:    time.Now().Unix(),
-		UpdatedAt:    time.Now().Unix(),
+		Name:      "to-delete",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
 	}
 
 	_, err = db.CreateSelectionSet(set)
@@ -114,10 +109,9 @@ func TestAddToSelectionSet(t *testing.T) {
 
 	// Create set
 	set := &models.SelectionSet{
-		Name:         "file-set",
-		CriteriaType: "user_selected",
-		CreatedAt:    time.Now().Unix(),
-		UpdatedAt:    time.Now().Unix(),
+		Name:      "file-set",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
 	}
 	_, err = db.CreateSelectionSet(set)
 	require.NoError(t, err)
@@ -154,10 +148,9 @@ func TestRemoveFromSelectionSet(t *testing.T) {
 
 	// Create set
 	set := &models.SelectionSet{
-		Name:         "removal-set",
-		CriteriaType: "user_selected",
-		CreatedAt:    time.Now().Unix(),
-		UpdatedAt:    time.Now().Unix(),
+		Name:      "removal-set",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
 	}
 	_, err = db.CreateSelectionSet(set)
 	require.NoError(t, err)
@@ -203,10 +196,9 @@ func TestGetSelectionSetEntries(t *testing.T) {
 
 	// Create set and add entries
 	set := &models.SelectionSet{
-		Name:         "entries-set",
-		CriteriaType: "user_selected",
-		CreatedAt:    time.Now().Unix(),
-		UpdatedAt:    time.Now().Unix(),
+		Name:      "entries-set",
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
 	}
 	_, err = db.CreateSelectionSet(set)
 	require.NoError(t, err)

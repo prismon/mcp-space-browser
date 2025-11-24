@@ -16,14 +16,14 @@ type Entry struct {
 }
 
 // SelectionSet represents a named group of files
+// Pure item storage - only cares about WHAT items and WHEN they were added
 type SelectionSet struct {
-	ID           int64   `db:"id" json:"id,omitempty"`
-	Name         string  `db:"name" json:"name"`
-	Description  *string `db:"description" json:"description,omitempty"`
-	CriteriaType string  `db:"criteria_type" json:"criteria_type"` // "user_selected" or "tool_query"
-	CriteriaJSON *string `db:"criteria_json" json:"criteria_json,omitempty"`
-	CreatedAt    int64   `db:"created_at" json:"created_at"`
-	UpdatedAt    int64   `db:"updated_at" json:"updated_at"`
+	ID          int64   `db:"id" json:"id,omitempty"`
+	Name        string  `db:"name" json:"name"`
+	Description *string `db:"description" json:"description,omitempty"`
+	CreatedAt   int64   `db:"created_at" json:"created_at"`
+	UpdatedAt   int64   `db:"updated_at" json:"updated_at"`
+	// REMOVED: CriteriaType, CriteriaJSON (logic moved to Plans)
 }
 
 // SelectionCriteria defines the criteria for selecting files

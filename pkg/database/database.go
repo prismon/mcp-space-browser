@@ -109,13 +109,11 @@ func (d *DiskDB) init() error {
 		return err
 	}
 
-	// Create selection_sets table
+	// Create selection_sets table (simplified - pure item storage)
 	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS selection_sets (
 		id INTEGER PRIMARY KEY,
 		name TEXT UNIQUE NOT NULL,
 		description TEXT,
-		criteria_type TEXT CHECK(criteria_type IN ('user_selected', 'tool_query')),
-		criteria_json TEXT,
 		created_at INTEGER DEFAULT (strftime('%s', 'now')),
 		updated_at INTEGER DEFAULT (strftime('%s', 'now'))
 	)`); err != nil {
@@ -264,6 +262,87 @@ func (d *DiskDB) init() error {
 	}
 
 	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_rule_outcomes_selection_set ON rule_outcomes(selection_set_id)"); err != nil {
+		return err
+	}
+
+	// Create plans table
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS plans (
+		id INTEGER PRIMARY KEY,
+		name TEXT UNIQUE NOT NULL,
+		description TEXT,
+		mode TEXT CHECK(mode IN ('oneshot', 'continuous')) DEFAULT 'oneshot',
+		status TEXT CHECK(status IN ('active', 'paused', 'disabled')) DEFAULT 'active',
+		sources_json TEXT NOT NULL,
+		conditions_json TEXT,
+		outcomes_json TEXT NOT NULL,
+		created_at INTEGER DEFAULT (strftime('%s', 'now')),
+		updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+		last_run_at INTEGER
+	)`); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(status)"); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_plans_mode ON plans(mode)"); err != nil {
+		return err
+	}
+
+	// Create plan_executions table
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS plan_executions (
+		id INTEGER PRIMARY KEY,
+		plan_id INTEGER NOT NULL,
+		plan_name TEXT NOT NULL,
+		started_at INTEGER NOT NULL,
+		completed_at INTEGER,
+		duration_ms INTEGER,
+		entries_processed INTEGER DEFAULT 0,
+		entries_matched INTEGER DEFAULT 0,
+		outcomes_applied INTEGER DEFAULT 0,
+		status TEXT CHECK(status IN ('running', 'success', 'partial', 'error')) DEFAULT 'running',
+		error_message TEXT,
+		FOREIGN KEY (plan_id) REFERENCES plans(id) ON DELETE CASCADE
+	)`); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_plan_executions_plan ON plan_executions(plan_id)"); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_plan_executions_status ON plan_executions(status)"); err != nil {
+		return err
+	}
+
+	// Create plan_outcome_records table
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS plan_outcome_records (
+		id INTEGER PRIMARY KEY,
+		execution_id INTEGER NOT NULL,
+		plan_id INTEGER NOT NULL,
+		entry_path TEXT NOT NULL,
+		outcome_type TEXT NOT NULL,
+		outcome_data TEXT,
+		status TEXT CHECK(status IN ('success', 'error')) DEFAULT 'success',
+		error_message TEXT,
+		created_at INTEGER DEFAULT (strftime('%s', 'now')),
+		FOREIGN KEY (execution_id) REFERENCES plan_executions(id) ON DELETE CASCADE,
+		FOREIGN KEY (plan_id) REFERENCES plans(id) ON DELETE CASCADE,
+		FOREIGN KEY (entry_path) REFERENCES entries(path) ON DELETE CASCADE
+	)`); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_plan_outcomes_execution ON plan_outcome_records(execution_id)"); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_plan_outcomes_plan ON plan_outcome_records(plan_id)"); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_plan_outcomes_entry ON plan_outcome_records(entry_path)"); err != nil {
 		return err
 	}
 
@@ -1134,13 +1213,12 @@ func (d *DiskDB) GetEntriesByTimeRange(startDate, endDate string, root *string) 
 func (d *DiskDB) CreateSelectionSet(set *models.SelectionSet) (int64, error) {
 	log.WithFields(logrus.Fields{
 		"name": set.Name,
-		"type": set.CriteriaType,
 	}).Info("Creating selection set")
 
 	result, err := d.db.Exec(`
-		INSERT INTO selection_sets (name, description, criteria_type, criteria_json)
-		VALUES (?, ?, ?, ?)
-	`, set.Name, set.Description, set.CriteriaType, set.CriteriaJSON)
+		INSERT INTO selection_sets (name, description)
+		VALUES (?, ?)
+	`, set.Name, set.Description)
 
 	if err != nil {
 		return 0, err
@@ -1152,10 +1230,10 @@ func (d *DiskDB) CreateSelectionSet(set *models.SelectionSet) (int64, error) {
 // GetSelectionSet retrieves a selection set by name
 func (d *DiskDB) GetSelectionSet(name string) (*models.SelectionSet, error) {
 	var set models.SelectionSet
-	var description, criteriaJSON sql.NullString
+	var description sql.NullString
 
-	err := d.db.QueryRow(`SELECT id, name, description, criteria_type, criteria_json, created_at, updated_at FROM selection_sets WHERE name = ?`, name).
-		Scan(&set.ID, &set.Name, &description, &set.CriteriaType, &criteriaJSON, &set.CreatedAt, &set.UpdatedAt)
+	err := d.db.QueryRow(`SELECT id, name, description, created_at, updated_at FROM selection_sets WHERE name = ?`, name).
+		Scan(&set.ID, &set.Name, &description, &set.CreatedAt, &set.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -1167,16 +1245,13 @@ func (d *DiskDB) GetSelectionSet(name string) (*models.SelectionSet, error) {
 	if description.Valid {
 		set.Description = &description.String
 	}
-	if criteriaJSON.Valid {
-		set.CriteriaJSON = &criteriaJSON.String
-	}
 
 	return &set, nil
 }
 
 // ListSelectionSets retrieves all selection sets
 func (d *DiskDB) ListSelectionSets() ([]*models.SelectionSet, error) {
-	rows, err := d.db.Query(`SELECT id, name, description, criteria_type, criteria_json, created_at, updated_at FROM selection_sets ORDER BY created_at DESC`)
+	rows, err := d.db.Query(`SELECT id, name, description, created_at, updated_at FROM selection_sets ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -1185,17 +1260,14 @@ func (d *DiskDB) ListSelectionSets() ([]*models.SelectionSet, error) {
 	var sets []*models.SelectionSet
 	for rows.Next() {
 		var set models.SelectionSet
-		var description, criteriaJSON sql.NullString
+		var description sql.NullString
 
-		if err := rows.Scan(&set.ID, &set.Name, &description, &set.CriteriaType, &criteriaJSON, &set.CreatedAt, &set.UpdatedAt); err != nil {
+		if err := rows.Scan(&set.ID, &set.Name, &description, &set.CreatedAt, &set.UpdatedAt); err != nil {
 			return nil, err
 		}
 
 		if description.Valid {
 			set.Description = &description.String
-		}
-		if criteriaJSON.Valid {
-			set.CriteriaJSON = &criteriaJSON.String
 		}
 
 		sets = append(sets, &set)
