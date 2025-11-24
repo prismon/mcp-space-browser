@@ -367,10 +367,9 @@ func (m *Manager) updateSourceUnlocked(ctx context.Context, config *SourceConfig
 
 // LiveFilesystemConfig holds configuration specific to live filesystem sources
 type LiveFilesystemConfig struct {
-	WatchRecursive bool     `json:"watch_recursive"`    // Watch subdirectories
-	IgnorePatterns []string `json:"ignore_patterns"`    // Glob patterns to ignore
-	DebounceMs     int      `json:"debounce_ms"`       // Debounce delay in milliseconds
-	BatchSize      int      `json:"batch_size"`        // Max events to batch together
+	WatchRecursive bool `json:"watch_recursive"` // Watch subdirectories
+	DebounceMs     int  `json:"debounce_ms"`     // Debounce delay in milliseconds
+	BatchSize      int  `json:"batch_size"`      // Max events to batch together
 }
 
 // MarshalLiveConfig serializes a LiveFilesystemConfig to JSON

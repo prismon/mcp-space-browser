@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -41,7 +40,6 @@ func NewLiveFilesystemSource(config *SourceConfig, db *sql.DB) (*LiveFilesystemS
 		// Use defaults if config is empty
 		liveConfig = &LiveFilesystemConfig{
 			WatchRecursive: true,
-			IgnorePatterns: []string{},
 			DebounceMs:     500,
 			BatchSize:      100,
 		}
@@ -217,11 +215,6 @@ func (s *LiveFilesystemSource) watchLoop(ctx context.Context) {
 
 // handleFsnotifyEvent converts fsnotify events to our internal event format
 func (s *LiveFilesystemSource) handleFsnotifyEvent(event fsnotify.Event) {
-	// Check if path should be ignored
-	if s.shouldIgnore(event.Name) {
-		return
-	}
-
 	s.log.WithFields(logrus.Fields{
 		"path": event.Name,
 		"op":   event.Op.String(),
@@ -418,14 +411,6 @@ func (s *LiveFilesystemSource) performInitialScan() error {
 			return nil // Continue walking
 		}
 
-		// Check if should ignore
-		if s.shouldIgnore(path) {
-			if info.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
 		// Create entry
 		entry := &models.Entry{
 			Path:        path,
@@ -476,35 +461,12 @@ func (s *LiveFilesystemSource) addRecursiveWatches(root string) error {
 			return nil
 		}
 
-		if s.shouldIgnore(path) {
-			return filepath.SkipDir
-		}
-
 		if err := s.watcher.Add(path); err != nil {
 			s.log.WithError(err).WithField("path", path).Warn("Failed to add watch")
 		}
 
 		return nil
 	})
-}
-
-// shouldIgnore checks if a path should be ignored based on patterns
-func (s *LiveFilesystemSource) shouldIgnore(path string) bool {
-	// Check ignore patterns
-	for _, pattern := range s.liveConfig.IgnorePatterns {
-		matched, err := filepath.Match(pattern, filepath.Base(path))
-		if err == nil && matched {
-			return true
-		}
-	}
-
-	// Ignore hidden files/directories (starting with .)
-	base := filepath.Base(path)
-	if strings.HasPrefix(base, ".") && base != "." {
-		return true
-	}
-
-	return false
 }
 
 // Database helper methods

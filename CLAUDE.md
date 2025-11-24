@@ -184,7 +184,6 @@ Create a live source to monitor a directory for changes:
   "type": "live",
   "path": "/home/user/Photos",
   "watch_recursive": true,
-  "ignore_patterns": ["*.tmp", ".DS_Store"],
   "debounce_ms": 500
 }
 ```
@@ -194,5 +193,7 @@ Live sources automatically:
 - Update metadata when files are modified
 - Remove entries when files are deleted
 - Execute rules for automatic classification and processing
+
+Note: Use rules to filter which files to process rather than ignore patterns. This provides more flexibility for conditional processing based on file type, size, path patterns, and other criteria.
 
 See `README.go.md` for complete tool documentation.

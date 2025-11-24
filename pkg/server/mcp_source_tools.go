@@ -83,13 +83,6 @@ func registerSourceCreate(s *server.MCPServer, db *database.DiskDB) {
 					"description": "For live sources: watch subdirectories recursively (default: true)",
 					"default":     true,
 				},
-				"ignore_patterns": map[string]interface{}{
-					"type":        "array",
-					"description": "For live sources: glob patterns to ignore (e.g., ['*.tmp', '*.log'])",
-					"items": map[string]interface{}{
-						"type": "string",
-					},
-				},
 				"debounce_ms": map[string]interface{}{
 					"type":        "integer",
 					"description": "For live sources: debounce delay in milliseconds (default: 500)",
@@ -104,13 +97,12 @@ func registerSourceCreate(s *server.MCPServer, db *database.DiskDB) {
 		}
 
 		var args struct {
-			Name            string   `json:"name"`
-			Type            string   `json:"type"`
-			Path            string   `json:"path"`
-			Enabled         *bool    `json:"enabled"`
-			WatchRecursive  *bool    `json:"watch_recursive"`
-			IgnorePatterns  []string `json:"ignore_patterns"`
-			DebounceMs      *int     `json:"debounce_ms"`
+			Name           string `json:"name"`
+			Type           string `json:"type"`
+			Path           string `json:"path"`
+			Enabled        *bool  `json:"enabled"`
+			WatchRecursive *bool  `json:"watch_recursive"`
+			DebounceMs     *int   `json:"debounce_ms"`
 		}
 
 		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
@@ -134,7 +126,6 @@ func registerSourceCreate(s *server.MCPServer, db *database.DiskDB) {
 		if args.Type == "live" {
 			liveConfig := &sources.LiveFilesystemConfig{
 				WatchRecursive: true,
-				IgnorePatterns: args.IgnorePatterns,
 				DebounceMs:     500,
 				BatchSize:      100,
 			}
