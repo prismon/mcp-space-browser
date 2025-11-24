@@ -153,6 +153,13 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 		mcpOptions...,
 	)
 
+	// Initialize source manager with classifier
+	if err := InitializeSourceManager(db.DB(), nil); err != nil {
+		log.WithError(err).Warn("Failed to initialize source manager")
+	} else {
+		log.Info("Source manager initialized successfully")
+	}
+
 	// Register all MCP tools
 	registerMCPTools(mcpServer, db, dbPath)
 

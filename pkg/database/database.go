@@ -82,6 +82,11 @@ func (d *DiskDB) Close() error {
 	return d.db.Close()
 }
 
+// DB returns the underlying sql.DB instance
+func (d *DiskDB) DB() *sql.DB {
+	return d.db
+}
+
 // init creates all necessary tables and indexes
 func (d *DiskDB) init() error {
 	log.Debug("Creating tables and indexes")
@@ -192,6 +197,30 @@ func (d *DiskDB) init() error {
 	}
 
 	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_metadata_type ON metadata(metadata_type)"); err != nil {
+		return err
+	}
+
+	// Create sources table
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS sources (
+		id INTEGER PRIMARY KEY,
+		name TEXT UNIQUE NOT NULL,
+		type TEXT CHECK(type IN ('manual', 'live', 'scheduled')) NOT NULL,
+		root_path TEXT NOT NULL,
+		config_json TEXT,
+		status TEXT CHECK(status IN ('stopped', 'starting', 'running', 'stopping', 'error')) DEFAULT 'stopped',
+		enabled INTEGER DEFAULT 1,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL,
+		last_error TEXT
+	)`); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_sources_type ON sources(type)"); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_sources_enabled ON sources(enabled)"); err != nil {
 		return err
 	}
 
