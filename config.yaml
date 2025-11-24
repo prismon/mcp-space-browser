@@ -72,4 +72,13 @@ auth:
 
 # Logging settings
 logging:
-  level: "info"  # trace, debug, info, warn, error
+  # Log level controls verbosity (default: info)
+  # Options: trace, debug, info, warn, error, silent
+  # - trace: Most verbose, includes all debug info and detailed traces
+  # - debug: Detailed debugging information including request headers
+  # - info: Standard operational logs
+  # - warn: Warning messages only
+  # - error: Error messages only
+  # - silent: No logging output
+  # Can be overridden with LOG_LEVEL environment variable
+  level: "info"
