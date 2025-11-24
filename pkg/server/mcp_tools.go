@@ -52,6 +52,7 @@ func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 	registerPlanExecute(s, db)
 	registerPlanList(s, db)
 	registerPlanGet(s, db)
+	registerPlanUpdate(s, db)
 	registerPlanDelete(s, db)
 
 	// Session tools
@@ -2106,6 +2107,47 @@ func registerPlanGet(s *server.MCPServer, db *database.DiskDB) {
 			"updated_at":  plan.UpdatedAt,
 			"last_run_at": plan.LastRunAt,
 			"executions":  executions,
+		}
+
+		payload, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerPlanUpdate(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("plan-update",
+		mcp.WithDescription("Update an existing plan"),
+		mcp.WithString("planJson",
+			mcp.Required(),
+			mcp.Description("JSON string containing updated plan definition (must include name field to identify the plan to update)"),
+		),
+	)
+
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			PlanJson string `json:"planJson"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		// Parse plan JSON
+		var plan models.Plan
+		if err := json.Unmarshal([]byte(args.PlanJson), &plan); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid plan JSON: %v", err)), nil
+		}
+
+		// Update plan
+		if err := db.UpdatePlan(&plan); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to update plan: %v", err)), nil
+		}
+
+		result := map[string]interface{}{
+			"name":       plan.Name,
+			"mode":       plan.Mode,
+			"status":     plan.Status,
+			"updated_at": plan.UpdatedAt,
 		}
 
 		payload, _ := json.Marshal(result)
