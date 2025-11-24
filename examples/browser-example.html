@@ -238,14 +238,50 @@
     <div id="entries" class="entries"></div>
   </div>
 
-  <!-- Load from server when running (recommended) -->
-  <!-- <script src="http://localhost:3000/web/mcp-client.js"></script> -->
-
-  <!-- Or load locally for development -->
-  <script src="../mcp-client.js"></script>
   <script>
-    let client = null;
+    let serverUrl = 'http://localhost:3000';
     let currentPath = '/';
+    let requestId = 0;
+
+    /**
+     * Call an MCP tool using JSON-RPC 2.0 protocol
+     */
+    async function callMCPTool(toolName, args) {
+      const request = {
+        jsonrpc: '2.0',
+        id: ++requestId,
+        method: 'tools/call',
+        params: {
+          name: toolName,
+          arguments: args
+        }
+      };
+
+      const response = await fetch(`${serverUrl}/mcp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(request)
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (data.error) {
+        throw new Error(data.error.message || JSON.stringify(data.error));
+      }
+
+      // Parse the text content from MCP response
+      if (data.result && data.result.content && data.result.content[0] && data.result.content[0].text) {
+        return JSON.parse(data.result.content[0].text);
+      }
+
+      return data.result;
+    }
 
     function showStatus(message, type = 'info') {
       const statusEl = document.getElementById('status');
@@ -279,19 +315,14 @@
     }
 
     async function connect() {
-      const serverUrl = document.getElementById('serverUrl').value;
+      serverUrl = document.getElementById('serverUrl').value;
       try {
-        client = new MCPSpaceBrowserClient(serverUrl);
-        const healthy = await client.healthCheck();
-        if (healthy) {
-          showStatus('Connected to server successfully!', 'success');
-          const sessionInfo = await client.getSessionInfo();
-          currentPath = sessionInfo.cwd || '/';
-          document.getElementById('currentPath').textContent = currentPath;
-          document.getElementById('pathInput').value = currentPath;
-        } else {
-          showStatus('Server is not responding', 'error');
-        }
+        // Test connection with session-info
+        const sessionInfo = await callMCPTool('session-info', {});
+        showStatus('Connected to server successfully!', 'success');
+        currentPath = sessionInfo.cwd || '/';
+        document.getElementById('currentPath').textContent = currentPath;
+        document.getElementById('pathInput').value = currentPath;
       } catch (error) {
         showStatus('Failed to connect: ' + error.message, 'error');
       }
@@ -307,14 +338,15 @@
     }
 
     async function navigate(path) {
-      if (!client) {
+      if (!serverUrl) {
         showStatus('Please connect to server first', 'error');
         return;
       }
 
       showLoading(true);
       try {
-        const result = await client.navigate(path, {
+        const result = await callMCPTool('cd', {
+          path: path,
           limit: 100,
           sortBy: 'size',
           order: 'desc'
@@ -381,21 +413,25 @@
         return;
       }
 
-      if (!client) {
+      if (!serverUrl) {
         showStatus('Please connect to server first', 'error');
         return;
       }
 
       try {
         showStatus('Starting indexing...', 'info');
-        const result = await client.index(path, { async: true });
+        const result = await callMCPTool('index', {
+          root: path,
+          async: true
+        });
         showStatus('Indexing started! Job ID: ' + result.jobId, 'success');
 
         // Poll for job completion
-        let completed = false;
         const pollInterval = setInterval(async () => {
           try {
-            const status = await client.getJobProgress(result.jobId);
+            const status = await callMCPTool('job-progress', {
+              jobId: String(result.jobId)
+            });
             showStatus(`Indexing progress: ${status.progress}% (${status.status})`, 'info');
 
             if (status.status === 'completed') {
