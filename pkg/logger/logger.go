@@ -70,3 +70,28 @@ func SetLevel(level logrus.Level) {
 func IsLevelEnabled(level logrus.Level) bool {
 	return defaultLogger.IsLevelEnabled(level)
 }
+
+// ConfigureFromString configures the logger from a string level
+// This is useful for applying configuration from config files
+func ConfigureFromString(levelStr string) error {
+	// Check if we're in test mode - test mode takes precedence
+	isTest := os.Getenv("GO_ENV") == "test"
+	if isTest {
+		defaultLogger.SetOutput(os.NewFile(0, os.DevNull))
+		return nil
+	}
+
+	// Handle silent mode
+	if levelStr == "silent" {
+		defaultLogger.SetOutput(os.NewFile(0, os.DevNull))
+		return nil
+	}
+
+	// Parse and set log level
+	level, err := logrus.ParseLevel(strings.ToLower(levelStr))
+	if err != nil {
+		return err
+	}
+	defaultLogger.SetLevel(level)
+	return nil
+}

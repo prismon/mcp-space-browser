@@ -477,6 +477,14 @@ func runServer(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error: Failed to load configuration: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Configure logger from config (environment variables already override config.Logging.Level)
+	if err := logger.ConfigureFromString(config.Logging.Level); err != nil {
+		log.WithError(err).Warn("Invalid log level in configuration, using default")
+	} else {
+		log.WithField("level", config.Logging.Level).Debug("Logger configured from config")
+	}
+
 	// Determine the external host if not specified
 	effectiveExternalHost := externalHost
 	if effectiveExternalHost == "" {
