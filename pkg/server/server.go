@@ -94,6 +94,28 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 		userAgent := c.GetHeader("User-Agent")
 		referer := c.GetHeader("Referer")
 
+		// Determine the original client IP with priority:
+		// 1. X-Real-IP (set by reverse proxies like Traefik)
+		// 2. First IP in X-Forwarded-For chain
+		// 3. RemoteAddr as fallback
+		clientIP := remoteAddr
+		if realIP != "" {
+			clientIP = realIP
+		} else if forwardedFor != "" {
+			// X-Forwarded-For can contain multiple IPs: "client, proxy1, proxy2"
+			// The first IP is typically the original client
+			for i := 0; i < len(forwardedFor); i++ {
+				if forwardedFor[i] == ',' {
+					clientIP = forwardedFor[:i]
+					break
+				}
+			}
+			if clientIP == remoteAddr {
+				// No comma found, use entire value
+				clientIP = forwardedFor
+			}
+		}
+
 		// Determine if traffic is being forwarded by an external host
 		isForwarded := realIP != "" || forwardedFor != "" || forwardedHost != ""
 
@@ -102,6 +124,7 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 			"method":     c.Request.Method,
 			"path":       path,
 			"query":      query,
+			"clientIP":   clientIP,
 			"remoteAddr": remoteAddr,
 			"userAgent":  userAgent,
 		}
@@ -128,9 +151,9 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 			logFields["referer"] = referer
 		}
 
-		// Log incoming request
+		// Log incoming request with clear indication of client IP
 		if isForwarded {
-			log.WithFields(logFields).Info("Incoming request (forwarded by external host)")
+			log.WithFields(logFields).Info("Incoming request (forwarded by proxy)")
 		} else {
 			log.WithFields(logFields).Info("Incoming request (direct)")
 		}
@@ -151,14 +174,14 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 
 		duration := time.Since(startTime)
 		responseFields := logrus.Fields{
-			"method":     c.Request.Method,
-			"path":       path,
-			"status":     c.Writer.Status(),
-			"duration":   duration.Milliseconds(),
-			"remoteAddr": remoteAddr,
+			"method":   c.Request.Method,
+			"path":     path,
+			"status":   c.Writer.Status(),
+			"duration": duration.Milliseconds(),
+			"clientIP": clientIP,
 		}
-		if isForwarded && realIP != "" {
-			responseFields["realIP"] = realIP
+		if isForwarded {
+			responseFields["forwarded"] = true
 		}
 		log.WithFields(responseFields).Info("Request completed")
 	})
