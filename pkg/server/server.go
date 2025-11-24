@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prismon/mcp-space-browser/pkg/auth"
+	"github.com/prismon/mcp-space-browser/pkg/classifier"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
 	"github.com/sirupsen/logrus"
@@ -188,8 +189,20 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 		log.Info("Source manager initialized successfully")
 	}
 
+	// Initialize classifier processor
+	classifierProcessor := classifier.NewProcessor(&classifier.ProcessorConfig{
+		CacheDir:          config.Cache.Dir,
+		ClassifierManager: classifier.NewManager(),
+		MetadataManager:   classifier.NewMetadataManager(),
+		Database:          db,
+	})
+	log.Info("Classifier processor initialized")
+
 	// Register all MCP tools
 	registerMCPTools(mcpServer, db, dbPath)
+
+	// Register classifier tools
+	registerClassifierTools(mcpServer, db, classifierProcessor)
 
 	// Register all MCP resources
 	registerMCPResources(mcpServer, db)
