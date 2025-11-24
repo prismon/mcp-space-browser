@@ -79,27 +79,88 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 		log.Info("Protected Resource Metadata endpoint registered at /.well-known/oauth-protected-resource")
 	}
 
-	// Middleware for logging
+	// Middleware for logging with detailed traffic information
 	router.Use(func(c *gin.Context) {
 		startTime := time.Now()
 		path := c.Request.URL.Path
 		query := c.Request.URL.RawQuery
 
-		log.WithFields(logrus.Fields{
-			"method": c.Request.Method,
-			"path":   path,
-			"query":  query,
-		}).Info("Incoming request")
+		// Extract client IP and forwarding information
+		remoteAddr := c.Request.RemoteAddr
+		realIP := c.GetHeader("X-Real-IP")
+		forwardedFor := c.GetHeader("X-Forwarded-For")
+		forwardedProto := c.GetHeader("X-Forwarded-Proto")
+		forwardedHost := c.GetHeader("X-Forwarded-Host")
+		userAgent := c.GetHeader("User-Agent")
+		referer := c.GetHeader("Referer")
+
+		// Determine if traffic is being forwarded by an external host
+		isForwarded := realIP != "" || forwardedFor != "" || forwardedHost != ""
+
+		// Build log fields for incoming request
+		logFields := logrus.Fields{
+			"method":     c.Request.Method,
+			"path":       path,
+			"query":      query,
+			"remoteAddr": remoteAddr,
+			"userAgent":  userAgent,
+		}
+
+		// Add forwarding information if present
+		if isForwarded {
+			logFields["forwarded"] = true
+			if realIP != "" {
+				logFields["realIP"] = realIP
+			}
+			if forwardedFor != "" {
+				logFields["forwardedFor"] = forwardedFor
+			}
+			if forwardedProto != "" {
+				logFields["forwardedProto"] = forwardedProto
+			}
+			if forwardedHost != "" {
+				logFields["forwardedHost"] = forwardedHost
+			}
+		}
+
+		// Add referer if present
+		if referer != "" {
+			logFields["referer"] = referer
+		}
+
+		// Log incoming request
+		if isForwarded {
+			log.WithFields(logFields).Info("Incoming request (forwarded by external host)")
+		} else {
+			log.WithFields(logFields).Info("Incoming request (direct)")
+		}
+
+		// Verbose logging at DEBUG level with all headers
+		if logger.IsLevelEnabled(logrus.DebugLevel) {
+			headerFields := logrus.Fields{
+				"method": c.Request.Method,
+				"path":   path,
+			}
+			for key, values := range c.Request.Header {
+				headerFields["header_"+key] = values
+			}
+			log.WithFields(headerFields).Debug("Request headers (verbose)")
+		}
 
 		c.Next()
 
 		duration := time.Since(startTime)
-		log.WithFields(logrus.Fields{
-			"method":   c.Request.Method,
-			"path":     path,
-			"status":   c.Writer.Status(),
-			"duration": duration.Milliseconds(),
-		}).Info("Request completed")
+		responseFields := logrus.Fields{
+			"method":     c.Request.Method,
+			"path":       path,
+			"status":     c.Writer.Status(),
+			"duration":   duration.Milliseconds(),
+			"remoteAddr": remoteAddr,
+		}
+		if isForwarded && realIP != "" {
+			responseFields["realIP"] = realIP
+		}
+		log.WithFields(responseFields).Info("Request completed")
 	})
 
 	// Configure Swagger host dynamically based on config
