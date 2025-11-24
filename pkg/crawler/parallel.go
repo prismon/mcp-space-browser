@@ -3,7 +3,6 @@ package crawler
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -13,17 +12,20 @@ import (
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
 	"github.com/prismon/mcp-space-browser/pkg/queue"
+	"github.com/prismon/mcp-space-browser/pkg/source"
 	"github.com/sirupsen/logrus"
 )
 
-// ParallelIndexer performs parallel filesystem indexing using a worker pool
+// ParallelIndexer performs parallel indexing using a worker pool
 type ParallelIndexer struct {
 	root        string
+	src         source.Source
 	db          *database.DiskDB
 	pool        *queue.WorkerPool
 	runID       int64
 	jobID       int64
 	opts        *ParallelIndexOptions
+	tracker     *source.ProgressTracker
 
 	// Stats
 	filesProcessed       atomic.Int64
@@ -58,17 +60,24 @@ func DefaultParallelIndexOptions() *ParallelIndexOptions {
 	}
 }
 
-// IndexParallel performs filesystem indexing using parallel workers
-func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions) (*IndexStats, error) {
+// IndexParallel performs indexing using parallel workers with a source interface
+// If src is nil, a default FileSystemSource will be used
+func IndexParallel(root string, db *database.DiskDB, src source.Source, opts *ParallelIndexOptions) (*IndexStats, error) {
 	startTime := time.Now()
 
 	if opts == nil {
 		opts = DefaultParallelIndexOptions()
 	}
 
-	abs, err := filepath.Abs(root)
+	// Use default filesystem source if none provided
+	if src == nil {
+		src = source.NewFileSystemSource()
+		defer src.Close()
+	}
+
+	abs, err := source.ValidatePath(root)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve absolute path: %w", err)
+		return nil, err
 	}
 
 	// Acquire indexing lock to prevent concurrent indexing operations
@@ -78,6 +87,31 @@ func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions)
 	defer db.UnlockIndexing()
 
 	runID := time.Now().Unix()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	log.WithFields(logrus.Fields{
+		"root":       abs,
+		"runID":      runID,
+		"sourceType": src.Name(),
+	}).Info("Starting parallel index operation")
+
+	// Phase 1: Estimate total size
+	log.WithField("root", abs).Info("Estimating total items to index")
+	totalEstimate, err := src.EstimateSize(ctx, abs)
+	if err != nil {
+		log.WithError(err).Warn("Failed to estimate size, using default")
+		totalEstimate = 1000
+	}
+
+	log.WithFields(logrus.Fields{
+		"root":     abs,
+		"estimate": totalEstimate,
+	}).Info("Estimation complete")
+
+	// Create progress tracker
+	tracker := source.NewProgressTracker(totalEstimate)
+	tracker.SetPhase("crawling")
 
 	// Create job in database
 	jobID, err := db.CreateIndexJob(abs, &database.IndexJobMetadata{
@@ -91,16 +125,26 @@ func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions)
 		return nil, fmt.Errorf("failed to start index job: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// Update job progress: estimation complete (5%)
+	if err := db.UpdateIndexJobProgress(jobID, 5, &database.IndexJobMetadata{
+		FilesProcessed:       0,
+		DirectoriesProcessed: 0,
+		TotalSize:            0,
+		ErrorCount:           0,
+		WorkerCount:          opts.WorkerCount,
+	}); err != nil {
+		log.WithError(err).WithField("jobID", jobID).Error("Failed to update job progress")
+	}
 
 	indexer := &ParallelIndexer{
 		root:      abs,
+		src:       src,
 		db:        db,
 		pool:      queue.NewWorkerPool(opts.WorkerCount, opts.QueueSize),
 		runID:     runID,
 		jobID:     jobID,
 		opts:      opts,
+		tracker:   tracker,
 		batch:     make([]*models.Entry, 0, opts.BatchSize),
 		batchSize: opts.BatchSize,
 		ctx:       ctx,
@@ -108,13 +152,14 @@ func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions)
 	}
 
 	log.WithFields(logrus.Fields{
-		"root":        abs,
-		"runID":       runID,
-		"jobID":       jobID,
-		"workerCount": opts.WorkerCount,
-		"queueSize":   opts.QueueSize,
-		"batchSize":   opts.BatchSize,
-	}).Info("Starting parallel filesystem index")
+		"root":           abs,
+		"runID":          runID,
+		"jobID":          jobID,
+		"workerCount":    opts.WorkerCount,
+		"queueSize":      opts.QueueSize,
+		"batchSize":      opts.BatchSize,
+		"estimatedItems": totalEstimate,
+	}).Info("Starting parallel crawl phase")
 
 	// Start worker pool
 	indexer.pool.Start()
@@ -178,7 +223,52 @@ func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions)
 		"runID":                runID,
 	}).Info("Filesystem scan complete")
 
-	// Update job metadata
+	// Phase 3: Cleanup - Delete stale entries (85-90%)
+	tracker.SetPhase("cleanup")
+	log.WithFields(logrus.Fields{
+		"root":  abs,
+		"runID": runID,
+	}).Info("Deleting stale entries")
+
+	if err := db.UpdateIndexJobProgress(jobID, 87, &database.IndexJobMetadata{
+		FilesProcessed:       int(filesProcessed),
+		DirectoriesProcessed: int(directoriesProcessed),
+		TotalSize:            totalSize,
+		ErrorCount:           int(errorCount),
+		WorkerCount:          opts.WorkerCount,
+	}); err != nil {
+		log.WithError(err).Error("Failed to update job progress")
+	}
+
+	if err := db.DeleteStale(abs, runID); err != nil {
+		db.UpdateIndexJobStatus(jobID, "failed", stringPtr(err.Error()))
+		return nil, fmt.Errorf("failed to delete stale entries: %w", err)
+	}
+
+	// Phase 4: Aggregation - Compute aggregate sizes (90-100%)
+	tracker.SetPhase("aggregation")
+	log.WithField("root", abs).Info("Computing aggregate sizes")
+
+	if err := db.UpdateIndexJobProgress(jobID, 92, &database.IndexJobMetadata{
+		FilesProcessed:       int(filesProcessed),
+		DirectoriesProcessed: int(directoriesProcessed),
+		TotalSize:            totalSize,
+		ErrorCount:           int(errorCount),
+		WorkerCount:          opts.WorkerCount,
+	}); err != nil {
+		log.WithError(err).Error("Failed to update job progress")
+	}
+
+	if err := db.ComputeAggregates(abs); err != nil {
+		db.UpdateIndexJobStatus(jobID, "failed", stringPtr(err.Error()))
+		return nil, fmt.Errorf("failed to compute aggregates: %w", err)
+	}
+
+	// Complete
+	tracker.SetPhase("complete")
+	endTime := time.Now()
+
+	// Update job progress to 100%
 	if err := db.UpdateIndexJobProgress(jobID, 100, &database.IndexJobMetadata{
 		FilesProcessed:       int(filesProcessed),
 		DirectoriesProcessed: int(directoriesProcessed),
@@ -189,29 +279,11 @@ func IndexParallel(root string, db *database.DiskDB, opts *ParallelIndexOptions)
 		log.WithError(err).Error("Failed to update job progress")
 	}
 
-	log.WithFields(logrus.Fields{
-		"root":  abs,
-		"runID": runID,
-	}).Debug("Deleting stale entries")
-
-	if err := db.DeleteStale(abs, runID); err != nil {
-		db.UpdateIndexJobStatus(jobID, "failed", stringPtr(err.Error()))
-		return nil, fmt.Errorf("failed to delete stale entries: %w", err)
-	}
-
-	log.WithField("root", abs).Debug("Computing aggregate sizes")
-
-	if err := db.ComputeAggregates(abs); err != nil {
-		db.UpdateIndexJobStatus(jobID, "failed", stringPtr(err.Error()))
-		return nil, fmt.Errorf("failed to compute aggregates: %w", err)
-	}
-
 	// Mark job as completed
 	if err := db.UpdateIndexJobStatus(jobID, "completed", nil); err != nil {
 		log.WithError(err).Error("Failed to update job status")
 	}
 
-	endTime := time.Now()
 	stats := &IndexStats{
 		FilesProcessed:       int(filesProcessed),
 		DirectoriesProcessed: int(directoriesProcessed),
@@ -242,12 +314,18 @@ func (pi *ParallelIndexer) reportProgress(stop chan struct{}) {
 			filesProcessed := pi.filesProcessed.Load()
 			directoriesProcessed := pi.directoriesProcessed.Load()
 
+			// Update tracker with queue size
+			pi.tracker.SetQueuedItems(poolStats.JobsQueued)
+
+			estimate := pi.tracker.GetEstimate()
+
 			log.WithFields(logrus.Fields{
 				"filesProcessed":       filesProcessed,
 				"directoriesProcessed": directoriesProcessed,
 				"jobsQueued":           poolStats.JobsQueued,
 				"jobsProcessed":        poolStats.JobsProcessed,
 				"jobsFailed":           poolStats.JobsFailed,
+				"percentComplete":      estimate.PercentComplete(),
 			}).Info("Index progress")
 
 			// Call progress callback if provided
@@ -261,16 +339,8 @@ func (pi *ParallelIndexer) reportProgress(stop chan struct{}) {
 				pi.opts.ProgressCallback(indexStats, int(poolStats.JobsQueued))
 			}
 
-			// Calculate progress based on worker pool activity
-			// Progress is estimated as: (jobs completed / (jobs completed + jobs queued)) * 90
-			// We cap at 90% because final steps (cleanup, aggregation) aren't tracked
-			progress := 10 // Start at 10% (indexing started)
-			totalJobs := poolStats.JobsProcessed + poolStats.JobsQueued
-			if totalJobs > 0 {
-				// Progress from 10% to 90% based on job completion
-				completionRatio := float64(poolStats.JobsProcessed) / float64(totalJobs)
-				progress = 10 + int(completionRatio*80)
-			}
+			// Use progress tracker for accurate percentage
+			progress := pi.tracker.GetPercentComplete()
 
 			// Update job progress in database with accurate calculation
 			if err := pi.db.UpdateIndexJobProgress(pi.jobID, progress, &database.IndexJobMetadata{
@@ -368,9 +438,13 @@ func (j *DirectoryScanJob) Execute(ctx context.Context) error {
 	default:
 	}
 
-	info, err := os.Stat(j.path)
+	// Update tracker
+	j.indexer.tracker.SetCurrentPath(j.path)
+
+	info, err := j.indexer.src.Stat(ctx, j.path)
 	if err != nil {
 		j.indexer.errors.Add(1)
+		j.indexer.tracker.IncrementErrors()
 		log.WithFields(logrus.Fields{
 			"path":  j.path,
 			"error": err,
@@ -406,6 +480,7 @@ func (j *DirectoryScanJob) Execute(ctx context.Context) error {
 	// Add to batch for writing
 	if err := j.indexer.addToBatch(entry); err != nil {
 		j.indexer.errors.Add(1)
+		j.indexer.tracker.IncrementErrors()
 		log.WithFields(logrus.Fields{
 			"path":  j.path,
 			"error": err,
@@ -415,10 +490,12 @@ func (j *DirectoryScanJob) Execute(ctx context.Context) error {
 
 	if isDir {
 		j.indexer.directoriesProcessed.Add(1)
+		j.indexer.tracker.IncrementDirectories()
 
-		children, err := os.ReadDir(j.path)
+		children, err := j.indexer.src.ReadDir(ctx, j.path)
 		if err != nil {
 			j.indexer.errors.Add(1)
+			j.indexer.tracker.IncrementErrors()
 			log.WithFields(logrus.Fields{
 				"path":  j.path,
 				"error": err,
@@ -435,7 +512,7 @@ func (j *DirectoryScanJob) Execute(ctx context.Context) error {
 
 		// Submit child directories and files as separate jobs
 		for _, child := range children {
-			childPath := filepath.Join(j.path, child.Name())
+			childPath := source.GetFullPath(j.path, child)
 			childJob := &DirectoryScanJob{
 				path:    childPath,
 				indexer: j.indexer,
@@ -451,6 +528,7 @@ func (j *DirectoryScanJob) Execute(ctx context.Context) error {
 	} else {
 		j.indexer.filesProcessed.Add(1)
 		j.indexer.totalSize.Add(info.Size())
+		j.indexer.tracker.IncrementFiles(info.Size())
 
 		if logger.IsLevelEnabled(logrus.TraceLevel) {
 			log.WithFields(logrus.Fields{

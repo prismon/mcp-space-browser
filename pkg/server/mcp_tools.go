@@ -387,7 +387,7 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 				}
 
 				// Run the indexing with job tracking
-				stats, err := crawler.Index(expandedPath, db, jobID, nil)
+				stats, err := crawler.Index(expandedPath, db, nil, jobID, nil)
 
 				// Update job with final status
 				if err != nil {
@@ -440,7 +440,7 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid path: %v", err)), nil
 		}
 
-		stats, err := crawler.Index(expandedPath, db, 0, nil)
+		stats, err := crawler.Index(expandedPath, db, nil, 0, nil)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Indexing failed: %v", err)), nil
 		}
