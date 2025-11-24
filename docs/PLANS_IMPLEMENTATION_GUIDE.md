@@ -41,9 +41,10 @@ type Plan struct {
     LastRunAt      *int64  `db:"last_run_at" json:"last_run_at,omitempty"`
 
     // Parsed fields (populated after JSON unmarshaling)
-    Sources    []PlanSource   `db:"-" json:"sources"`
-    Conditions *PlanCondition `db:"-" json:"conditions,omitempty"`
-    Outcomes   []PlanOutcome  `db:"-" json:"outcomes"`
+    // IMPORTANT: Reuses RuleCondition and RuleOutcome from existing rules system (models.RuleCondition, models.RuleOutcome)
+    Sources    []PlanSource         `db:"-" json:"sources"`
+    Conditions *models.RuleCondition `db:"-" json:"conditions,omitempty"`
+    Outcomes   []models.RuleOutcome  `db:"-" json:"outcomes"`
 }
 
 // PlanSource defines where to get files
@@ -63,39 +64,10 @@ type CharacteristicGenerator struct {
     Params map[string]interface{} `json:"params,omitempty"`
 }
 
-// PlanCondition defines filtering logic (tree structure)
-type PlanCondition struct {
-    // Logical operators (branch nodes)
-    Type       string            `json:"type"` // "all", "any", "none"
-    Conditions []*PlanCondition  `json:"conditions,omitempty"`
-
-    // File attribute filters (leaf nodes)
-    MediaType    *string  `json:"media_type,omitempty"`
-    MinSize      *int64   `json:"min_size,omitempty"`
-    MaxSize      *int64   `json:"max_size,omitempty"`
-    MinMtime     *int64   `json:"min_mtime,omitempty"`
-    MaxMtime     *int64   `json:"max_mtime,omitempty"`
-    PathContains *string  `json:"path_contains,omitempty"`
-    PathPrefix   *string  `json:"path_prefix,omitempty"`
-    PathSuffix   *string  `json:"path_suffix,omitempty"`
-    PathPattern  *string  `json:"path_pattern,omitempty"` // Regex
-    Extensions   []string `json:"extensions,omitempty"`
-
-    // Custom characteristic filters (future)
-    CharacteristicType  *string `json:"characteristic_type,omitempty"`
-    CharacteristicValue *string `json:"characteristic_value,omitempty"`
-}
-
-// PlanOutcome defines actions to take
-type PlanOutcome struct {
-    Type             string                 `json:"type"` // "selection_set", "classifier", "export"
-    SelectionSetName *string                `json:"selection_set_name,omitempty"`
-    Operation        *string                `json:"operation,omitempty"` // "add", "remove", "replace"
-    ClassifierType   *string                `json:"classifier_type,omitempty"`
-    ClassifierParams map[string]interface{} `json:"classifier_params,omitempty"`
-    ExportPath       *string                `json:"export_path,omitempty"`
-    ExportFormat     *string                `json:"export_format,omitempty"`
-}
+// NOTE: Plans reuse RuleCondition and RuleOutcome from internal/models/models.go
+// No need to define PlanCondition or PlanOutcome - just use the existing types:
+//   - models.RuleCondition (for filtering logic)
+//   - models.RuleOutcome (for actions to take)
 
 // PlanExecution tracks individual plan runs
 type PlanExecution struct {
@@ -226,37 +198,8 @@ func (ps *PlanSource) Validate() error {
     return nil
 }
 
-// Validate checks if PlanOutcome is properly configured
-func (po *PlanOutcome) Validate() error {
-    switch po.Type {
-    case "selection_set":
-        if po.SelectionSetName == nil || *po.SelectionSetName == "" {
-            return fmt.Errorf("selection_set outcome requires selection_set_name")
-        }
-        if po.Operation == nil {
-            return fmt.Errorf("selection_set outcome requires operation")
-        }
-        if *po.Operation != "add" && *po.Operation != "remove" && *po.Operation != "replace" {
-            return fmt.Errorf("operation must be 'add', 'remove', or 'replace'")
-        }
-    case "classifier":
-        if po.ClassifierType == nil || *po.ClassifierType == "" {
-            return fmt.Errorf("classifier outcome requires classifier_type")
-        }
-    case "export":
-        if po.ExportPath == nil || *po.ExportPath == "" {
-            return fmt.Errorf("export outcome requires export_path")
-        }
-    default:
-        return fmt.Errorf("invalid outcome type: %s", po.Type)
-    }
-    return nil
-}
-
-// IsLeaf returns true if this is a leaf condition (not a logical operator)
-func (pc *PlanCondition) IsLeaf() bool {
-    return pc.Type != "all" && pc.Type != "any" && pc.Type != "none"
-}
+// NOTE: Outcome validation is handled by existing RuleOutcome validation logic
+// NOTE: Condition type checking is handled by ConditionEvaluator logic
 ```
 
 ---
@@ -545,7 +488,7 @@ func (d *DiskDB) GetPlanExecutions(planName string, limit int) ([]*models.PlanEx
 }
 
 // RecordPlanOutcome creates an outcome record
-func (d *DiskDB) RecordPlanOutcome(record *models.PlanOutcomeRecord) error {
+func (d *DiskDB) RecordPlanOutcome(record *models.RuleOutcomeRecord) error {
     record.CreatedAt = time.Now().Unix()
 
     query := `INSERT INTO plan_outcome_records (execution_id, plan_id, entry_path, outcome_type, outcome_data, status, error_message, created_at)
@@ -825,7 +768,7 @@ func (e *Executor) resolveQuerySource(source models.PlanSource) ([]*models.Entry
 }
 
 // filterEntries evaluates conditions and returns matching entries
-func (e *Executor) filterEntries(entries []*models.Entry, condition *models.PlanCondition) ([]*models.Entry, error) {
+func (e *Executor) filterEntries(entries []*models.Entry, condition *models.RuleCondition) ([]*models.Entry, error) {
     var matched []*models.Entry
 
     for _, entry := range entries {
@@ -872,7 +815,7 @@ func NewConditionEvaluator(logger *logrus.Entry) *ConditionEvaluator {
 }
 
 // Evaluate checks if an entry matches the condition tree
-func (ce *ConditionEvaluator) Evaluate(entry *models.Entry, condition *models.PlanCondition) (bool, error) {
+func (ce *ConditionEvaluator) Evaluate(entry *models.Entry, condition *models.RuleCondition) (bool, error) {
     if condition == nil {
         return true, nil // No condition = always match
     }
@@ -889,7 +832,7 @@ func (ce *ConditionEvaluator) Evaluate(entry *models.Entry, condition *models.Pl
     }
 }
 
-func (ce *ConditionEvaluator) evaluateAll(entry *models.Entry, conditions []*models.PlanCondition) (bool, error) {
+func (ce *ConditionEvaluator) evaluateAll(entry *models.Entry, conditions []*models.RuleCondition) (bool, error) {
     for _, cond := range conditions {
         match, err := ce.Evaluate(entry, cond)
         if err != nil {
@@ -902,7 +845,7 @@ func (ce *ConditionEvaluator) evaluateAll(entry *models.Entry, conditions []*mod
     return true, nil
 }
 
-func (ce *ConditionEvaluator) evaluateAny(entry *models.Entry, conditions []*models.PlanCondition) (bool, error) {
+func (ce *ConditionEvaluator) evaluateAny(entry *models.Entry, conditions []*models.RuleCondition) (bool, error) {
     for _, cond := range conditions {
         match, err := ce.Evaluate(entry, cond)
         if err != nil {
@@ -915,7 +858,7 @@ func (ce *ConditionEvaluator) evaluateAny(entry *models.Entry, conditions []*mod
     return false, nil
 }
 
-func (ce *ConditionEvaluator) evaluateNone(entry *models.Entry, conditions []*models.PlanCondition) (bool, error) {
+func (ce *ConditionEvaluator) evaluateNone(entry *models.Entry, conditions []*models.RuleCondition) (bool, error) {
     for _, cond := range conditions {
         match, err := ce.Evaluate(entry, cond)
         if err != nil {
@@ -928,7 +871,7 @@ func (ce *ConditionEvaluator) evaluateNone(entry *models.Entry, conditions []*mo
     return true, nil
 }
 
-func (ce *ConditionEvaluator) evaluateLeaf(entry *models.Entry, condition *models.PlanCondition) (bool, error) {
+func (ce *ConditionEvaluator) evaluateLeaf(entry *models.Entry, condition *models.RuleCondition) (bool, error) {
     // Size filters
     if condition.MinSize != nil && entry.Size < *condition.MinSize {
         return false, nil
@@ -1017,7 +960,7 @@ func NewOutcomeApplier(db *database.DiskDB, logger *logrus.Entry) *OutcomeApplie
 }
 
 // ApplyAll applies all outcomes to matched entries
-func (oa *OutcomeApplier) ApplyAll(entries []*models.Entry, outcomes []models.PlanOutcome, execID, planID int64) (int, error) {
+func (oa *OutcomeApplier) ApplyAll(entries []*models.Entry, outcomes []models.RuleOutcome, execID, planID int64) (int, error) {
     totalApplied := 0
 
     for i, outcome := range outcomes {
@@ -1033,7 +976,7 @@ func (oa *OutcomeApplier) ApplyAll(entries []*models.Entry, outcomes []models.Pl
 }
 
 // Apply executes a single outcome on matched entries
-func (oa *OutcomeApplier) Apply(entries []*models.Entry, outcome models.PlanOutcome, execID, planID int64) (int, error) {
+func (oa *OutcomeApplier) Apply(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) (int, error) {
     switch outcome.Type {
     case "selection_set":
         return oa.applySelectionSet(entries, outcome, execID, planID)
@@ -1044,12 +987,9 @@ func (oa *OutcomeApplier) Apply(entries []*models.Entry, outcome models.PlanOutc
     }
 }
 
-func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome models.PlanOutcome, execID, planID int64) (int, error) {
-    if outcome.SelectionSetName == nil {
-        return 0, fmt.Errorf("selection_set_name is required")
-    }
-
-    setName := *outcome.SelectionSetName
+func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) (int, error) {
+    // RuleOutcome.SelectionSetName is always required (string, not *string)
+    setName := outcome.SelectionSetName
     paths := make([]string, len(entries))
     for i, entry := range entries {
         paths[i] = entry.Path
@@ -1104,7 +1044,7 @@ func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome mod
             "operation":     *outcome.Operation,
         })
 
-        record := &models.PlanOutcomeRecord{
+        record := &models.RuleOutcomeRecord{
             ExecutionID: execID,
             PlanID:      planID,
             EntryPath:   entry.Path,
@@ -1124,7 +1064,7 @@ func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome mod
     return len(entries), nil
 }
 
-func (oa *OutcomeApplier) applyClassifier(entries []*models.Entry, outcome models.PlanOutcome, execID, planID int64) (int, error) {
+func (oa *OutcomeApplier) applyClassifier(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) (int, error) {
     // TODO: Implement classifier outcomes (thumbnail generation, metadata extraction, etc.)
     oa.logger.Warnf("Classifier outcomes not yet implemented: %s", *outcome.ClassifierType)
     return 0, nil
@@ -1163,7 +1103,7 @@ func TestEvaluateLeaf_SizeFilter(t *testing.T) {
     }
 
     minSize := int64(1024 * 1024 * 50) // 50MB
-    condition := &models.PlanCondition{
+    condition := &models.RuleCondition{
         Type:    "size",
         MinSize: &minSize,
     }
@@ -1185,9 +1125,9 @@ func TestEvaluateAll(t *testing.T) {
 
     minSize := int64(1024 * 1024 * 100)
     pathPrefix := "/videos"
-    condition := &models.PlanCondition{
+    condition := &models.RuleCondition{
         Type: "all",
-        Conditions: []*models.PlanCondition{
+        Conditions: []*models.RuleCondition{
             {MinSize: &minSize},
             {PathPrefix: &pathPrefix},
         },
@@ -1248,11 +1188,11 @@ func TestExecutePlan_OneShot(t *testing.T) {
                 Paths: []string{tmpDir},
             },
         },
-        Conditions: &models.PlanCondition{
+        Conditions: &models.RuleCondition{
             Type:    "size",
             MinSize: &minSize,
         },
-        Outcomes: []models.PlanOutcome{
+        Outcomes: []models.RuleOutcome{
             {
                 Type:             "selection_set",
                 SelectionSetName: &setName,

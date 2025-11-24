@@ -2,6 +2,17 @@
 
 This document shows the transformation from the old bespoke selection-set approach to the new Plans-based architecture.
 
+## Key Design Principles
+
+1. **Selection Sets = Pure Item Storage**
+   - Only care about WHAT items are in the set and WHEN they were added
+   - Don't care HOW items got selected (no logic, no criteria)
+
+2. **Reuse Existing Rule Types**
+   - Plans use `RuleCondition` (from internal/models/models.go) for filtering logic
+   - Plans use `RuleOutcome` (from internal/models/models.go) for actions
+   - No duplication - leverage existing, tested types
+
 ## Before vs. After Comparison
 
 ### Old Approach: Bespoke Selection Sets
@@ -45,17 +56,22 @@ type Plan struct {
     ID             int64
     Name           string
     Mode           string  // "oneshot" or "continuous"
-    Sources        []PlanSource     // WHERE to get files
-    Conditions     *PlanCondition   // HOW to filter
-    Outcomes       []PlanOutcome    // WHAT to do with matches
+    Sources        []PlanSource          // WHERE to get files
+    Conditions     *models.RuleCondition // HOW to filter (reuses existing type)
+    Outcomes       []models.RuleOutcome  // WHAT to do with matches (reuses existing type)
 }
 
-// Selection sets are pure storage
+// Selection sets are pure storage - they only care about:
+// 1. WHAT items are in the set (paths)
+// 2. WHEN items were added (timestamp in selection_set_entries)
+// They don't care HOW items got selected
 type SelectionSet struct {
     ID          int64
     Name        string
     Description *string
-    // NO criteria fields!
+    CreatedAt   int64
+    UpdatedAt   int64
+    // REMOVED: CriteriaType, CriteriaJSON (moved to Plans)
 }
 
 // Creating a plan that populates a selection set

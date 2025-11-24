@@ -69,11 +69,11 @@ type Plan struct {
     // Source configuration
     SourcesJSON string    `db:"sources_json" json:"-"`               // JSON array of PlanSource
 
-    // Filtering/eligibility logic
-    ConditionsJSON string `db:"conditions_json" json:"-"`            // JSON of PlanCondition (tree)
+    // Filtering/eligibility logic (reuses RuleCondition)
+    ConditionsJSON *string `db:"conditions_json" json:"-"`           // JSON of RuleCondition (tree)
 
-    // What to do with matching entries
-    OutcomesJSON   string `db:"outcomes_json" json:"-"`              // JSON array of PlanOutcome
+    // What to do with matching entries (reuses RuleOutcome)
+    OutcomesJSON   string `db:"outcomes_json" json:"-"`              // JSON array of RuleOutcome
 
     // Metadata
     CreatedAt   int64     `db:"created_at" json:"created_at"`
@@ -81,9 +81,9 @@ type Plan struct {
     LastRunAt   *int64    `db:"last_run_at" json:"last_run_at"`
 
     // Parsed fields (not stored in DB)
-    Sources     []PlanSource    `db:"-" json:"sources"`
-    Conditions  *PlanCondition  `db:"-" json:"conditions"`
-    Outcomes    []PlanOutcome   `db:"-" json:"outcomes"`
+    Sources     []PlanSource     `db:"-" json:"sources"`
+    Conditions  *RuleCondition   `db:"-" json:"conditions"`    // Reuses RuleCondition
+    Outcomes    []RuleOutcome    `db:"-" json:"outcomes"`      // Reuses RuleOutcome
 }
 ```
 
@@ -115,57 +115,66 @@ type CharacteristicGenerator struct {
 }
 ```
 
-### 3. Plan Condition (Eligibility Logic)
+### 3. Plan Condition (Reuses RuleCondition)
+
+Plans use the existing `RuleCondition` type from the rules system:
 
 ```go
-// PlanCondition defines filtering/matching logic (reuse existing RuleCondition)
-type PlanCondition struct {
-    // Logical operators
-    Type       string           `json:"type"`      // "all", "any", "none"
-    Conditions []*PlanCondition `json:"conditions"` // Nested conditions
+// RuleCondition represents the condition for a rule (from internal/models/models.go)
+type RuleCondition struct {
+    Type       string           `json:"type"` // "all", "any", "none", "media_type", "size", "time", "path"
+    Conditions []*RuleCondition `json:"conditions,omitempty"` // For composite conditions
 
-    // File attribute filters
-    MediaType      *string `json:"media_type"`       // "video", "image", "audio", "document"
-    MinSize        *int64  `json:"min_size"`
-    MaxSize        *int64  `json:"max_size"`
-    MinMtime       *int64  `json:"min_mtime"`
-    MaxMtime       *int64  `json:"max_mtime"`
+    // Media type condition
+    MediaType *string `json:"mediaType,omitempty"` // "image", "video", "audio", "document"
 
-    // Path filters
-    PathContains   *string `json:"path_contains"`
-    PathPrefix     *string `json:"path_prefix"`
-    PathSuffix     *string `json:"path_suffix"`
-    PathPattern    *string `json:"path_pattern"`     // Regex
+    // Size condition
+    MinSize *int64 `json:"minSize,omitempty"` // Bytes
+    MaxSize *int64 `json:"maxSize,omitempty"` // Bytes
 
-    // Extension filter
-    Extensions     []string `json:"extensions"`       // ["mp4", "mkv"]
+    // Time condition
+    MinMtime *int64 `json:"minMtime,omitempty"` // Unix timestamp
+    MaxMtime *int64 `json:"maxMtime,omitempty"` // Unix timestamp
+    MinCtime *int64 `json:"minCtime,omitempty"` // Unix timestamp
+    MaxCtime *int64 `json:"maxCtime,omitempty"` // Unix timestamp
 
-    // Custom characteristic filters (future)
-    CharacteristicType  *string `json:"characteristic_type"`
-    CharacteristicValue *string `json:"characteristic_value"`
+    // Path condition
+    PathContains   *string `json:"pathContains,omitempty"`
+    PathPrefix     *string `json:"pathPrefix,omitempty"`
+    PathSuffix     *string `json:"pathSuffix,omitempty"`
+    PathPattern    *string `json:"pathPattern,omitempty"` // Regex
 }
 ```
 
-### 4. Plan Outcome (Actions)
+**Note:** Plans reuse the existing condition logic - no duplication.
+
+### 4. Plan Outcome (Reuses RuleOutcome)
+
+Plans use the existing `RuleOutcome` type from the rules system:
 
 ```go
-// PlanOutcome defines what to do with matching entries
-type PlanOutcome struct {
-    Type string `json:"type"`  // "selection_set", "classifier", "export", "delete"
+// RuleOutcome represents the outcome of a rule (from internal/models/models.go)
+// IMPORTANT: All outcomes must have a SelectionSetName to ensure traceability
+type RuleOutcome struct {
+    Type             string         `json:"type"` // "selection_set", "classifier", "chained"
+    SelectionSetName string         `json:"selectionSetName"` // REQUIRED for all outcome types
 
-    // Selection set outcomes
-    SelectionSetName *string `json:"selection_set_name"`  // Target set
-    Operation        *string `json:"operation"`           // "add", "remove", "replace"
+    // For selection_set outcome
+    Operation *string `json:"operation,omitempty"` // "add", "remove"
 
-    // Classifier outcomes (future: trigger characteristic generation)
-    ClassifierType   *string `json:"classifier_type"`     // "thumbnail", "metadata"
-    ClassifierParams map[string]interface{} `json:"classifier_params"`
+    // For classifier outcome
+    ClassifierOperation *string `json:"classifierOperation,omitempty"` // "generate_thumbnail", "extract_metadata"
+    MaxWidth            *int    `json:"maxWidth,omitempty"`
+    MaxHeight           *int    `json:"maxHeight,omitempty"`
+    Quality             *int    `json:"quality,omitempty"`
 
-    // Export outcomes (future)
-    ExportPath       *string `json:"export_path"`
-    ExportFormat     *string `json:"export_format"`
+    // For chained outcome
+    Outcomes     []*RuleOutcome `json:"outcomes,omitempty"`
+    StopOnError  *bool          `json:"stopOnError,omitempty"`
 }
 ```
+
+**Note:** Plans reuse the existing outcome logic - no duplication.
 
 ### 5. Plan Execution Record
 
@@ -210,25 +219,35 @@ type PlanOutcomeRecord struct {
 }
 ```
 
-### 7. Simplified Selection Set (Storage Only)
+### 7. Simplified Selection Set (Pure Item Storage)
 
 ```go
-// SelectionSet is now a pure data container - no eligibility logic
+// SelectionSet is a pure data container - just stores items
+// It doesn't care HOW items got selected, only WHAT items are in it and WHEN they were added
 type SelectionSet struct {
     ID          int64   `db:"id" json:"id"`
     Name        string  `db:"name" json:"name"`
     Description *string `db:"description" json:"description"`
-
-    // REMOVED: CriteriaType, CriteriaJSON (moved to Plans)
-
     CreatedAt   int64   `db:"created_at" json:"created_at"`
     UpdatedAt   int64   `db:"updated_at" json:"updated_at"`
 
-    // Stats (computed on read)
-    EntryCount  int     `db:"-" json:"entry_count"`
-    TotalSize   int64   `db:"-" json:"total_size"`
+    // REMOVED: All criteria/logic fields (CriteriaType, CriteriaJSON)
+    // Plans handle eligibility logic; selection sets just store results
+}
+
+// SelectionSetEntry represents a single item in a selection set
+// This tracks WHEN each item was added (but not HOW or WHY)
+type SelectionSetEntry struct {
+    SetID     int64  `db:"set_id" json:"set_id"`
+    EntryPath string `db:"entry_path" json:"entry_path"`
+    AddedAt   int64  `db:"added_at" json:"added_at"`     // Timestamp when added
 }
 ```
+
+**Key Principle:** Selection sets are dumb storage. They know:
+- What items are in the set (paths)
+- When each item was added (timestamp)
+- That's it. No logic about WHY items are there.
 
 ---
 
@@ -307,25 +326,35 @@ CREATE INDEX idx_plan_outcomes_entry ON plan_outcome_records(entry_path);
 ### Modified Tables
 
 ```sql
--- Selection sets table (SIMPLIFIED - removed criteria fields)
+-- Selection sets table (SIMPLIFIED - pure item storage)
+-- Only cares about WHAT items and WHEN added, not HOW they got there
 CREATE TABLE selection_sets (
     id INTEGER PRIMARY KEY,
     name TEXT UNIQUE NOT NULL,
     description TEXT,
-    -- REMOVED: criteria_type, criteria_json
     created_at INTEGER DEFAULT (strftime('%s', 'now')),
     updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+    -- REMOVED: criteria_type, criteria_json (logic moved to Plans)
 );
 
--- selection_set_entries remains unchanged
+-- selection_set_entries: The join table that tracks items and when they were added
+-- This is the only place that knows "what's in the set" and "when it was added"
 CREATE TABLE selection_set_entries (
     set_id INTEGER NOT NULL,
     entry_path TEXT NOT NULL,
-    added_at INTEGER DEFAULT (strftime('%s', 'now')),
+    added_at INTEGER DEFAULT (strftime('%s', 'now')),  -- Tracks WHEN item was added
     PRIMARY KEY (set_id, entry_path),
     FOREIGN KEY (set_id) REFERENCES selection_sets(id) ON DELETE CASCADE,
     FOREIGN KEY (entry_path) REFERENCES entries(path) ON DELETE CASCADE
 );
+CREATE INDEX idx_set_entries ON selection_set_entries(set_id);
+```
+
+**Migration Note:** To migrate existing selection_sets:
+```sql
+-- Drop the criteria columns (one-way migration)
+ALTER TABLE selection_sets DROP COLUMN criteria_type;
+ALTER TABLE selection_sets DROP COLUMN criteria_json;
 ```
 
 ---
@@ -378,24 +407,26 @@ func (pe *PlanExecutor) resolveSources(sources []PlanSource) ([]string, error)
 func (pe *PlanExecutor) resolveFilesystemSource(src PlanSource) ([]string, error)
 func (pe *PlanExecutor) resolveSelectionSetSource(src PlanSource) ([]string, error)
 
-// Condition evaluation
-func (pe *PlanExecutor) evaluateConditions(entries []*models.Entry, cond *PlanCondition) ([]*models.Entry, error)
-func (pe *PlanExecutor) matchCondition(entry *models.Entry, cond *PlanCondition) (bool, error)
+// Condition evaluation (reuses RuleCondition)
+func (pe *PlanExecutor) evaluateConditions(entries []*models.Entry, cond *models.RuleCondition) ([]*models.Entry, error)
+func (pe *PlanExecutor) matchCondition(entry *models.Entry, cond *models.RuleCondition) (bool, error)
 
-// Outcome application
-func (pe *PlanExecutor) applyOutcomes(entries []*models.Entry, outcomes []PlanOutcome, execID int64) error
-func (pe *PlanExecutor) applySelectionSetOutcome(entries []*models.Entry, outcome PlanOutcome, execID int64) error
+// Outcome application (reuses RuleOutcome)
+func (pe *PlanExecutor) applyOutcomes(entries []*models.Entry, outcomes []models.RuleOutcome, execID int64) error
+func (pe *PlanExecutor) applySelectionSetOutcome(entries []*models.Entry, outcome models.RuleOutcome, execID int64) error
 ```
 
 ### 3. Condition Evaluator (`pkg/plans/evaluator.go`)
+
+**Note:** This component evaluates `RuleCondition` (reused from existing rules system).
 
 ```go
 type ConditionEvaluator struct {
     logger *logrus.Entry
 }
 
-// Tree-based condition evaluation
-func (ce *ConditionEvaluator) Evaluate(entry *models.Entry, condition *PlanCondition) (bool, error) {
+// Tree-based condition evaluation (uses RuleCondition)
+func (ce *ConditionEvaluator) Evaluate(entry *models.Entry, condition *models.RuleCondition) (bool, error) {
     switch condition.Type {
     case "all":
         return ce.evaluateAll(entry, condition.Conditions)
@@ -409,12 +440,15 @@ func (ce *ConditionEvaluator) Evaluate(entry *models.Entry, condition *PlanCondi
 }
 
 // Leaf condition evaluation
-func (ce *ConditionEvaluator) evaluateLeaf(entry *models.Entry, condition *PlanCondition) (bool, error) {
-    // Check media_type, size, mtime, path filters, extensions, etc.
+func (ce *ConditionEvaluator) evaluateLeaf(entry *models.Entry, condition *models.RuleCondition) (bool, error) {
+    // Check MediaType, MinSize/MaxSize, MinMtime/MaxMtime, path filters, etc.
+    // Uses fields from RuleCondition (not duplicated)
 }
 ```
 
 ### 4. Outcome Applier (`pkg/plans/outcomes.go`)
+
+**Note:** This component applies `RuleOutcome` (reused from existing rules system).
 
 ```go
 type OutcomeApplier struct {
@@ -422,30 +456,30 @@ type OutcomeApplier struct {
     logger *logrus.Entry
 }
 
-func (oa *OutcomeApplier) Apply(entries []*models.Entry, outcome PlanOutcome, execID, planID int64) error {
+func (oa *OutcomeApplier) Apply(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) error {
     switch outcome.Type {
     case "selection_set":
         return oa.applySelectionSet(entries, outcome, execID, planID)
     case "classifier":
         return oa.applyClassifier(entries, outcome, execID, planID)
+    case "chained":
+        return oa.applyChained(entries, outcome, execID, planID)
     default:
         return fmt.Errorf("unknown outcome type: %s", outcome.Type)
     }
 }
 
-func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome PlanOutcome, execID, planID int64) error {
+func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) error {
     paths := extractPaths(entries)
+
+    // RuleOutcome.SelectionSetName is always required (string, not *string)
+    setName := outcome.SelectionSetName
 
     switch *outcome.Operation {
     case "add":
-        return oa.db.AddToSelectionSet(*outcome.SelectionSetName, paths)
+        return oa.db.AddToSelectionSet(setName, paths)
     case "remove":
-        return oa.db.RemoveFromSelectionSet(*outcome.SelectionSetName, paths)
-    case "replace":
-        // Clear set and add new entries
-        // 1. Get existing set
-        // 2. Remove all entries
-        // 3. Add new entries
+        return oa.db.RemoveFromSelectionSet(setName, paths)
     }
 
     // Record outcome for audit trail
