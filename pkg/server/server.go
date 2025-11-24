@@ -236,9 +236,6 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 		jsClientURL = fmt.Sprintf("http://%s:%d/web/mcp-client.js", config.Server.Host, config.Server.Port)
 	}
 
-	// Serve web component microfrontend (public, no auth required)
-	router.Static("/web", "./web")
-
 	logFields := logrus.Fields{
 		"host":          config.Server.Host,
 		"port":          config.Server.Port,
