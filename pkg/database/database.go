@@ -66,6 +66,11 @@ func NewDiskDB(path string) (*DiskDB, error) {
 		return nil, fmt.Errorf("failed to initialize job tables: %w", err)
 	}
 
+	if err := diskDB.InitClassifierJobTables(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize classifier job tables: %w", err)
+	}
+
 	if err := diskDB.prepareStatements(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to prepare statements: %w", err)

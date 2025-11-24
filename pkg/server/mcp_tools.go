@@ -1452,6 +1452,10 @@ func splitPaths(pathsStr string) []string {
 	return paths
 }
 
+func parseJobID(jobIDStr string) (int64, error) {
+	return strconv.ParseInt(jobIDStr, 10, 64)
+}
+
 // checkIfHasMetadata checks if a file would have metadata/artifacts generated
 func checkIfHasMetadata(path string, kind string, mtime int64) bool {
 	if kind != "file" {
