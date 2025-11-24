@@ -121,7 +121,7 @@ exploring disk utilization (similar to Baobab/WinDirStat).`,
 	// server command
 	var serverCmd = &cobra.Command{
 		Use:   "server",
-		Short: "Start HTTP server",
+		Short: "Start MCP server",
 		Run:   runServer,
 	}
 
@@ -532,7 +532,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		"externalHost": effectiveExternalHost,
 		"config_file":  configPath,
 		"auth_enabled": config.Auth.Enabled,
-	}).Info("Starting unified HTTP server")
+	}).Info("Starting MCP server")
 
 	// Open database
 	db, err := database.NewDiskDB(config.Database.Path)

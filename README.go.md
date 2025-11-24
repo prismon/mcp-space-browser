@@ -20,12 +20,12 @@ This is a complete replatforming of mcp-space-browser from Bun/TypeScript to Go 
 ```
 .
 ├── cmd/
-│   └── mcp-space-browser/    # CLI application and unified server (REST API + MCP)
+│   └── mcp-space-browser/    # CLI application and MCP server
 ├── pkg/
 │   ├── logger/                # Structured logging with logrus
 │   ├── database/              # SQLite abstraction layer
 │   ├── crawler/               # Filesystem DFS traversal
-│   └── server/                # Unified HTTP server (REST API + MCP)
+│   └── server/                # MCP server with streamable HTTP transport
 ├── internal/
 │   └── models/                # Shared data structures
 └── test/
@@ -42,10 +42,9 @@ This is a complete replatforming of mcp-space-browser from Bun/TypeScript to Go 
    - Query execution and filtering
 3. **Crawler** (`pkg/crawler`): Stack-based DFS filesystem traversal
 4. **CLI** (`cmd/mcp-space-browser`): Command-line interface
-5. **Unified Server** (`pkg/server`): Single HTTP server providing:
-   - REST API endpoints (`/api/*`)
+5. **MCP Server** (`pkg/server`): Streamable HTTP server providing:
    - MCP protocol endpoint (`/mcp`)
-   - 17 MCP tools for disk space analysis
+   - 21 MCP tools for disk space analysis
 
 ## Installation
 
@@ -61,7 +60,7 @@ This is a complete replatforming of mcp-space-browser from Bun/TypeScript to Go 
 git clone https://github.com/prismon/mcp-space-browser.git
 cd mcp-space-browser
 
-# Build the unified CLI and server
+# Build the CLI and MCP server
 go build -o mcp-space-browser ./cmd/mcp-space-browser
 ```
 
@@ -115,17 +114,13 @@ Displays a hierarchical tree view with sizes and modification dates.
 ./mcp-space-browser disk-tree /home/user --sort-by=size --min-date=2024-01-01
 ```
 
-#### 4. Start Unified HTTP Server
+#### 4. Start MCP Server
 
 ```bash
 ./mcp-space-browser server --port=3000
 ```
 
-Starts a unified HTTP server providing both REST API and MCP endpoints.
-
-**REST API Endpoints:**
-- `GET /api/index?path=<path>`: Trigger indexing
-- `GET /api/tree?path=<path>`: Get tree structure as JSON
+Starts an MCP server with streamable HTTP transport.
 
 **MCP Endpoint:**
 - `POST /mcp`: Model Context Protocol endpoint (for Claude and other AI tools)
@@ -136,10 +131,6 @@ Starts a unified HTTP server providing both REST API and MCP endpoints.
 # Start the server
 ./mcp-space-browser server --port=3000
 
-# Test REST API
-curl "http://localhost:3000/api/index?path=/home/user/projects"
-curl "http://localhost:3000/api/tree?path=/home/user/projects"
-
 # Test MCP endpoint
 curl -X POST http://localhost:3000/mcp \
   -H "Content-Type: application/json" \
@@ -148,7 +139,7 @@ curl -X POST http://localhost:3000/mcp \
 
 ### MCP Tools
 
-The unified server exposes 21 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
+The MCP server exposes 21 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
 
 These tools are accessible via Claude Desktop, Claude Code, or any other MCP-compatible client when the server is running.
 

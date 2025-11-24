@@ -10,7 +10,7 @@ This is a **Go implementation** providing:
 - **3-5x faster** filesystem indexing
 - **Single static binary** deployment (no runtime dependencies)
 - **Better resource management** and lower memory usage
-- **Unified server** exposing both REST API and MCP endpoints
+- **MCP server** with streamable HTTP transport
 - **Live filesystem monitoring** with real-time updates using fsnotify
 - **Rule-based automation** for automatic file classification and processing
 
@@ -18,7 +18,7 @@ This is a **Go implementation** providing:
 
 #### Build
 ```bash
-# Build unified CLI and server
+# Build CLI and MCP server
 go build -o mcp-space-browser ./cmd/mcp-space-browser
 ```
 
@@ -29,9 +29,8 @@ go run ./cmd/mcp-space-browser disk-index <path>
 go run ./cmd/mcp-space-browser disk-du <path>
 go run ./cmd/mcp-space-browser disk-tree <path>
 
-# Run unified HTTP server (provides both REST API and MCP endpoints)
+# Run MCP server with streamable HTTP transport
 go run ./cmd/mcp-space-browser server --port=3000
-# REST API: http://localhost:3000/api/*
 # MCP endpoint: http://localhost:3000/mcp
 
 # Run tests
@@ -47,7 +46,7 @@ go test -v -cover ./...              # With coverage
 ```
 .
 ├── cmd/
-│   └── mcp-space-browser/    # CLI application and unified server (REST API + MCP)
+│   └── mcp-space-browser/    # CLI application and MCP server
 ├── pkg/
 │   ├── logger/                # Structured logging (logrus)
 │   ├── database/              # SQLite abstraction
@@ -55,7 +54,7 @@ go test -v -cover ./...              # With coverage
 │   ├── sources/               # Source abstraction and live filesystem monitoring
 │   ├── rules/                 # Rule execution engine for automation
 │   ├── classifier/            # Media file classification and thumbnail generation
-│   └── server/                # Unified HTTP server (REST API + MCP)
+│   └── server/                # MCP server with streamable HTTP transport
 └── internal/
     └── models/                # Shared data structures
 ```
@@ -72,9 +71,7 @@ go test -v -cover ./...              # With coverage
    - Evaluates conditions (media type, size, time, path patterns)
    - Applies outcomes (add to selection sets, generate thumbnails, chain actions)
    - Automatic execution on file changes for live sources
-6. **Unified Server**: Single HTTP server providing:
-   - REST API endpoints (`/api/index`, `/api/tree`)
-   - MCP endpoint (`/mcp`) with 24+ tools for disk space analysis and source management
+6. **MCP Server**: Streamable HTTP server providing MCP endpoint (`/mcp`) with 24+ tools for disk space analysis and source management
 
 ### Key Design Patterns
 - **Single Table Design**: All filesystem entries in one table with parent references
@@ -126,9 +123,9 @@ CREATE TABLE rules (
 )
 ```
 
-### API Endpoints
-- `GET /api/index?path=...` - Trigger filesystem indexing
-- `GET /api/tree?path=...` - Get hierarchical JSON data
+### Server Endpoints
+- `POST /mcp` - MCP streamable HTTP transport endpoint
+- `/web/*` - Static web component microfrontend (uses MCP for data)
 
 ## Development Guidelines
 
@@ -170,7 +167,7 @@ Provides full MCP (Model Context Protocol) integration with 24+ tools:
 **Source Management**: source-create, source-start, source-stop, source-list, source-get, source-delete, source-stats
 **Session**: info, set-preferences
 
-The unified server exposes MCP tools at `http://localhost:3000/mcp` when running:
+The MCP server exposes tools and resources at `http://localhost:3000/mcp` when running:
 ```bash
 go run ./cmd/mcp-space-browser server --port=3000
 ```
