@@ -224,7 +224,7 @@ func runDiskIndex(cmd *cobra.Command, args []string) {
 		}).Info("Starting parallel indexing")
 
 		fmt.Printf("Starting indexing of %s...\n", target)
-		stats, err := crawler.IndexParallel(target, db, opts)
+		stats, err := crawler.IndexParallel(target, db, nil, opts)
 		if err != nil {
 			fmt.Println() // Clear progress line
 			log.WithError(err).Error("Failed to index directory")
@@ -237,7 +237,7 @@ func runDiskIndex(cmd *cobra.Command, args []string) {
 	} else {
 		// Use sequential indexing (no job tracking for CLI)
 		fmt.Printf("Starting indexing of %s...\n", target)
-		stats, err := crawler.Index(target, db, 0, progressCallback)
+		stats, err := crawler.Index(target, db, nil, 0, progressCallback)
 		if err != nil {
 			fmt.Println() // Clear progress line
 			log.WithError(err).Error("Failed to index directory")

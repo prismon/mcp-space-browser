@@ -240,7 +240,7 @@ func handleIndex(c *gin.Context, db *database.DiskDB) {
 
 	// Run indexing asynchronously with job tracking
 	go func() {
-		stats, err := crawler.Index(path, db, jobID, nil)
+		stats, err := crawler.Index(path, db, nil, jobID, nil)
 		if err != nil {
 			errMsg := err.Error()
 			db.UpdateIndexJobStatus(jobID, "failed", &errMsg)

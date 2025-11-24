@@ -1,14 +1,15 @@
 package crawler
 
 import (
+	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/prismon/mcp-space-browser/internal/models"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
+	"github.com/prismon/mcp-space-browser/pkg/source"
 	"github.com/sirupsen/logrus"
 )
 
@@ -40,15 +41,23 @@ type IndexStats struct {
 // remaining: number of items remaining in queue
 type ProgressCallback func(stats *IndexStats, remaining int)
 
-// Index performs filesystem indexing using stack-based DFS traversal
+// Index performs indexing using a source interface with stack-based DFS traversal
+// If src is nil, a default FileSystemSource will be used
 // If jobID is provided (non-zero), it will update job progress in the database
 // If progressCallback is provided, it will be called with progress updates
-func Index(root string, db *database.DiskDB, jobID int64, progressCallback ProgressCallback) (*IndexStats, error) {
+func Index(root string, db *database.DiskDB, src source.Source, jobID int64, progressCallback ProgressCallback) (*IndexStats, error) {
 	startTime := time.Now()
+	ctx := context.Background()
 
-	abs, err := filepath.Abs(root)
+	// Use default filesystem source if none provided
+	if src == nil {
+		src = source.NewFileSystemSource()
+		defer src.Close()
+	}
+
+	abs, err := source.ValidatePath(root)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve absolute path: %w", err)
+		return nil, err
 	}
 
 	// Acquire indexing lock to prevent concurrent indexing operations
@@ -58,13 +67,50 @@ func Index(root string, db *database.DiskDB, jobID int64, progressCallback Progr
 	defer db.UnlockIndexing()
 
 	runID := time.Now().Unix()
+
+	log.WithFields(logrus.Fields{
+		"root":       abs,
+		"runID":      runID,
+		"jobID":      jobID,
+		"sourceType": src.Name(),
+	}).Info("Starting index operation")
+
+	// Phase 1: Estimate total size
+	log.WithField("root", abs).Info("Estimating total items to index")
+	totalEstimate, err := src.EstimateSize(ctx, abs)
+	if err != nil {
+		log.WithError(err).Warn("Failed to estimate size, using default")
+		totalEstimate = 1000 // Default estimate
+	}
+
+	log.WithFields(logrus.Fields{
+		"root":     abs,
+		"estimate": totalEstimate,
+	}).Info("Estimation complete")
+
+	// Create progress tracker
+	tracker := source.NewProgressTracker(totalEstimate)
+	tracker.SetPhase("crawling")
+
+	// Update job progress: estimation complete (5%)
+	if jobID > 0 {
+		if err := db.UpdateIndexJobProgress(jobID, 5, &database.IndexJobMetadata{
+			FilesProcessed:       0,
+			DirectoriesProcessed: 0,
+			TotalSize:            0,
+			ErrorCount:           0,
+		}); err != nil {
+			log.WithError(err).WithField("jobID", jobID).Error("Failed to update job progress")
+		}
+	}
+
 	stack := []string{abs}
 
 	log.WithFields(logrus.Fields{
-		"root":  abs,
-		"runID": runID,
-		"jobID": jobID,
-	}).Info("Starting filesystem index")
+		"root":          abs,
+		"runID":         runID,
+		"estimatedItems": totalEstimate,
+	}).Info("Starting crawl phase")
 
 	stats := &IndexStats{
 		StartTime: startTime,
@@ -90,6 +136,10 @@ func Index(root string, db *database.DiskDB, jobID int64, progressCallback Progr
 		current := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 
+		// Update progress tracker
+		tracker.SetCurrentPath(current)
+		tracker.SetQueuedItems(int64(len(stack)))
+
 		if logger.IsLevelEnabled(logrus.DebugLevel) {
 			log.WithFields(logrus.Fields{
 				"path":      current,
@@ -97,9 +147,10 @@ func Index(root string, db *database.DiskDB, jobID int64, progressCallback Progr
 			}).Debug("Processing path")
 		}
 
-		info, err := os.Stat(current)
+		info, err := src.Stat(ctx, current)
 		if err != nil {
 			stats.Errors++
+			tracker.IncrementErrors()
 			log.WithFields(logrus.Fields{
 				"path":  current,
 				"error": err,
@@ -134,6 +185,7 @@ func Index(root string, db *database.DiskDB, jobID int64, progressCallback Progr
 
 		if err := db.InsertOrUpdate(entry); err != nil {
 			stats.Errors++
+			tracker.IncrementErrors()
 			log.WithFields(logrus.Fields{
 				"path":  current,
 				"error": err,
@@ -163,14 +215,16 @@ func Index(root string, db *database.DiskDB, jobID int64, progressCallback Progr
 
 		if isDir {
 			stats.DirectoriesProcessed++
+			tracker.IncrementDirectories()
 
 			if logger.IsLevelEnabled(logrus.DebugLevel) {
 				log.WithField("path", current).Debug("Scanning directory")
 			}
 
-			children, err := os.ReadDir(current)
+			children, err := src.ReadDir(ctx, current)
 			if err != nil {
 				stats.Errors++
+				tracker.IncrementErrors()
 				log.WithFields(logrus.Fields{
 					"path":  current,
 					"error": err,
@@ -186,11 +240,12 @@ func Index(root string, db *database.DiskDB, jobID int64, progressCallback Progr
 			}
 
 			for _, child := range children {
-				stack = append(stack, filepath.Join(current, child.Name()))
+				stack = append(stack, source.GetFullPath(current, child))
 			}
 		} else {
 			stats.FilesProcessed++
 			stats.TotalSize += info.Size()
+			tracker.IncrementFiles(info.Size())
 
 			if logger.IsLevelEnabled(logrus.TraceLevel) {
 				log.WithFields(logrus.Fields{
@@ -203,10 +258,12 @@ func Index(root string, db *database.DiskDB, jobID int64, progressCallback Progr
 		// Log and update progress every 5 seconds
 		now := time.Now()
 		if now.Sub(lastProgressLog) > 5*time.Second {
+			estimate := tracker.GetEstimate()
 			log.WithFields(logrus.Fields{
 				"filesProcessed":       stats.FilesProcessed,
 				"directoriesProcessed": stats.DirectoriesProcessed,
 				"remaining":            len(stack),
+				"percentComplete":      estimate.PercentComplete(),
 			}).Info("Index progress")
 
 			// Call progress callback if provided
@@ -219,15 +276,8 @@ func Index(root string, db *database.DiskDB, jobID int64, progressCallback Progr
 
 		// Update job progress in database every 5 seconds
 		if jobID > 0 && now.Sub(lastProgressUpdate) > 5*time.Second {
-			// Estimate progress (10-90% range, as final steps happen after crawling)
-			// We don't have total count, so we just show activity by incrementing
-			progress := 10 // Start at 10%
-			if stats.FilesProcessed > 0 || stats.DirectoriesProcessed > 0 {
-				// Increment progress gradually, capped at 90%
-				entriesProcessed := stats.FilesProcessed + stats.DirectoriesProcessed
-				// Simple heuristic: 1% per 100 entries processed, up to 90%
-				progress = 10 + min(80, entriesProcessed/100)
-			}
+			// Use progress tracker for accurate percentage
+			progress := tracker.GetPercentComplete()
 
 			if err := db.UpdateIndexJobProgress(jobID, progress, &database.IndexJobMetadata{
 				FilesProcessed:       stats.FilesProcessed,
@@ -268,23 +318,62 @@ func Index(root string, db *database.DiskDB, jobID int64, progressCallback Progr
 		progressCallback(stats, 0)
 	}
 
+	// Phase 3: Cleanup - Delete stale entries (85-90%)
+	tracker.SetPhase("cleanup")
 	log.WithFields(logrus.Fields{
 		"root":  abs,
 		"runID": runID,
-	}).Debug("Deleting stale entries")
+	}).Info("Deleting stale entries")
+
+	if jobID > 0 {
+		if err := db.UpdateIndexJobProgress(jobID, 87, &database.IndexJobMetadata{
+			FilesProcessed:       stats.FilesProcessed,
+			DirectoriesProcessed: stats.DirectoriesProcessed,
+			TotalSize:            stats.TotalSize,
+			ErrorCount:           stats.Errors,
+		}); err != nil {
+			log.WithError(err).WithField("jobID", jobID).Error("Failed to update job progress")
+		}
+	}
 
 	if err := db.DeleteStale(abs, runID); err != nil {
 		return nil, fmt.Errorf("failed to delete stale entries: %w", err)
 	}
 
-	log.WithField("root", abs).Debug("Computing aggregate sizes")
+	// Phase 4: Aggregation - Compute aggregate sizes (90-100%)
+	tracker.SetPhase("aggregation")
+	log.WithField("root", abs).Info("Computing aggregate sizes")
+
+	if jobID > 0 {
+		if err := db.UpdateIndexJobProgress(jobID, 92, &database.IndexJobMetadata{
+			FilesProcessed:       stats.FilesProcessed,
+			DirectoriesProcessed: stats.DirectoriesProcessed,
+			TotalSize:            stats.TotalSize,
+			ErrorCount:           stats.Errors,
+		}); err != nil {
+			log.WithError(err).WithField("jobID", jobID).Error("Failed to update job progress")
+		}
+	}
 
 	if err := db.ComputeAggregates(abs); err != nil {
 		return nil, fmt.Errorf("failed to compute aggregates: %w", err)
 	}
 
+	// Complete
+	tracker.SetPhase("complete")
 	stats.EndTime = time.Now()
 	stats.Duration = stats.EndTime.Sub(stats.StartTime)
+
+	if jobID > 0 {
+		if err := db.UpdateIndexJobProgress(jobID, 100, &database.IndexJobMetadata{
+			FilesProcessed:       stats.FilesProcessed,
+			DirectoriesProcessed: stats.DirectoriesProcessed,
+			TotalSize:            stats.TotalSize,
+			ErrorCount:           stats.Errors,
+		}); err != nil {
+			log.WithError(err).WithField("jobID", jobID).Error("Failed to update job progress")
+		}
+	}
 
 	log.WithFields(logrus.Fields{
 		"root":     abs,

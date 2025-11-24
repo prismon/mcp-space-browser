@@ -44,7 +44,7 @@ func TestConcurrentIndexingRejected(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_, firstError = Index(testDir, db, 0, nil)
+		_, firstError = Index(testDir, db, nil, 0, nil)
 	}()
 
 	// Give first operation time to acquire the lock (but not finish)
@@ -54,7 +54,7 @@ func TestConcurrentIndexingRejected(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_, secondError = Index(testDir, db, 0, nil)
+		_, secondError = Index(testDir, db, nil, 0, nil)
 	}()
 
 	// Wait for both to complete
