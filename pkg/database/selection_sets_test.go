@@ -16,11 +16,10 @@ func TestCreateSelectionSet(t *testing.T) {
 
 	desc := "Test selection set"
 	set := &models.SelectionSet{
-		Name:         "test-set",
-		Description:  &desc,
-		CriteriaType: "user_selected",
-		CreatedAt:    time.Now().Unix(),
-		UpdatedAt:    time.Now().Unix(),
+		Name:        "test-set",
+		Description: &desc,
+		CreatedAt:   time.Now().Unix(),
+		UpdatedAt:   time.Now().Unix(),
 	}
 
 	id, err := db.CreateSelectionSet(set)

@@ -894,7 +894,7 @@ func registerCancelJobTool(s *server.MCPServer, db *database.DiskDB) {
 
 func registerSelectionSetCreate(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("selection-set-create",
-		mcp.WithDescription("Create a new selection set"),
+		mcp.WithDescription("Create a new selection set (pure item storage)"),
 		mcp.WithString("name",
 			mcp.Required(),
 			mcp.Description("Name of the selection set"),
@@ -902,17 +902,12 @@ func registerSelectionSetCreate(s *server.MCPServer, db *database.DiskDB) {
 		mcp.WithString("description",
 			mcp.Description("Description of the selection set"),
 		),
-		mcp.WithString("criteriaType",
-			mcp.Required(),
-			mcp.Description("Criteria type: 'user_selected' or 'tool_query'"),
-		),
 	)
 
 	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args struct {
-			Name         string  `json:"name"`
-			Description  *string `json:"description,omitempty"`
-			CriteriaType string  `json:"criteriaType"`
+			Name        string  `json:"name"`
+			Description *string `json:"description,omitempty"`
 		}
 
 		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
@@ -920,11 +915,10 @@ func registerSelectionSetCreate(s *server.MCPServer, db *database.DiskDB) {
 		}
 
 		set := &models.SelectionSet{
-			Name:         args.Name,
-			Description:  args.Description,
-			CriteriaType: args.CriteriaType,
-			CreatedAt:    time.Now().Unix(),
-			UpdatedAt:    time.Now().Unix(),
+			Name:        args.Name,
+			Description: args.Description,
+			CreatedAt:   time.Now().Unix(),
+			UpdatedAt:   time.Now().Unix(),
 		}
 
 		id, err := db.CreateSelectionSet(set)

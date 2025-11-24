@@ -476,11 +476,10 @@ func (d *DiskDB) EnsureSelectionSetForOutcome(outcome *models.RuleOutcome, ruleN
 	// Create new selection set
 	description := fmt.Sprintf("Auto-created for rule: %s", ruleName)
 	newSet := &models.SelectionSet{
-		Name:         outcome.SelectionSetName,
-		Description:  &description,
-		CriteriaType: "user_selected",
-		CreatedAt:    time.Now().Unix(),
-		UpdatedAt:    time.Now().Unix(),
+		Name:        outcome.SelectionSetName,
+		Description: &description,
+		CreatedAt:   time.Now().Unix(),
+		UpdatedAt:   time.Now().Unix(),
 	}
 
 	setID, err := d.CreateSelectionSet(newSet)
