@@ -174,6 +174,33 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 	router.Any("/mcp", gin.WrapH(mcpHandler))
 
 	addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
+
+	// Construct full URL for JavaScript client library
+	var jsClientURL string
+	if config.Server.ExternalHost != "" {
+		// Use external host (may include scheme)
+		if len(config.Server.ExternalHost) > 8 && config.Server.ExternalHost[:8] == "https://" {
+			jsClientURL = config.Server.ExternalHost + "/web/mcp-client.js"
+		} else if len(config.Server.ExternalHost) > 7 && config.Server.ExternalHost[:7] == "http://" {
+			jsClientURL = config.Server.ExternalHost + "/web/mcp-client.js"
+		} else {
+			// No scheme, default to http
+			jsClientURL = "http://" + config.Server.ExternalHost + "/web/mcp-client.js"
+		}
+	} else if config.Server.BaseURL != "" {
+		// Fall back to deprecated BaseURL
+		if len(config.Server.BaseURL) > 8 && config.Server.BaseURL[:8] == "https://" {
+			jsClientURL = config.Server.BaseURL + "/web/mcp-client.js"
+		} else if len(config.Server.BaseURL) > 7 && config.Server.BaseURL[:7] == "http://" {
+			jsClientURL = config.Server.BaseURL + "/web/mcp-client.js"
+		} else {
+			jsClientURL = "http://" + config.Server.BaseURL + "/web/mcp-client.js"
+		}
+	} else {
+		// Default to listen address
+		jsClientURL = fmt.Sprintf("http://%s:%d/web/mcp-client.js", config.Server.Host, config.Server.Port)
+	}
+
 	logFields := logrus.Fields{
 		"host":           config.Server.Host,
 		"port":           config.Server.Port,
@@ -183,7 +210,7 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 		"swagger_docs":   "/docs/index.html",
 		"openapi_spec":   "/docs/swagger.json",
 		"web_component":  "/web/index.html",
-		"js_client":      "/web/mcp-client.js",
+		"js_client":      jsClientURL,
 	}
 	if config.Auth.Enabled {
 		logFields["auth_enabled"] = true
