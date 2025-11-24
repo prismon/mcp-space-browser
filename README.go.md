@@ -120,16 +120,20 @@ Displays a hierarchical tree view with sizes and modification dates.
 ./mcp-space-browser server --port=3000
 ```
 
-Starts an MCP server with streamable HTTP transport.
+Starts an MCP server with streamable HTTP transport and web components.
 
-**MCP Endpoint:**
+**Endpoints:**
 - `POST /mcp`: Model Context Protocol endpoint (for Claude and other AI tools)
+- `/web/index.html`: Web component microfrontend (uses MCP for data)
 
 **Example Usage:**
 
 ```bash
 # Start the server
 ./mcp-space-browser server --port=3000
+
+# Access web interface
+open http://localhost:3000/web/index.html
 
 # Test MCP endpoint
 curl -X POST http://localhost:3000/mcp \

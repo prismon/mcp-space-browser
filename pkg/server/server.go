@@ -76,6 +76,9 @@ func Start(config *auth.Config, db *database.DiskDB, dbPath string) error {
 		}).Info("Request completed")
 	})
 
+	// Serve web component microfrontend (public, no auth required)
+	router.Static("/web", "./web")
+
 	// Create and configure MCP server
 	mcpOptions := []server.ServerOption{
 		server.WithToolCapabilities(true),
