@@ -599,39 +599,74 @@ func registerNavigateTool(s *server.MCPServer, db *database.DiskDB) {
 
 func registerInspectTool(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("inspect",
-		mcp.WithDescription("Return metadata for a specific indexed node."),
+		mcp.WithDescription("Return metadata for a specific indexed node, including MCP resource references."),
 		mcp.WithString("path",
 			mcp.Required(),
 			mcp.Description("Path of the file or directory to inspect"),
-		),
-		mcp.WithNumber("limit",
-			mcp.Description("Maximum number of artifacts to return"),
-		),
-		mcp.WithNumber("offset",
-			mcp.Description("Pagination offset for artifacts"),
 		),
 	)
 
 	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args struct {
-			Path   string `json:"path"`
-			Limit  *int   `json:"limit,omitempty"`
-			Offset *int   `json:"offset,omitempty"`
+			Path string `json:"path"`
 		}
 
 		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		limit := getIntOrDefault(args.Limit, 20)
-		offset := getIntOrDefault(args.Offset, 0)
-
-		detail, err := buildInspectResponse(args.Path, db, limit, offset)
+		// Expand path
+		expandedPath, err := pathutil.ExpandPath(args.Path)
 		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid path: %v", err)), nil
 		}
 
-		payload, err := json.Marshal(detail)
+		// Get entry from database
+		entry, err := db.Get(expandedPath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to load entry: %v", err)), nil
+		}
+		if entry == nil {
+			return mcp.NewToolResultError("Entry not indexed"), nil
+		}
+
+		// Build response with MCP resources
+		response := map[string]interface{}{
+			"path":       entry.Path,
+			"kind":       entry.Kind,
+			"size":       entry.Size,
+			"modifiedAt": time.Unix(entry.Mtime, 0).Format(time.RFC3339),
+			"createdAt":  time.Unix(entry.Ctime, 0).Format(time.RFC3339),
+			"resourceUri": fmt.Sprintf("shell://nodes/%s", entry.Path),
+		}
+
+		// Check if there's metadata available
+		metadataList, err := db.GetMetadataByPath(expandedPath)
+		if err == nil && len(metadataList) > 0 {
+			response["metadataUri"] = fmt.Sprintf("shell://nodes/%s/metadata", entry.Path)
+			response["metadataCount"] = len(metadataList)
+
+			// Check for specific metadata types
+			hasThumbnail := false
+			hasTimeline := false
+			for _, metadata := range metadataList {
+				if metadata.MetadataType == "thumbnail" {
+					hasThumbnail = true
+				}
+				if metadata.MetadataType == "video-timeline" {
+					hasTimeline = true
+				}
+			}
+
+			if hasThumbnail {
+				response["thumbnailUri"] = fmt.Sprintf("shell://nodes/%s/thumbnail", entry.Path)
+			}
+			if hasTimeline {
+				response["timelineUri"] = fmt.Sprintf("shell://nodes/%s/timeline", entry.Path)
+			}
+		}
+
+		payload, err := json.Marshal(response)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal response: %v", err)), nil
 		}
