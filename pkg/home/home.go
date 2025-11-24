@@ -4,7 +4,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/prismon/mcp-space-browser/pkg/logger"
+	"github.com/sirupsen/logrus"
 )
+
+var log *logrus.Entry
+
+func init() {
+	log = logger.WithName("home")
+}
 
 // Manager handles the application home directory
 type Manager struct {
@@ -33,34 +42,72 @@ const (
 
 // NewManager creates a new home directory manager
 func NewManager(path string) (*Manager, error) {
+	log.Debug("Creating new home directory manager")
+
 	if path == "" {
+		log.Debug("No path specified, using default home path")
 		path = DefaultHomePath()
+	} else {
+		log.WithField("path", path).Debug("Using specified home path")
 	}
 
 	absPath, err := filepath.Abs(path)
 	if err != nil {
+		log.WithError(err).WithField("path", path).Error("Failed to resolve absolute path")
 		return nil, fmt.Errorf("invalid home path: %w", err)
 	}
+
+	log.WithFields(logrus.Fields{
+		"relativePath": path,
+		"absolutePath": absPath,
+	}).Info("Home directory manager created")
 
 	return &Manager{path: absPath}, nil
 }
 
 // DefaultHomePath returns the default home directory path
 func DefaultHomePath() string {
-	// Check environment variables
+	log.Debug("Resolving default home directory path")
+
+	// Check MCP_HOME environment variable
 	if path := os.Getenv("MCP_HOME"); path != "" {
+		log.WithFields(logrus.Fields{
+			"source": "MCP_HOME",
+			"path":   path,
+		}).Info("Using home directory from MCP_HOME environment variable")
 		return path
 	}
+	log.Debug("MCP_HOME environment variable not set")
+
+	// Check MCP_SPACE_BROWSER_HOME environment variable
 	if path := os.Getenv("MCP_SPACE_BROWSER_HOME"); path != "" {
+		log.WithFields(logrus.Fields{
+			"source": "MCP_SPACE_BROWSER_HOME",
+			"path":   path,
+		}).Info("Using home directory from MCP_SPACE_BROWSER_HOME environment variable")
 		return path
 	}
+	log.Debug("MCP_SPACE_BROWSER_HOME environment variable not set")
 
 	// Default to ~/.mcp-space-browser
 	home, err := os.UserHomeDir()
 	if err != nil {
+		log.WithError(err).Warn("Failed to get user home directory, using relative path .mcp-space-browser")
 		return ".mcp-space-browser"
 	}
-	return filepath.Join(home, ".mcp-space-browser")
+
+	log.WithFields(logrus.Fields{
+		"userHomeDir": home,
+		"HOME":        os.Getenv("HOME"),
+	}).Debug("Got user home directory from OS")
+
+	finalPath := filepath.Join(home, ".mcp-space-browser")
+	log.WithFields(logrus.Fields{
+		"source": "default",
+		"path":   finalPath,
+	}).Info("Using default home directory ~/.mcp-space-browser")
+
+	return finalPath
 }
 
 // Path returns the home directory path
@@ -70,6 +117,8 @@ func (m *Manager) Path() string {
 
 // Initialize creates the home directory structure
 func (m *Manager) Initialize() error {
+	log.WithField("path", m.path).Info("Initializing home directory structure")
+
 	dirs := []string{
 		"", // Home directory itself
 		RulesDir,
@@ -87,24 +136,41 @@ func (m *Manager) Initialize() error {
 	for _, dir := range dirs {
 		path := m.JoinPath(dir)
 		if err := os.MkdirAll(path, 0755); err != nil {
+			log.WithError(err).WithField("directory", path).Error("Failed to create directory")
 			return fmt.Errorf("failed to create directory %s: %w", path, err)
+		}
+		if dir != "" {
+			log.WithField("directory", path).Debug("Created directory")
 		}
 	}
 
 	// Create default config if it doesn't exist
+	log.WithField("configPath", m.ConfigPath()).Debug("Initializing configuration file")
 	if err := m.initializeConfig(); err != nil {
+		log.WithError(err).Error("Failed to initialize config")
 		return fmt.Errorf("failed to initialize config: %w", err)
 	}
 
 	// Create example rules if they don't exist
+	log.WithField("examplesPath", m.RulesExamplesPath()).Debug("Initializing example rules")
 	if err := m.initializeExamples(); err != nil {
+		log.WithError(err).Error("Failed to initialize examples")
 		return fmt.Errorf("failed to initialize examples: %w", err)
 	}
 
 	// Create .gitignore
+	gitignorePath := m.JoinPath(".gitignore")
+	log.WithField("gitignorePath", gitignorePath).Debug("Creating .gitignore")
 	if err := m.createGitignore(); err != nil {
+		log.WithError(err).Error("Failed to create .gitignore")
 		return fmt.Errorf("failed to create .gitignore: %w", err)
 	}
+
+	log.WithFields(logrus.Fields{
+		"path":         m.path,
+		"configPath":   m.ConfigPath(),
+		"databasePath": m.DatabasePath(),
+	}).Info("Home directory initialization complete")
 
 	return nil
 }
@@ -234,8 +300,11 @@ func (m *Manager) initializeConfig() error {
 
 	// Check if config already exists
 	if _, err := os.Stat(configPath); err == nil {
+		log.WithField("configPath", configPath).Debug("Configuration file already exists, skipping creation")
 		return nil // Config exists, don't overwrite
 	}
+
+	log.WithField("configPath", configPath).Info("Creating default configuration file")
 
 	defaultConfig := `# mcp-space-browser configuration
 
@@ -275,7 +344,13 @@ server:
   host: localhost
 `
 
-	return os.WriteFile(configPath, []byte(defaultConfig), 0644)
+	if err := os.WriteFile(configPath, []byte(defaultConfig), 0644); err != nil {
+		log.WithError(err).WithField("configPath", configPath).Error("Failed to write configuration file")
+		return err
+	}
+
+	log.WithField("configPath", configPath).Info("Default configuration file created successfully")
+	return nil
 }
 
 // initializeExamples creates example rule files
