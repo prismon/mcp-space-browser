@@ -11,9 +11,12 @@
 // For ES Modules or Browser
 // import MCPSpaceBrowserClient from '../mcp-client.js';
 
-// For browser with script tag
-// <script src="mcp-client.js"></script>
+// For browser with script tag (when server is running)
+// <script src="http://localhost:3000/web/mcp-client.js"></script>
 // The MCPSpaceBrowserClient will be available globally
+
+// Alternatively, for local development
+// <script src="../mcp-client.js"></script>
 
 // ==================== Basic Setup ====================
 
