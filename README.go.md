@@ -143,42 +143,69 @@ curl -X POST http://localhost:3000/mcp \
 
 ### MCP Tools
 
-The MCP server exposes 21 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
+The MCP server exposes 32 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
 
 These tools are accessible via Claude Desktop, Claude Code, or any other MCP-compatible client when the server is running.
 
-#### Available MCP Tools (21 Total)
+#### Available MCP Tools
 
-**Core Tools (5):**
-1. `disk-index`: Index a directory tree
-2. `disk-du`: Get disk usage for a path
-3. `disk-tree`: Get hierarchical tree structure
-4. `disk-time-range`: Find files modified within a date range
-5. `navigate`: Navigate to a directory and list its contents with summary statistics
+**Resource Navigation (DAG):**
+1. `resource-children`: Get child nodes in DAG (downstream navigation)
+2. `resource-parent`: Get parent nodes in DAG (upstream navigation, like "..")
 
-**Selection Set Tools (5):**
-6. `selection-set-create`: Create a named file grouping
-7. `selection-set-list`: List all selection sets
-8. `selection-set-get`: Get entries in a selection set
-9. `selection-set-modify`: Add/remove entries from a set
-10. `selection-set-delete`: Delete a selection set
+**Resource Queries:**
+3. `resource-sum`: Hierarchical aggregation of a metric (replaces disk-du)
+4. `resource-time-range`: Filter resources by time field in range (replaces disk-time-range)
+5. `resource-metric-range`: Filter resources by metric value range
+6. `resource-is`: Exact match on a field value (e.g., kind="file")
+7. `resource-fuzzy-match`: Fuzzy/pattern matching on text fields (contains, prefix, suffix, regex, glob)
 
-**Query Tools (6):**
-11. `query-create`: Create a saved file filter query
-12. `query-execute`: Execute a saved query
-13. `query-list`: List all saved queries
-14. `query-get`: Get query details
-15. `query-update`: Update a query
-16. `query-delete`: Delete a query
+**Resource-Set Management:**
+8. `resource-set-create`: Create a named resource-set (DAG node)
+9. `resource-set-list`: List all resource-sets
+10. `resource-set-get`: Get resource-set metadata and entries
+11. `resource-set-modify`: Add/remove entries from a set
+12. `resource-set-delete`: Delete a resource-set
+13. `resource-set-add-child`: Create parent→child edge in DAG
+14. `resource-set-remove-child`: Remove parent→child edge
 
-**File Action Tools (3):**
-17. `rename-files`: Rename files based on a regex pattern
-18. `delete-files`: Delete files or directories from the filesystem
-19. `move-files`: Move files or directories to a destination
+**Unified Source Tools:**
+15. `source-create`: Create a source (filesystem.index, filesystem.watch, query, resource-set)
+16. `source-start`: Start a source to begin monitoring
+17. `source-stop`: Stop a running source
+18. `source-list`: List all configured sources
+19. `source-get`: Get detailed info about a specific source
+20. `source-delete`: Delete a source
+21. `source-execute`: Execute a source once
 
-**Session Tools (2):**
-20. `session-info`: Get session information
-21. `session-set-preferences`: Set session preferences
+**Plan Tools (owns indexing):**
+22. `plan-create`: Create a plan with sources (indexing happens here)
+23. `plan-execute`: Run a plan (triggers filesystem.index sources)
+24. `plan-list`: List all plans
+25. `plan-get`: Get plan definition and execution history
+26. `plan-update`: Modify plan
+27. `plan-delete`: Remove plan
+
+**File Action Tools:**
+28. `rename-files`: Rename files based on a regex pattern
+29. `delete-files`: Delete files or directories from the filesystem
+30. `move-files`: Move files or directories to a destination
+
+**Session Tools:**
+31. `session-info`: Get session information
+32. `session-set-preferences`: Set session preferences
+
+### MCP Resource Templates
+
+Resources are also accessible via declarative URIs:
+
+| URI Template | Description |
+|--------------|-------------|
+| `resource://resource-set/{name}` | Resource-set metadata |
+| `resource://resource-set/{name}/children` | Child resource-sets in DAG |
+| `resource://resource-set/{name}/parents` | Parent resource-sets in DAG |
+| `resource://resource-set/{name}/entries` | File entries with pagination |
+| `resource://resource-set/{name}/metrics/{metric}` | Aggregated metric value |
 
 ## Configuration
 
@@ -187,7 +214,7 @@ These tools are accessible via Claude Desktop, Claude Code, or any other MCP-com
 By default, the database is stored at `disk.db`. You can specify a custom path:
 
 ```bash
-./mcp-space-browser --db=/path/to/custom.db disk-index /home/user
+./mcp-space-browser --db=/path/to/custom.db server --port=3000
 ```
 
 ### Log Level
@@ -195,7 +222,7 @@ By default, the database is stored at `disk.db`. You can specify a custom path:
 Set the log level via environment variable:
 
 ```bash
-LOG_LEVEL=debug ./mcp-space-browser disk-index /home/user
+LOG_LEVEL=debug ./mcp-space-browser server --port=3000
 ```
 
 Available levels: `trace`, `debug`, `info`, `warn`, `error`
@@ -228,39 +255,76 @@ CREATE TABLE entries (
 )
 ```
 
-### Selection Sets
+### Resource-Sets
 
-Stores named file groupings:
+Stores named file groupings with nesting support:
 
 ```sql
-CREATE TABLE selection_sets (
+CREATE TABLE resource_sets (
   id INTEGER PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
   description TEXT,
-  criteria_type TEXT CHECK(criteria_type IN ('user_selected', 'tool_query')),
-  criteria_json TEXT,
   created_at INTEGER,
   updated_at INTEGER
 )
+
+-- Links resource-sets to filesystem entries
+CREATE TABLE resource_set_entries (
+  set_id INTEGER NOT NULL,
+  entry_path TEXT NOT NULL,
+  added_at INTEGER,
+  PRIMARY KEY (set_id, entry_path)
+)
+
+-- DAG edges (resource-sets can have multiple parents)
+CREATE TABLE resource_set_edges (
+  parent_id INTEGER NOT NULL,
+  child_id INTEGER NOT NULL,
+  added_at INTEGER,
+  PRIMARY KEY (parent_id, child_id),
+  CHECK (parent_id != child_id)
+)
 ```
 
-### Queries
+### Unified Sources
 
-Stores saved file filter queries:
+Stores all source types (filesystem, query, resource-set):
 
 ```sql
-CREATE TABLE queries (
+CREATE TABLE sources (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  type TEXT CHECK(type IN ('filesystem.index', 'filesystem.watch', 'query', 'resource-set')) NOT NULL,
+  target_set_name TEXT NOT NULL,
+  update_mode TEXT CHECK(update_mode IN ('replace', 'append', 'merge')),
+  config_json TEXT,
+  status TEXT CHECK(status IN ('stopped', 'starting', 'running', 'stopping', 'completed', 'error')),
+  enabled INTEGER DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  last_run_at INTEGER,
+  last_error TEXT
+)
+```
+
+### Plans
+
+Orchestration layer for resource-sets and sources:
+
+```sql
+CREATE TABLE plans (
   id INTEGER PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
   description TEXT,
-  query_type TEXT CHECK(query_type IN ('file_filter', 'custom_script')),
-  query_json TEXT NOT NULL,
-  target_selection_set TEXT,
-  update_mode TEXT CHECK(update_mode IN ('replace', 'append', 'merge')),
+  mode TEXT CHECK(mode IN ('oneshot', 'continuous')),
+  status TEXT CHECK(status IN ('active', 'paused', 'disabled')),
+  resource_sets_json TEXT NOT NULL,
+  sources_json TEXT NOT NULL,
+  conditions_json TEXT,
+  outcomes_json TEXT,
   created_at INTEGER,
   updated_at INTEGER,
-  last_executed INTEGER,
-  execution_count INTEGER DEFAULT 0
+  last_run_at INTEGER
 )
 ```
 
