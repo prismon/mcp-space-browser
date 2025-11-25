@@ -143,11 +143,11 @@ curl -X POST http://localhost:3000/mcp \
 
 ### MCP Tools
 
-The MCP server exposes 21 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
+The MCP server exposes 32 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
 
 These tools are accessible via Claude Desktop, Claude Code, or any other MCP-compatible client when the server is running.
 
-#### Available MCP Tools (21 Total)
+#### Available MCP Tools
 
 **Core Tools (5):**
 1. `disk-index`: Index a directory tree
@@ -156,29 +156,42 @@ These tools are accessible via Claude Desktop, Claude Code, or any other MCP-com
 4. `disk-time-range`: Find files modified within a date range
 5. `navigate`: Navigate to a directory and list its contents with summary statistics
 
-**Selection Set Tools (5):**
-6. `selection-set-create`: Create a named file grouping
-7. `selection-set-list`: List all selection sets
-8. `selection-set-get`: Get entries in a selection set
-9. `selection-set-modify`: Add/remove entries from a set
-10. `selection-set-delete`: Delete a selection set
+**Resource-Set Tools (8):**
+6. `resource-set-create`: Create a named file grouping
+7. `resource-set-list`: List all resource-sets
+8. `resource-set-get`: Get entries in a resource-set
+9. `resource-set-modify`: Add/remove entries from a set
+10. `resource-set-delete`: Delete a resource-set
+11. `resource-set-add-child`: Add a child resource-set (nesting)
+12. `resource-set-remove-child`: Remove a child resource-set
+13. `resource-set-get-all`: Get all entries including nested sets (flattened)
 
-**Query Tools (6):**
-11. `query-create`: Create a saved file filter query
-12. `query-execute`: Execute a saved query
-13. `query-list`: List all saved queries
-14. `query-get`: Get query details
-15. `query-update`: Update a query
-16. `query-delete`: Delete a query
+**Unified Source Tools (8):**
+14. `source-create`: Create a source (filesystem.index, filesystem.watch, query, resource-set)
+15. `source-start`: Start a source to begin indexing/monitoring
+16. `source-stop`: Stop a running source
+17. `source-list`: List all configured sources
+18. `source-get`: Get detailed info about a specific source
+19. `source-delete`: Delete a source
+20. `source-execute`: Execute a source once (for query/index types)
+21. `source-stats`: Get live statistics for a running source
+
+**Plan Tools (6):**
+22. `plan-create`: Create a new plan (orchestrates resource-sets and sources)
+23. `plan-execute`: Run a plan
+24. `plan-list`: List all plans
+25. `plan-get`: Get plan definition and execution history
+26. `plan-update`: Modify plan
+27. `plan-delete`: Remove plan
 
 **File Action Tools (3):**
-17. `rename-files`: Rename files based on a regex pattern
-18. `delete-files`: Delete files or directories from the filesystem
-19. `move-files`: Move files or directories to a destination
+28. `rename-files`: Rename files based on a regex pattern
+29. `delete-files`: Delete files or directories from the filesystem
+30. `move-files`: Move files or directories to a destination
 
 **Session Tools (2):**
-20. `session-info`: Get session information
-21. `session-set-preferences`: Set session preferences
+31. `session-info`: Get session information
+32. `session-set-preferences`: Set session preferences
 
 ## Configuration
 
@@ -228,39 +241,75 @@ CREATE TABLE entries (
 )
 ```
 
-### Selection Sets
+### Resource-Sets
 
-Stores named file groupings:
+Stores named file groupings with nesting support:
 
 ```sql
-CREATE TABLE selection_sets (
+CREATE TABLE resource_sets (
   id INTEGER PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
   description TEXT,
-  criteria_type TEXT CHECK(criteria_type IN ('user_selected', 'tool_query')),
-  criteria_json TEXT,
   created_at INTEGER,
   updated_at INTEGER
 )
+
+-- Links resource-sets to filesystem entries
+CREATE TABLE resource_set_entries (
+  set_id INTEGER NOT NULL,
+  entry_path TEXT NOT NULL,
+  added_at INTEGER,
+  PRIMARY KEY (set_id, entry_path)
+)
+
+-- Nesting support (resource-sets can contain other resource-sets)
+CREATE TABLE resource_set_children (
+  parent_id INTEGER NOT NULL,
+  child_id INTEGER NOT NULL,
+  added_at INTEGER,
+  PRIMARY KEY (parent_id, child_id)
+)
 ```
 
-### Queries
+### Unified Sources
 
-Stores saved file filter queries:
+Stores all source types (filesystem, query, resource-set):
 
 ```sql
-CREATE TABLE queries (
+CREATE TABLE sources (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  type TEXT CHECK(type IN ('filesystem.index', 'filesystem.watch', 'query', 'resource-set')) NOT NULL,
+  target_set_name TEXT NOT NULL,
+  update_mode TEXT CHECK(update_mode IN ('replace', 'append', 'merge')),
+  config_json TEXT,
+  status TEXT CHECK(status IN ('stopped', 'starting', 'running', 'stopping', 'completed', 'error')),
+  enabled INTEGER DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  last_run_at INTEGER,
+  last_error TEXT
+)
+```
+
+### Plans
+
+Orchestration layer for resource-sets and sources:
+
+```sql
+CREATE TABLE plans (
   id INTEGER PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
   description TEXT,
-  query_type TEXT CHECK(query_type IN ('file_filter', 'custom_script')),
-  query_json TEXT NOT NULL,
-  target_selection_set TEXT,
-  update_mode TEXT CHECK(update_mode IN ('replace', 'append', 'merge')),
+  mode TEXT CHECK(mode IN ('oneshot', 'continuous')),
+  status TEXT CHECK(status IN ('active', 'paused', 'disabled')),
+  resource_sets_json TEXT NOT NULL,
+  sources_json TEXT NOT NULL,
+  conditions_json TEXT,
+  outcomes_json TEXT,
   created_at INTEGER,
   updated_at INTEGER,
-  last_executed INTEGER,
-  execution_count INTEGER DEFAULT 0
+  last_run_at INTEGER
 )
 ```
 

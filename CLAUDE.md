@@ -62,16 +62,23 @@ go test -v -cover ./...              # With coverage
 ### Core Components
 1. **CLI Entry Point**: Command-line interface with disk-index, disk-du, disk-tree commands
 2. **Filesystem Crawler**: Stack-based DFS traversal, metadata collection, database updates
-3. **Database Layer**: SQLite abstraction with multiple tables (entries, selection_sets, queries, sources, rules, etc.)
-4. **Source Management**:
-   - **Manual Sources**: One-time filesystem scans
-   - **Live Sources**: Real-time monitoring using fsnotify (watches for Create, Modify, Delete, Rename events)
-   - **Source Manager**: Manages multiple sources, lifecycle, and persistence
-5. **Rule Engine**:
+3. **Database Layer**: SQLite abstraction with multiple tables (entries, resource_sets, sources, rules, plans, etc.)
+4. **Resource-Set Management** (formerly Selection Sets):
+   - Named collections of file/directory entries
+   - **Nesting support**: Resource-sets can contain other resource-sets
+   - Pure storage containers (no logic about HOW items got there)
+5. **Unified Source Abstraction**:
+   - `filesystem.index`: One-time filesystem scans
+   - `filesystem.watch`: Real-time monitoring using fsnotify
+   - `query`: File filter queries against indexed data
+   - `resource-set`: Copy entries from another resource-set
+   - All sources target a resource-set and track execution history
+6. **Rule Engine**:
    - Evaluates conditions (media type, size, time, path patterns)
-   - Applies outcomes (add to selection sets, generate thumbnails, chain actions)
+   - Applies outcomes (add to resource-sets, generate thumbnails, chain actions)
    - Automatic execution on file changes for live sources
-6. **MCP Server**: Streamable HTTP server providing MCP endpoint (`/mcp`) with 24+ tools for disk space analysis and source management
+7. **Plans**: Orchestration layer combining resource-sets with sources
+8. **MCP Server**: Streamable HTTP server providing MCP endpoint (`/mcp`) with 24+ tools for disk space analysis and source management
 
 ### Key Design Patterns
 - **Single Table Design**: All filesystem entries in one table with parent references
@@ -96,17 +103,44 @@ CREATE TABLE entries (
   dirty INTEGER DEFAULT 0
 )
 
--- Filesystem sources (manual or live monitoring)
+-- Resource-sets (named collections, supports nesting)
+CREATE TABLE resource_sets (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  description TEXT,
+  created_at INTEGER,
+  updated_at INTEGER
+)
+
+-- Resource-set entries (links sets to filesystem entries)
+CREATE TABLE resource_set_entries (
+  set_id INTEGER NOT NULL,
+  entry_path TEXT NOT NULL,
+  added_at INTEGER,
+  PRIMARY KEY (set_id, entry_path)
+)
+
+-- Resource-set children (nesting support)
+CREATE TABLE resource_set_children (
+  parent_id INTEGER NOT NULL,
+  child_id INTEGER NOT NULL,
+  added_at INTEGER,
+  PRIMARY KEY (parent_id, child_id)
+)
+
+-- Unified sources (filesystem, query, resource-set)
 CREATE TABLE sources (
   id INTEGER PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
-  type TEXT CHECK(type IN ('manual', 'live', 'scheduled')) NOT NULL,
-  root_path TEXT NOT NULL,
+  type TEXT CHECK(type IN ('filesystem.index', 'filesystem.watch', 'query', 'resource-set')) NOT NULL,
+  target_set_name TEXT NOT NULL,
+  update_mode TEXT CHECK(update_mode IN ('replace', 'append', 'merge')),
   config_json TEXT,
-  status TEXT CHECK(status IN ('stopped', 'starting', 'running', 'stopping', 'error')),
+  status TEXT CHECK(status IN ('stopped', 'starting', 'running', 'stopping', 'completed', 'error')),
   enabled INTEGER DEFAULT 1,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
+  last_run_at INTEGER,
   last_error TEXT
 )
 
@@ -120,6 +154,22 @@ CREATE TABLE rules (
   outcome_json TEXT NOT NULL,
   created_at INTEGER,
   updated_at INTEGER
+)
+
+-- Plans (orchestration of resource-sets and sources)
+CREATE TABLE plans (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  description TEXT,
+  mode TEXT CHECK(mode IN ('oneshot', 'continuous')),
+  status TEXT CHECK(status IN ('active', 'paused', 'disabled')),
+  resource_sets_json TEXT NOT NULL,
+  sources_json TEXT NOT NULL,
+  conditions_json TEXT,
+  outcomes_json TEXT,
+  created_at INTEGER,
+  updated_at INTEGER,
+  last_run_at INTEGER
 )
 ```
 
@@ -162,9 +212,9 @@ CREATE TABLE rules (
 Provides full MCP (Model Context Protocol) integration with 24+ tools:
 
 **Core Tools**: disk-index, disk-du, disk-tree, disk-time-range, navigate
-**Selection Sets**: create, list, get, modify, delete
-**Queries**: create, execute, list, get, update, delete
-**Source Management**: source-create, source-start, source-stop, source-list, source-get, source-delete, source-stats
+**Resource-Sets**: resource-set-create, resource-set-list, resource-set-get, resource-set-modify, resource-set-delete, resource-set-add-child, resource-set-remove-child, resource-set-get-all
+**Unified Sources**: source-create, source-start, source-stop, source-list, source-get, source-delete, source-execute, source-stats
+**Plans**: plan-create, plan-execute, plan-list, plan-get, plan-update, plan-delete
 **Session**: info, set-preferences
 
 The MCP server exposes tools and resources at `http://localhost:3000/mcp` when running:
@@ -174,14 +224,17 @@ go run ./cmd/mcp-space-browser server --port=3000
 
 ### Live Filesystem Monitoring
 
-Create a live source to monitor a directory for changes:
+Create a filesystem.watch source to monitor a directory for changes:
 ```json
 {
-  "name": "my-photos",
-  "type": "live",
-  "path": "/home/user/Photos",
-  "watch_recursive": true,
-  "debounce_ms": 500
+  "name": "watch-photos",
+  "type": "filesystem.watch",
+  "target_set": "photos",
+  "config": {
+    "path": "/home/user/Photos",
+    "recursive": true,
+    "debounce_ms": 500
+  }
 }
 ```
 
@@ -190,7 +243,14 @@ Live sources automatically:
 - Update metadata when files are modified
 - Remove entries when files are deleted
 - Execute rules for automatic classification and processing
+- Populate the target resource-set with matched entries
 
 Note: Use rules to filter which files to process rather than ignore patterns. This provides more flexibility for conditional processing based on file type, size, path patterns, and other criteria.
+
+### Architecture Documentation
+
+- `docs/RESOURCE_SET_ARCHITECTURE.md` - Detailed architecture for resource-sets, unified sources, and plans
+- `docs/RESOURCE_SET_IMPLEMENTATION_PLAN.md` - Implementation roadmap with detailed tasks
+- `docs/PLANS_ARCHITECTURE.md` - Plans system architecture
 
 See `README.go.md` for complete tool documentation.
