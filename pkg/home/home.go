@@ -381,22 +381,22 @@ Each rule consists of:
 - **condition**: When to trigger (if)
 - **outcome**: What to do (then)
 
-## Important: Selection Set Association
+## Important: Resource Set Association
 
-**ALL rule outcomes MUST include a selectionSetName field.**
+**ALL rule outcomes MUST include a resourceSetName field.**
 
 This ensures traceability and accountability:
 - Every action taken by a rule is tracked
-- All processed files are associated with a named selection set
+- All processed files are associated with a named resource set
 - You can review what each rule has done
-- Selection sets can be queried, exported, or further processed
+- Resource sets can be queried, exported, or further processed
 
 Example outcome:
   type: classifier
-  selectionSetName: my-thumbnails  # REQUIRED
+  resourceSetName: my-thumbnails  # REQUIRED
   classifierOperation: generate_thumbnail
 
-If the selection set doesn't exist, it will be auto-created.
+If the resource set doesn't exist, it will be auto-created.
 
 See individual example files for more details.
 `,
@@ -415,13 +415,13 @@ condition:
 
 outcome:
   type: classifier
-  selectionSetName: large-images-thumbnails
+  resourceSetName: large-images-thumbnails
   classifierOperation: generate_thumbnail
   maxWidth: 320
   maxHeight: 320
 `,
 		"collect-videos.yaml": `name: collect-videos
-description: Add all video files to a selection set
+description: Add all video files to a resource set
 enabled: true
 priority: 5
 
@@ -430,8 +430,8 @@ condition:
   mediaType: video
 
 outcome:
-  type: selection_set
-  selectionSetName: all-videos
+  type: resource_set
+  resourceSetName: all-videos
   operation: add
 `,
 		"nested-conditions.yaml": `name: process-old-large-media
@@ -465,14 +465,14 @@ condition:
 
 outcome:
   type: chained
-  selectionSetName: old-large-media
+  resourceSetName: old-large-media
   stopOnError: false
   outcomes:
     - type: classifier
-      selectionSetName: old-large-media-thumbnails
+      resourceSetName: old-large-media-thumbnails
       classifierOperation: generate_thumbnail
-    - type: selection_set
-      selectionSetName: old-large-media
+    - type: resource_set
+      resourceSetName: old-large-media
       operation: add
 `,
 	}

@@ -273,15 +273,15 @@ func (d *DiskDB) ListRuleExecutions(ruleID int64, limit int) ([]*models.RuleExec
 	return executions, rows.Err()
 }
 
-// ListRuleExecutionsBySelectionSet retrieves executions associated with a selection set
-func (d *DiskDB) ListRuleExecutionsBySelectionSet(selectionSetID int64, limit int) ([]*models.RuleExecution, error) {
+// ListRuleExecutionsByResourceSet retrieves executions associated with a resource set
+func (d *DiskDB) ListRuleExecutionsByResourceSet(resourceSetID int64, limit int) ([]*models.RuleExecution, error) {
 	query := `
 		SELECT id, rule_id, resource_set_id, executed_at, entries_matched, entries_processed, status, error_message, duration_ms
 		FROM rule_executions
 		WHERE resource_set_id = ?
 		ORDER BY executed_at DESC
 	`
-	args := []interface{}{selectionSetID}
+	args := []interface{}{resourceSetID}
 
 	if limit > 0 {
 		query += " LIMIT ?"
@@ -390,15 +390,15 @@ func (d *DiskDB) ListRuleOutcomes(executionID int64) ([]*models.RuleOutcomeRecor
 	return outcomes, rows.Err()
 }
 
-// ListRuleOutcomesBySelectionSet retrieves outcomes associated with a selection set
-func (d *DiskDB) ListRuleOutcomesBySelectionSet(selectionSetID int64, limit int) ([]*models.RuleOutcomeRecord, error) {
+// ListRuleOutcomesByResourceSet retrieves outcomes associated with a resource set
+func (d *DiskDB) ListRuleOutcomesByResourceSet(resourceSetID int64, limit int) ([]*models.RuleOutcomeRecord, error) {
 	query := `
 		SELECT id, execution_id, resource_set_id, entry_path, outcome_type, outcome_data, status, error_message, created_at
 		FROM rule_outcomes
 		WHERE resource_set_id = ?
 		ORDER BY created_at DESC
 	`
-	args := []interface{}{selectionSetID}
+	args := []interface{}{resourceSetID}
 
 	if limit > 0 {
 		query += " LIMIT ?"

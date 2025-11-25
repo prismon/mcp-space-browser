@@ -193,7 +193,7 @@ func TestRuleExecutionWithResourceSet(t *testing.T) {
 	assert.Len(t, executions, 1)
 
 	// List executions for the resource set
-	setExecutions, err := db.ListRuleExecutionsBySelectionSet(setID, 0)
+	setExecutions, err := db.ListRuleExecutionsByResourceSet(setID, 0)
 	require.NoError(t, err)
 	assert.Len(t, setExecutions, 1)
 }
@@ -306,7 +306,7 @@ func TestRuleOutcomeRecord(t *testing.T) {
 	assert.Equal(t, setID, outcomes[0].ResourceSetID)
 
 	// List outcomes by resource set
-	setOutcomes, err := db.ListRuleOutcomesBySelectionSet(setID, 0)
+	setOutcomes, err := db.ListRuleOutcomesByResourceSet(setID, 0)
 	require.NoError(t, err)
 	assert.Len(t, setOutcomes, 1)
 }
