@@ -432,6 +432,158 @@ func TestEnsureSelectionSetForOutcome(t *testing.T) {
 	assert.Equal(t, setID, setID2)
 }
 
+func TestGetRuleByID(t *testing.T) {
+	os.Setenv("GO_ENV", "test")
+	defer os.Unsetenv("GO_ENV")
+
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create a rule
+	condition := models.RuleCondition{Type: "size", MinSize: int64Ptr(100)}
+	conditionJSON, _ := json.Marshal(condition)
+	outcome := models.RuleOutcome{
+		Type:             "selection_set",
+		SelectionSetName: "test-set",
+	}
+	outcomeJSON, _ := json.Marshal(outcome)
+
+	rule := &models.Rule{
+		Name:          "id-test-rule",
+		ConditionJSON: string(conditionJSON),
+		OutcomeJSON:   string(outcomeJSON),
+		Enabled:       true,
+		Priority:      5,
+	}
+	id, err := db.CreateRule(rule)
+	require.NoError(t, err)
+
+	// Get by ID
+	retrieved, err := db.GetRuleByID(id)
+	assert.NoError(t, err)
+	assert.NotNil(t, retrieved)
+	assert.Equal(t, "id-test-rule", retrieved.Name)
+	assert.Equal(t, 5, retrieved.Priority)
+
+	// Test non-existent ID
+	notFound, err := db.GetRuleByID(9999)
+	assert.NoError(t, err)
+	assert.Nil(t, notFound)
+}
+
+func TestUpdateRule(t *testing.T) {
+	os.Setenv("GO_ENV", "test")
+	defer os.Unsetenv("GO_ENV")
+
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create a rule
+	condition := models.RuleCondition{Type: "size", MinSize: int64Ptr(100)}
+	conditionJSON, _ := json.Marshal(condition)
+	outcome := models.RuleOutcome{
+		Type:             "selection_set",
+		SelectionSetName: "test-set",
+	}
+	outcomeJSON, _ := json.Marshal(outcome)
+
+	rule := &models.Rule{
+		Name:          "update-test-rule",
+		ConditionJSON: string(conditionJSON),
+		OutcomeJSON:   string(outcomeJSON),
+		Enabled:       true,
+		Priority:      5,
+	}
+	id, err := db.CreateRule(rule)
+	require.NoError(t, err)
+
+	// Update the rule
+	rule.ID = id
+	rule.Enabled = false
+	rule.Priority = 20
+	desc := "Updated description"
+	rule.Description = &desc
+
+	err = db.UpdateRule(rule)
+	assert.NoError(t, err)
+
+	// Verify update
+	retrieved, _ := db.GetRuleByID(id)
+	assert.False(t, retrieved.Enabled)
+	assert.Equal(t, 20, retrieved.Priority)
+	assert.Equal(t, "Updated description", *retrieved.Description)
+}
+
+func TestDeleteRule(t *testing.T) {
+	os.Setenv("GO_ENV", "test")
+	defer os.Unsetenv("GO_ENV")
+
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create a rule
+	condition := models.RuleCondition{Type: "size"}
+	conditionJSON, _ := json.Marshal(condition)
+	outcome := models.RuleOutcome{
+		Type:             "selection_set",
+		SelectionSetName: "test-set",
+	}
+	outcomeJSON, _ := json.Marshal(outcome)
+
+	rule := &models.Rule{
+		Name:          "delete-test-rule",
+		ConditionJSON: string(conditionJSON),
+		OutcomeJSON:   string(outcomeJSON),
+	}
+	id, err := db.CreateRule(rule)
+	require.NoError(t, err)
+
+	// Verify exists
+	exists, _ := db.GetRuleByID(id)
+	assert.NotNil(t, exists)
+
+	// Delete by name
+	err = db.DeleteRule("delete-test-rule")
+	assert.NoError(t, err)
+
+	// Verify deleted
+	deleted, _ := db.GetRuleByID(id)
+	assert.Nil(t, deleted)
+
+	// Delete non-existent should not error
+	err = db.DeleteRule("nonexistent-rule")
+	assert.NoError(t, err)
+}
+
+func TestUpdateSelectionSet(t *testing.T) {
+	os.Setenv("GO_ENV", "test")
+	defer os.Unsetenv("GO_ENV")
+
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create a selection set
+	set := &models.SelectionSet{
+		Name: "update-test-set",
+	}
+	_, err = db.CreateSelectionSet(set)
+	require.NoError(t, err)
+
+	// Update the set by name
+	desc := "Updated description"
+	err = db.UpdateSelectionSet("update-test-set", &desc)
+	assert.NoError(t, err)
+
+	// Verify update
+	retrieved, _ := db.GetSelectionSet("update-test-set")
+	assert.NotNil(t, retrieved.Description)
+	assert.Equal(t, "Updated description", *retrieved.Description)
+}
+
 // Helper function
 func strPtr(s string) *string {
 	return &s

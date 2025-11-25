@@ -320,6 +320,102 @@ func TestResourceSearch(t *testing.T) {
 	})
 }
 
+func TestGetResourceMetricBreakdown(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	setupResourceQueryTestData(t, db)
+
+	t.Run("basic breakdown", func(t *testing.T) {
+		breakdown, err := db.GetResourceMetricBreakdown("test-resources", false)
+		assert.NoError(t, err)
+		assert.NotNil(t, breakdown)
+		assert.Equal(t, "test-resources", breakdown.ResourceSet)
+		assert.Greater(t, breakdown.TotalCount, 0)
+		assert.Greater(t, breakdown.FileCount, 0)
+	})
+
+	t.Run("nonexistent set", func(t *testing.T) {
+		_, err := db.GetResourceMetricBreakdown("nonexistent", false)
+		assert.Error(t, err)
+	})
+}
+
+func TestGetResourceSizeDistribution(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	setupResourceQueryTestData(t, db)
+
+	t.Run("basic distribution", func(t *testing.T) {
+		dist, err := db.GetResourceSizeDistribution("test-resources", false)
+		assert.NoError(t, err)
+		assert.NotNil(t, dist)
+		assert.Equal(t, "test-resources", dist.ResourceSet)
+		assert.NotEmpty(t, dist.Buckets)
+	})
+
+	t.Run("nonexistent set", func(t *testing.T) {
+		_, err := db.GetResourceSizeDistribution("nonexistent", false)
+		assert.Error(t, err)
+	})
+}
+
+func TestGetResourceSetEntryCount(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	setupResourceQueryTestData(t, db)
+
+	t.Run("count entries", func(t *testing.T) {
+		count, err := db.GetResourceSetEntryCount("test-resources")
+		assert.NoError(t, err)
+		assert.Greater(t, count, 0)
+	})
+
+	t.Run("nonexistent set", func(t *testing.T) {
+		_, err := db.GetResourceSetEntryCount("nonexistent")
+		assert.Error(t, err)
+	})
+}
+
+func TestGetResourceSetTotalSize(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	setupResourceQueryTestData(t, db)
+
+	t.Run("total size", func(t *testing.T) {
+		size, err := db.GetResourceSetTotalSize("test-resources", false)
+		assert.NoError(t, err)
+		assert.Greater(t, size, int64(0))
+	})
+}
+
+func TestGetResourceTimeStats(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	setupResourceQueryTestData(t, db)
+
+	t.Run("time stats", func(t *testing.T) {
+		stats, err := db.GetResourceTimeStats("test-resources", false)
+		assert.NoError(t, err)
+		assert.NotNil(t, stats)
+		assert.Equal(t, "test-resources", stats.ResourceSet)
+	})
+
+	t.Run("nonexistent set", func(t *testing.T) {
+		_, err := db.GetResourceTimeStats("nonexistent", false)
+		assert.Error(t, err)
+	})
+}
+
 func TestHelperFunctions(t *testing.T) {
 	t.Run("globToRegex", func(t *testing.T) {
 		tests := []struct {

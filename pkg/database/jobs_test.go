@@ -296,3 +296,258 @@ func TestIndexJobLifecycle(t *testing.T) {
 	assert.NotNil(t, job.CompletedAt)
 	assert.True(t, *job.CompletedAt >= *job.StartedAt)
 }
+
+// Classifier Job Tests
+
+func TestCreateClassifierJob(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	id, err := db.CreateClassifierJob("file:///test/image.jpg", "/test/image.jpg", []string{"thumbnail", "metadata"})
+	assert.NoError(t, err)
+	assert.Greater(t, id, int64(0))
+}
+
+func TestGetClassifierJob(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Test getting non-existent job
+	job, err := db.GetClassifierJob(999)
+	assert.NoError(t, err)
+	assert.Nil(t, job)
+
+	// Create and retrieve
+	id, err := db.CreateClassifierJob("file:///test/video.mp4", "/test/video.mp4", []string{"thumbnail"})
+	require.NoError(t, err)
+
+	retrieved, err := db.GetClassifierJob(id)
+	assert.NoError(t, err)
+	assert.NotNil(t, retrieved)
+	assert.Equal(t, id, retrieved.ID)
+	assert.Equal(t, "file:///test/video.mp4", retrieved.ResourceURL)
+	assert.Equal(t, "/test/video.mp4", retrieved.LocalPath)
+	assert.Equal(t, "pending", retrieved.Status)
+	assert.Equal(t, 0, retrieved.Progress)
+	assert.Nil(t, retrieved.StartedAt)
+	assert.Nil(t, retrieved.CompletedAt)
+}
+
+func TestUpdateClassifierJobStatus(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	id, err := db.CreateClassifierJob("file:///test/file.txt", "/test/file.txt", []string{"text"})
+	require.NoError(t, err)
+
+	// Update to running
+	err = db.UpdateClassifierJobStatus(id, "running", nil)
+	assert.NoError(t, err)
+
+	job, err := db.GetClassifierJob(id)
+	assert.NoError(t, err)
+	assert.Equal(t, "running", job.Status)
+	assert.Nil(t, job.CompletedAt)
+
+	// Update to completed
+	err = db.UpdateClassifierJobStatus(id, "completed", nil)
+	assert.NoError(t, err)
+
+	job, err = db.GetClassifierJob(id)
+	assert.NoError(t, err)
+	assert.Equal(t, "completed", job.Status)
+	assert.NotNil(t, job.CompletedAt)
+
+	// Test failed status with error
+	id2, _ := db.CreateClassifierJob("file:///test/fail.txt", "/test/fail.txt", []string{})
+	errorMsg := "processing failed"
+	err = db.UpdateClassifierJobStatus(id2, "failed", &errorMsg)
+	assert.NoError(t, err)
+
+	job2, _ := db.GetClassifierJob(id2)
+	assert.Equal(t, "failed", job2.Status)
+	assert.NotNil(t, job2.Error)
+	assert.Equal(t, errorMsg, *job2.Error)
+}
+
+func TestUpdateClassifierJobProgress(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	id, err := db.CreateClassifierJob("file:///test/large.mp4", "/test/large.mp4", []string{"thumbnail"})
+	require.NoError(t, err)
+
+	err = db.UpdateClassifierJobProgress(id, 50)
+	assert.NoError(t, err)
+
+	job, err := db.GetClassifierJob(id)
+	assert.NoError(t, err)
+	assert.Equal(t, 50, job.Progress)
+
+	err = db.UpdateClassifierJobProgress(id, 100)
+	assert.NoError(t, err)
+
+	job, _ = db.GetClassifierJob(id)
+	assert.Equal(t, 100, job.Progress)
+}
+
+func TestUpdateClassifierJobResult(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	id, err := db.CreateClassifierJob("file:///test/image.png", "/test/image.png", []string{"thumbnail"})
+	require.NoError(t, err)
+
+	result := &ClassifierJobResult{
+		Artifacts: []ClassifierArtifact{
+			{
+				Type:        "thumbnail",
+				Hash:        "abc123",
+				MimeType:    "image/jpeg",
+				CachePath:   "/cache/thumb_abc123.jpg",
+				ResourceURI: "file:///cache/thumb_abc123.jpg",
+				Metadata: map[string]any{
+					"width":  1920,
+					"height": 1080,
+				},
+			},
+		},
+	}
+
+	err = db.UpdateClassifierJobResult(id, result)
+	assert.NoError(t, err)
+
+	job, err := db.GetClassifierJob(id)
+	assert.NoError(t, err)
+	assert.NotNil(t, job.Result)
+}
+
+func TestStartClassifierJob(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	id, err := db.CreateClassifierJob("file:///test/start.jpg", "/test/start.jpg", []string{"thumbnail"})
+	require.NoError(t, err)
+
+	err = db.StartClassifierJob(id)
+	assert.NoError(t, err)
+
+	job, err := db.GetClassifierJob(id)
+	assert.NoError(t, err)
+	assert.Equal(t, "running", job.Status)
+	assert.NotNil(t, job.StartedAt)
+}
+
+func TestListClassifierJobs(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create multiple jobs
+	for i := 0; i < 5; i++ {
+		_, err := db.CreateClassifierJob("file:///test/file"+string(rune('a'+i))+".jpg", "/test/file"+string(rune('a'+i))+".jpg", []string{"thumbnail"})
+		require.NoError(t, err)
+	}
+
+	// List all jobs
+	jobs, err := db.ListClassifierJobs(nil, 0)
+	assert.NoError(t, err)
+	assert.Len(t, jobs, 5)
+
+	// List with limit
+	jobs, err = db.ListClassifierJobs(nil, 3)
+	assert.NoError(t, err)
+	assert.Len(t, jobs, 3)
+}
+
+func TestListClassifierJobsByStatus(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create jobs with different statuses
+	id1, _ := db.CreateClassifierJob("file:///test/1.jpg", "/test/1.jpg", []string{})
+	id2, _ := db.CreateClassifierJob("file:///test/2.jpg", "/test/2.jpg", []string{})
+	id3, _ := db.CreateClassifierJob("file:///test/3.jpg", "/test/3.jpg", []string{})
+
+	db.StartClassifierJob(id1)
+	db.UpdateClassifierJobStatus(id2, "completed", nil)
+	// id3 remains pending
+
+	// List pending jobs
+	pendingStatus := "pending"
+	jobs, err := db.ListClassifierJobs(&pendingStatus, 0)
+	assert.NoError(t, err)
+	assert.Len(t, jobs, 1)
+	assert.Equal(t, id3, jobs[0].ID)
+
+	// List running jobs
+	runningStatus := "running"
+	jobs, err = db.ListClassifierJobs(&runningStatus, 0)
+	assert.NoError(t, err)
+	assert.Len(t, jobs, 1)
+	assert.Equal(t, id1, jobs[0].ID)
+
+	// List completed jobs
+	completedStatus := "completed"
+	jobs, err = db.ListClassifierJobs(&completedStatus, 0)
+	assert.NoError(t, err)
+	assert.Len(t, jobs, 1)
+	assert.Equal(t, id2, jobs[0].ID)
+}
+
+func TestClassifierJobLifecycle(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create job
+	id, err := db.CreateClassifierJob("file:///test/lifecycle.mp4", "/test/lifecycle.mp4", []string{"thumbnail", "metadata"})
+	require.NoError(t, err)
+
+	job, err := db.GetClassifierJob(id)
+	assert.Equal(t, "pending", job.Status)
+	assert.Nil(t, job.StartedAt)
+	assert.Nil(t, job.CompletedAt)
+
+	// Start job
+	err = db.StartClassifierJob(id)
+	require.NoError(t, err)
+
+	job, _ = db.GetClassifierJob(id)
+	assert.Equal(t, "running", job.Status)
+	assert.NotNil(t, job.StartedAt)
+	assert.Nil(t, job.CompletedAt)
+
+	// Update progress
+	err = db.UpdateClassifierJobProgress(id, 75)
+	require.NoError(t, err)
+
+	job, _ = db.GetClassifierJob(id)
+	assert.Equal(t, 75, job.Progress)
+
+	// Update result
+	result := &ClassifierJobResult{
+		Artifacts: []ClassifierArtifact{
+			{Type: "thumbnail", Hash: "xyz789", MimeType: "image/jpeg", CachePath: "/cache/thumb.jpg"},
+		},
+	}
+	err = db.UpdateClassifierJobResult(id, result)
+	require.NoError(t, err)
+
+	// Complete job
+	err = db.UpdateClassifierJobStatus(id, "completed", nil)
+	require.NoError(t, err)
+
+	job, _ = db.GetClassifierJob(id)
+	assert.Equal(t, "completed", job.Status)
+	assert.NotNil(t, job.StartedAt)
+	assert.NotNil(t, job.CompletedAt)
+	assert.True(t, *job.CompletedAt >= *job.StartedAt)
+}
