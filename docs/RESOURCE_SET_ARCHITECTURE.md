@@ -108,11 +108,11 @@ Resources are accessible via **two patterns**:
 
 **2. Resource Templates (declarative):**
 ```
-resource://resource-set/photos
-resource://resource-set/photos/children
-resource://resource-set/photos/parents
-resource://resource-set/photos/entries
-resource://resource-set/photos/metrics/size
+synthesis://resource-set/photos
+synthesis://resource-set/photos/children
+synthesis://resource-set/photos/parents
+synthesis://resource-set/photos/entries
+synthesis://resource-set/photos/metrics/size
 ```
 
 ---
@@ -303,12 +303,12 @@ Resource-sets are exposed as MCP resources for declarative access:
 
 | URI Pattern | Description |
 |-------------|-------------|
-| `resource://resource-set/{name}` | Resource-set metadata |
-| `resource://resource-set/{name}/entries` | File entries in set |
-| `resource://resource-set/{name}/children` | Child resource-sets |
-| `resource://resource-set/{name}/parents` | Parent resource-sets |
-| `resource://resource-set/{name}/metrics/{metric}` | Aggregated metric |
-| `resource://resource-set/{name}/tree` | Full subtree (entries + children) |
+| `synthesis://resource-set/{name}` | Resource-set metadata |
+| `synthesis://resource-set/{name}/entries` | File entries in set |
+| `synthesis://resource-set/{name}/children` | Child resource-sets |
+| `synthesis://resource-set/{name}/parents` | Parent resource-sets |
+| `synthesis://resource-set/{name}/metrics/{metric}` | Aggregated metric |
+| `synthesis://resource-set/{name}/tree` | Full subtree (entries + children) |
 
 ### Example Resource Access
 
@@ -317,7 +317,7 @@ Resource-sets are exposed as MCP resources for declarative access:
 {
   "method": "resources/read",
   "params": {
-    "uri": "resource://resource-set/photos/metrics/size"
+    "uri": "synthesis://resource-set/photos/metrics/size"
   }
 }
 
@@ -325,7 +325,7 @@ Resource-sets are exposed as MCP resources for declarative access:
 {
   "contents": [
     {
-      "uri": "resource://resource-set/photos/metrics/size",
+      "uri": "synthesis://resource-set/photos/metrics/size",
       "mimeType": "application/json",
       "text": "{\"value\": 524288000, \"unit\": \"bytes\"}"
     }
@@ -339,28 +339,28 @@ Resource-sets are exposed as MCP resources for declarative access:
 {
   "resourceTemplates": [
     {
-      "uriTemplate": "resource://resource-set/{name}",
+      "uriTemplate": "synthesis://resource-set/{name}",
       "name": "Resource Set",
       "description": "Access a resource-set by name",
       "mimeType": "application/json"
     },
     {
-      "uriTemplate": "resource://resource-set/{name}/children",
+      "uriTemplate": "synthesis://resource-set/{name}/children",
       "name": "Resource Set Children",
       "description": "Child resource-sets in the DAG"
     },
     {
-      "uriTemplate": "resource://resource-set/{name}/parents",
+      "uriTemplate": "synthesis://resource-set/{name}/parents",
       "name": "Resource Set Parents",
       "description": "Parent resource-sets in the DAG"
     },
     {
-      "uriTemplate": "resource://resource-set/{name}/entries?limit={limit}&offset={offset}",
+      "uriTemplate": "synthesis://resource-set/{name}/entries?limit={limit}&offset={offset}",
       "name": "Resource Set Entries",
       "description": "File entries with pagination"
     },
     {
-      "uriTemplate": "resource://resource-set/{name}/metrics/{metric}",
+      "uriTemplate": "synthesis://resource-set/{name}/metrics/{metric}",
       "name": "Resource Metric",
       "description": "Aggregated metric value"
     }
@@ -751,11 +751,11 @@ func (db *DiskDB) isAncestor(potentialAncestor, node int64) bool {
 
 | URI Template | Description |
 |--------------|-------------|
-| `resource://resource-set/{name}` | Resource-set metadata |
-| `resource://resource-set/{name}/entries` | File entries |
-| `resource://resource-set/{name}/children` | Child sets |
-| `resource://resource-set/{name}/parents` | Parent sets |
-| `resource://resource-set/{name}/metrics/{metric}` | Aggregated metric |
+| `synthesis://resource-set/{name}` | Resource-set metadata |
+| `synthesis://resource-set/{name}/entries` | File entries |
+| `synthesis://resource-set/{name}/children` | Child sets |
+| `synthesis://resource-set/{name}/parents` | Parent sets |
+| `synthesis://resource-set/{name}/metrics/{metric}` | Aggregated metric |
 
 ---
 

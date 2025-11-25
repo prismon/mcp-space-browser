@@ -8,7 +8,7 @@ The existing `inspect` tool returns basic metadata (path, kind, size, timestamps
 
 Every inspection should be able to return:
 
-- **Content URL**: a dereferenceable link (e.g., `shell://nodes/<path>` or HTTP download URL) for the file contents.
+- **Content URL**: a dereferenceable link (e.g., `synthesis://nodes/<path>` or HTTP download URL) for the file contents.
 - **Generated artifacts** (zero or more):
   - Static thumbnail for images, PDFs, or videos.
   - Timeline of thumbnails or poster frames for movies.
@@ -33,7 +33,7 @@ Enrichment is implemented as **registrable jobs** so new generators can be plugg
 
 - **Job Registry**: a Go interface such as `type InspectionJob interface { Type() string; Supports(entry models.Entry) bool; Enqueue(ctx, entry) (jobID int64, err error) }` backed by a registry map. Indexers self-register during server startup.
 - **Built-in indexers**:
-  - *Movie indexer*: uses `ffmpeg`/`ffprobe` to extract a poster frame and generate a configurable number of timeline thumbnails. Each output is written to a cache directory and recorded as `thumbnail` or `timeline` artifacts with URLs pointing to HTTP or `shell://` download handlers.
+  - *Movie indexer*: uses `ffmpeg`/`ffprobe` to extract a poster frame and generate a configurable number of timeline thumbnails. Each output is written to a cache directory and recorded as `thumbnail` or `timeline` artifacts with URLs pointing to HTTP or `synthesis://` download handlers.
   - *Image/document indexer*: captures a single thumbnail using an image processing library.
   - *AI summarizer*: streams file bytes (or transcript for media) to an LLM, stores the summary as a `summary` artifact, and records the model name and prompt in artifact metadata.
 - **Execution flow**: when `inspect` is invoked, the server checks whether artifacts already exist. Missing artifacts trigger job enqueues for each matching indexer. Jobs run asynchronously via workers that update `inspection_jobs` status/progress and insert artifacts upon completion.
@@ -49,15 +49,15 @@ The `inspect` MCP tool should return a stable JSON envelope:
   "size": 1234567,
   "createdAt": "2024-05-01T12:00:00Z",
   "modifiedAt": "2024-06-01T09:30:00Z",
-  "contentUrl": "shell://nodes//videos/trip.mp4",
+  "contentUrl": "synthesis://nodes//videos/trip.mp4",
   "artifacts": [
-    { "id": 10, "type": "thumbnail", "mimeType": "image/jpeg", "url": "shell://artifacts/10" },
-    { "id": 11, "type": "summary", "mimeType": "application/json", "url": "shell://artifacts/11" }
+    { "id": 10, "type": "thumbnail", "mimeType": "image/jpeg", "url": "synthesis://artifacts/10" },
+    { "id": 11, "type": "summary", "mimeType": "application/json", "url": "synthesis://artifacts/11" }
   ],
   "jobs": [
     { "id": 42, "type": "video-timeline", "status": "running", "progress": 30 }
   ],
-  "nextPageUrl": "shell://inspect?path=/videos/trip.mp4&offset=2&limit=2"
+  "nextPageUrl": "synthesis://inspect?path=/videos/trip.mp4&offset=2&limit=2"
 }
 ```
 
@@ -76,7 +76,7 @@ Pagination applies to the `artifacts` array and optional `jobs` listing:
 ## Operational Considerations
 
 - **Storage and caching**: artifacts are stored under a configurable cache root with deterministic filenames so `contentUrl` links remain stable even across restarts. Thumbnails and video timelines are written into hashed directory shards (e.g., `<cache>/<h0>/<h1>/<hash>/poster.jpg`) to keep lookup fast and avoid large flat directories.
-- **Security**: URLs should be scoped to the MCP transport (e.g., `shell://` URLs or authenticated HTTP) and not expose arbitrary filesystem paths. Artifact metadata must include the source entry path for traceability.
+- **Security**: URLs should be scoped to the MCP transport (e.g., `synthesis://` URLs or authenticated HTTP) and not expose arbitrary filesystem paths. Artifact metadata must include the source entry path for traceability.
 - **Backpressure**: job workers enforce concurrency limits per job type (e.g., `ffmpeg` pool size) and skip enqueuing if a recent successful artifact already exists unless the caller requests a refresh.
 - **Telemetry**: job metadata captures generation duration, frame counts, and model token usage to aid monitoring and cost control.
 

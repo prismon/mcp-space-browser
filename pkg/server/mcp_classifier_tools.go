@@ -22,10 +22,10 @@ func registerClassifierTools(s *server.MCPServer, db *database.DiskDB, processor
 // registerRerunClassifierTool registers the rerun-classifier tool
 func registerRerunClassifierTool(s *server.MCPServer, db *database.DiskDB, processor *classifier.Processor) {
 	tool := mcp.NewTool("rerun-classifier",
-		mcp.WithDescription("Rerun classifiers on a resource (file://, http://, https://, or shell:// URL) to generate thumbnails, timelines, and metadata."),
+		mcp.WithDescription("Rerun classifiers on a resource (file://, http://, https://, or synthesis:// URL) to generate thumbnails, timelines, and metadata."),
 		mcp.WithString("resource",
 			mcp.Required(),
-			mcp.Description("Resource URL to process. Supports file://, http://, https://, and shell:// (e.g., shell://nodes/<path>)"),
+			mcp.Description("Resource URL to process. Supports file://, http://, https://, and synthesis:// (e.g., synthesis://nodes/<path>)"),
 		),
 		mcp.WithBoolean("async",
 			mcp.Description("Run asynchronously and return job ID immediately (default: true)"),
@@ -135,7 +135,7 @@ func registerRerunClassifierTool(s *server.MCPServer, db *database.DiskDB, proce
 				"jobId":     jobID,
 				"resource":  args.Resource,
 				"status":    "pending",
-				"statusUrl": fmt.Sprintf("shell://classifier-jobs/%d", jobID),
+				"statusUrl": fmt.Sprintf("synthesis://classifier-jobs/%d", jobID),
 			}
 
 			payload, err := json.Marshal(response)
@@ -211,7 +211,7 @@ func registerClassifierJobProgressTool(s *server.MCPServer, db *database.DiskDB)
 			"status":    job.Status,
 			"resource":  job.ResourceURL,
 			"progress":  job.Progress,
-			"statusUrl": fmt.Sprintf("shell://classifier-jobs/%d", job.ID),
+			"statusUrl": fmt.Sprintf("synthesis://classifier-jobs/%d", job.ID),
 		}
 
 		// Add result if completed
@@ -305,7 +305,7 @@ func registerListClassifierJobsTool(s *server.MCPServer, db *database.DiskDB) {
 				"resource":  job.ResourceURL,
 				"status":    job.Status,
 				"progress":  job.Progress,
-				"statusUrl": fmt.Sprintf("shell://classifier-jobs/%d", job.ID),
+				"statusUrl": fmt.Sprintf("synthesis://classifier-jobs/%d", job.ID),
 			}
 
 			// Add result if completed

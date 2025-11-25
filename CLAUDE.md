@@ -281,11 +281,11 @@ Provides full MCP (Model Context Protocol) integration via **tools** and **resou
 
 Resources are also accessible via declarative URIs:
 ```
-resource://resource-set/{name}
-resource://resource-set/{name}/children
-resource://resource-set/{name}/parents
-resource://resource-set/{name}/entries
-resource://resource-set/{name}/metrics/{metric}
+synthesis://resource-set/{name}
+synthesis://resource-set/{name}/children
+synthesis://resource-set/{name}/parents
+synthesis://resource-set/{name}/entries
+synthesis://resource-set/{name}/metrics/{metric}
 ```
 
 The MCP server exposes tools and resources at `http://localhost:3000/mcp` when running:
