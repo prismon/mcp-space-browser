@@ -2,6 +2,46 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Development Principles
+
+### MCP-Only Interface
+
+This system is **ONLY** exposed through the Model Context Protocol (MCP). There are:
+- **NO REST APIs**
+- **NO gRPC interfaces**
+- **NO other external access methods**
+
+All interaction happens via MCP tools and resource templates over JSON-RPC 2.0 at `POST /mcp`.
+
+### Universal MCP Access
+
+MCP tools are designed to be usable by:
+- **Human Users** via MCP client applications
+- **AI Models** (Claude, ChatGPT, etc.) via MCP integration
+- **Automated Systems** implementing MCP client protocol
+
+When designing new tools, ensure they work seamlessly for all three audiences.
+
+### Documentation Requirements
+
+**Every change must update documentation.** When making changes:
+1. Update relevant docs in `docs/` directory
+2. Update `CLAUDE.md` if architecture or guidelines change
+3. Update inline code comments for non-obvious logic
+4. Ensure MCP tool/resource changes are reflected in `docs/MCP_REFERENCE.md`
+
+### Code Coverage
+
+**Minimum passing code coverage is 80%.** All new code must:
+1. Include comprehensive unit tests
+2. Maintain or improve overall coverage
+3. Test edge cases and error conditions
+4. Use in-memory SQLite for database tests
+
+Run coverage: `go test -v -cover ./...`
+
+---
+
 ## Project Overview
 
 **mcp-space-browser** is a disk space indexing agent that crawls filesystems, stores metadata in SQLite, and provides tools for exploring disk utilization (similar to Baobab/WinDirStat).
@@ -173,7 +213,10 @@ CREATE TABLE plans (
 ```
 
 ### Server Endpoints
-- `POST /mcp` - MCP streamable HTTP transport endpoint
+
+> **Note**: This system exposes functionality **exclusively via MCP**. No REST or gRPC APIs.
+
+- `POST /mcp` - MCP streamable HTTP transport endpoint (JSON-RPC 2.0)
 - `/web/*` - Static web component microfrontend (uses MCP for data)
 
 ## Development Guidelines
@@ -188,6 +231,7 @@ CREATE TABLE plans (
 - Create temporary directories with `t.TempDir()`
 - Use in-memory SQLite databases (`:memory:`)
 - Run tests with: `GO_ENV=test go test ./...`
+- **Minimum 80% code coverage required**: `go test -v -cover ./...`
 
 #### Dependencies
 - `github.com/mark3labs/mcp-go@v0.43.0`: MCP server
@@ -302,8 +346,9 @@ Live sources automatically:
 
 ### Architecture Documentation
 
+- `docs/ARCHITECTURE_C3.md` - C3 Context/Container views of the system
+- `docs/ENTITY_RELATIONSHIP.md` - Entity-Relationship Diagram of the data model
+- `docs/MCP_REFERENCE.md` - Complete MCP tool and resource template reference
 - `docs/RESOURCE_SET_ARCHITECTURE.md` - Detailed architecture for resource-sets, unified sources, and plans
 - `docs/RESOURCE_SET_IMPLEMENTATION_PLAN.md` - Implementation roadmap with detailed tasks
 - `docs/PLANS_ARCHITECTURE.md` - Plans system architecture
-
-See `README.go.md` for complete tool documentation.
