@@ -319,7 +319,7 @@ func compressEntryList(entries []*models.Entry, maxSizeBytes int, contextInfo st
 
 func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("index",
-		mcp.WithDescription("Index the specified path and track progress with shell://jobs/{id}."),
+		mcp.WithDescription("Index the specified path and track progress with synthesis://jobs/{id}."),
 		mcp.WithString("root",
 			mcp.Required(),
 			mcp.Description("File or directory path to index"),
@@ -382,7 +382,7 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 					"root":      expandedPath,
 					"status":    "failed",
 					"error":     errMsg,
-					"statusUrl": fmt.Sprintf("shell://jobs/%d", jobID),
+					"statusUrl": fmt.Sprintf("synthesis://jobs/%d", jobID),
 				}
 
 				payload, err := json.Marshal(response)
@@ -437,7 +437,7 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 				"jobId":     jobID,
 				"root":      expandedPath,
 				"status":    "pending",
-				"statusUrl": fmt.Sprintf("shell://jobs/%d", jobID),
+				"statusUrl": fmt.Sprintf("synthesis://jobs/%d", jobID),
 				"cwdHint":   expandedPath,
 			}
 
@@ -563,12 +563,12 @@ func registerNavigateTool(s *server.MCPServer, db *database.DiskDB) {
 				"kind":       child.Kind,
 				"size":       child.Size,
 				"modifiedAt": time.Unix(child.Mtime, 0).Format(time.RFC3339),
-				"link":       fmt.Sprintf("shell://nodes/%s", child.Path),
+				"link":       fmt.Sprintf("synthesis://nodes/%s", child.Path),
 			}
 
 			// Check if this child has metadata/artifacts
 			if hasMetadata := checkIfHasMetadata(child.Path, child.Kind, child.Mtime); hasMetadata {
-				listing["metadataUri"] = fmt.Sprintf("shell://nodes/%s/metadata", child.Path)
+				listing["metadataUri"] = fmt.Sprintf("synthesis://nodes/%s/metadata", child.Path)
 			}
 
 			listings = append(listings, listing)
@@ -588,7 +588,7 @@ func registerNavigateTool(s *server.MCPServer, db *database.DiskDB) {
 		}
 
 		if end < len(children) {
-			response["nextPageUrl"] = fmt.Sprintf("shell://list?path=%s&offset=%d&limit=%d&sortBy=%s&order=%s", expandedPath, end, limit, sortBy, order)
+			response["nextPageUrl"] = fmt.Sprintf("synthesis://list?path=%s&offset=%d&limit=%d&sortBy=%s&order=%s", expandedPath, end, limit, sortBy, order)
 		}
 
 		payload, err := json.Marshal(response)
@@ -640,13 +640,13 @@ func registerInspectTool(s *server.MCPServer, db *database.DiskDB) {
 			"size":       entry.Size,
 			"modifiedAt": time.Unix(entry.Mtime, 0).Format(time.RFC3339),
 			"createdAt":  time.Unix(entry.Ctime, 0).Format(time.RFC3339),
-			"resourceUri": fmt.Sprintf("shell://nodes/%s", entry.Path),
+			"resourceUri": fmt.Sprintf("synthesis://nodes/%s", entry.Path),
 		}
 
 		// Check if there's metadata available
 		metadataList, err := db.GetMetadataByPath(expandedPath)
 		if err == nil && len(metadataList) > 0 {
-			response["metadataUri"] = fmt.Sprintf("shell://nodes/%s/metadata", entry.Path)
+			response["metadataUri"] = fmt.Sprintf("synthesis://nodes/%s/metadata", entry.Path)
 			response["metadataCount"] = len(metadataList)
 
 			// Check for specific metadata types
@@ -662,10 +662,10 @@ func registerInspectTool(s *server.MCPServer, db *database.DiskDB) {
 			}
 
 			if hasThumbnail {
-				response["thumbnailUri"] = fmt.Sprintf("shell://nodes/%s/thumbnail", entry.Path)
+				response["thumbnailUri"] = fmt.Sprintf("synthesis://nodes/%s/thumbnail", entry.Path)
 			}
 			if hasTimeline {
-				response["timelineUri"] = fmt.Sprintf("shell://nodes/%s/timeline", entry.Path)
+				response["timelineUri"] = fmt.Sprintf("synthesis://nodes/%s/timeline", entry.Path)
 			}
 		}
 
@@ -714,7 +714,7 @@ func registerJobProgressTool(s *server.MCPServer, db *database.DiskDB) {
 			"status":    job.Status,
 			"path":      job.RootPath,
 			"progress":  job.Progress,
-			"statusUrl": fmt.Sprintf("shell://jobs/%d", job.ID),
+			"statusUrl": fmt.Sprintf("synthesis://jobs/%d", job.ID),
 		}
 
 		payload, err := json.Marshal(response)
@@ -811,7 +811,7 @@ func registerListJobsTool(s *server.MCPServer, db *database.DiskDB) {
 				"path":      job.RootPath,
 				"status":    job.Status,
 				"progress":  job.Progress,
-				"statusUrl": fmt.Sprintf("shell://jobs/%d", job.ID),
+				"statusUrl": fmt.Sprintf("synthesis://jobs/%d", job.ID),
 			}
 
 			// Add timestamps if available
@@ -928,7 +928,7 @@ func registerCancelJobTool(s *server.MCPServer, db *database.DiskDB) {
 			"status":    "cancelled",
 			"path":      job.RootPath,
 			"message":   "Job has been cancelled",
-			"statusUrl": fmt.Sprintf("shell://jobs/%d", id),
+			"statusUrl": fmt.Sprintf("synthesis://jobs/%d", id),
 		}
 
 		payload, err := json.Marshal(response)

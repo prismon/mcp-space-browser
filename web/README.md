@@ -297,7 +297,7 @@ Response:
   "jobId": 123,
   "root": "/path/to/index",
   "status": "pending",
-  "statusUrl": "shell://jobs/123"
+  "statusUrl": "synthesis://jobs/123"
 }
 ```
 

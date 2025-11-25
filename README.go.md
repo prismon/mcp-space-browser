@@ -201,11 +201,11 @@ Resources are also accessible via declarative URIs:
 
 | URI Template | Description |
 |--------------|-------------|
-| `resource://resource-set/{name}` | Resource-set metadata |
-| `resource://resource-set/{name}/children` | Child resource-sets in DAG |
-| `resource://resource-set/{name}/parents` | Parent resource-sets in DAG |
-| `resource://resource-set/{name}/entries` | File entries with pagination |
-| `resource://resource-set/{name}/metrics/{metric}` | Aggregated metric value |
+| `synthesis://resource-set/{name}` | Resource-set metadata |
+| `synthesis://resource-set/{name}/children` | Child resource-sets in DAG |
+| `synthesis://resource-set/{name}/parents` | Parent resource-sets in DAG |
+| `synthesis://resource-set/{name}/entries` | File entries with pagination |
+| `synthesis://resource-set/{name}/metrics/{metric}` | Aggregated metric value |
 
 ## Configuration
 

@@ -646,42 +646,42 @@ Resources provide declarative, URI-based access to data.
 
 | URI Pattern | Description | MIME Type |
 |-------------|-------------|-----------|
-| `shell://selection-sets/{name}` | Resource-set metadata | application/json |
-| `shell://selection-sets/{name}/entries` | File entries in set | application/json |
-| `shell://selection-sets/{name}/children` | Child resource-sets (DAG downstream) | application/json |
-| `shell://selection-sets/{name}/parents` | Parent resource-sets (DAG upstream) | application/json |
-| `shell://selection-sets/{name}/stats` | Comprehensive statistics | application/json |
-| `shell://selection-sets/{name}/metrics/{metric}` | Aggregated metric (size, count, files, directories) | application/json |
+| `synthesis://selection-sets/{name}` | Resource-set metadata | application/json |
+| `synthesis://selection-sets/{name}/entries` | File entries in set | application/json |
+| `synthesis://selection-sets/{name}/children` | Child resource-sets (DAG downstream) | application/json |
+| `synthesis://selection-sets/{name}/parents` | Parent resource-sets (DAG upstream) | application/json |
+| `synthesis://selection-sets/{name}/stats` | Comprehensive statistics | application/json |
+| `synthesis://selection-sets/{name}/metrics/{metric}` | Aggregated metric (size, count, files, directories) | application/json |
 
 ### Static Resources
 
 | URI | Description |
 |-----|-------------|
-| `shell://nodes` | All filesystem entries |
-| `shell://selection-sets` | All selection sets |
-| `shell://jobs` | All indexing jobs |
-| `shell://jobs/pending` | Pending jobs |
-| `shell://jobs/running` | Running jobs |
-| `shell://jobs/completed` | Completed jobs |
-| `shell://jobs/failed` | Failed jobs |
-| `shell://metadata` | All generated metadata |
-| `shell://metadata/thumbnails` | Thumbnail metadata |
-| `shell://plans` | All plans |
-| `shell://plan-executions` | All plan executions |
+| `synthesis://nodes` | All filesystem entries |
+| `synthesis://selection-sets` | All selection sets |
+| `synthesis://jobs` | All indexing jobs |
+| `synthesis://jobs/pending` | Pending jobs |
+| `synthesis://jobs/running` | Running jobs |
+| `synthesis://jobs/completed` | Completed jobs |
+| `synthesis://jobs/failed` | Failed jobs |
+| `synthesis://metadata` | All generated metadata |
+| `synthesis://metadata/thumbnails` | Thumbnail metadata |
+| `synthesis://plans` | All plans |
+| `synthesis://plan-executions` | All plan executions |
 
 ### Parameterized Templates
 
 | URI Pattern | Description |
 |-------------|-------------|
-| `shell://nodes/{path}` | Single filesystem entry |
-| `shell://selection-sets/{name}` | Selection set by name |
-| `shell://selection-sets/{name}/entries` | Entries in selection set |
-| `shell://jobs/{id}` | Job by ID |
-| `shell://plans/{name}` | Plan by name |
-| `shell://plans/{name}/executions` | Plan execution history |
-| `shell://metadata/{hash}` | Metadata by hash |
-| `shell://nodes/{path}/metadata` | All metadata for entry |
-| `shell://nodes/{path}/thumbnail` | Thumbnail for entry |
+| `synthesis://nodes/{path}` | Single filesystem entry |
+| `synthesis://selection-sets/{name}` | Selection set by name |
+| `synthesis://selection-sets/{name}/entries` | Entries in selection set |
+| `synthesis://jobs/{id}` | Job by ID |
+| `synthesis://plans/{name}` | Plan by name |
+| `synthesis://plans/{name}/executions` | Plan execution history |
+| `synthesis://metadata/{hash}` | Metadata by hash |
+| `synthesis://nodes/{path}/metadata` | All metadata for entry |
+| `synthesis://nodes/{path}/thumbnail` | Thumbnail for entry |
 
 ---
 

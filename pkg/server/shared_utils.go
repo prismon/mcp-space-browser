@@ -107,7 +107,7 @@ func EntryToTreeChildNode(entry *models.Entry) *TreeChildNode {
 		Size:       entry.Size,
 		Kind:       entry.Kind,
 		ModifiedAt: time.Unix(entry.Mtime, 0).Format(time.RFC3339),
-		Link:       fmt.Sprintf("shell://nodes/%s", entry.Path),
+		Link:       fmt.Sprintf("synthesis://nodes/%s", entry.Path),
 	}
 }
 

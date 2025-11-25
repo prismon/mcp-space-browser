@@ -132,7 +132,7 @@ func buildInspectResponse(inputPath string, db *database.DiskDB, limit, offset i
 		Size:           entry.Size,
 		ModifiedAt:     time.Unix(entry.Mtime, 0).Format(time.RFC3339),
 		CreatedAt:      time.Unix(entry.Ctime, 0).Format(time.RFC3339),
-		Link:           fmt.Sprintf("shell://nodes/%s", entry.Path),
+		Link:           fmt.Sprintf("synthesis://nodes/%s", entry.Path),
 		ContentUrl:     fmt.Sprintf("%s/api/content?path=%s", contentBaseURL, url.QueryEscape(expandedPath)),
 		Artifacts:      artifacts,
 		ArtifactsCount: totalCount,
@@ -146,7 +146,7 @@ func buildInspectResponse(inputPath string, db *database.DiskDB, limit, offset i
 
 	// Add metadata URI if there are any artifacts
 	if totalCount > 0 {
-		response.MetadataUri = fmt.Sprintf("shell://nodes/%s/metadata", entry.Path)
+		response.MetadataUri = fmt.Sprintf("synthesis://nodes/%s/metadata", entry.Path)
 
 		// Check artifact types to set type-specific URIs
 		hasThumbnail := false
@@ -162,10 +162,10 @@ func buildInspectResponse(inputPath string, db *database.DiskDB, limit, offset i
 
 		// Set type-specific URIs if those artifact types exist
 		if hasThumbnail {
-			response.ThumbnailUri = fmt.Sprintf("shell://nodes/%s/thumbnail", entry.Path)
+			response.ThumbnailUri = fmt.Sprintf("synthesis://nodes/%s/thumbnail", entry.Path)
 		}
 		if hasTimeline {
-			response.TimelineUri = fmt.Sprintf("shell://nodes/%s/timeline", entry.Path)
+			response.TimelineUri = fmt.Sprintf("synthesis://nodes/%s/timeline", entry.Path)
 		}
 	}
 
@@ -272,7 +272,7 @@ func buildArtifact(artifactType, mimeType, cachePath, sourcePath, hash string, m
 		Type:        artifactType,
 		MimeType:    mimeType,
 		Url:         fmt.Sprintf("%s/api/content?path=%s", contentBaseURL, url.QueryEscape(cachePath)),
-		ResourceUri: fmt.Sprintf("shell://metadata/%s", hash),
+		ResourceUri: fmt.Sprintf("synthesis://metadata/%s", hash),
 		Metadata:    metadata,
 	}
 }
@@ -445,7 +445,7 @@ func extractFileMetadata(path string, mtime int64, hashKey string) (*inspectArti
 				Type:        existing.MetadataType,
 				MimeType:    "application/json",
 				Url:         fmt.Sprintf("%s/api/content?path=%s", contentBaseURL, url.QueryEscape(path)),
-				ResourceUri: fmt.Sprintf("shell://nodes/%s/metadata/%s", path, existing.MetadataType),
+				ResourceUri: fmt.Sprintf("synthesis://nodes/%s/metadata/%s", path, existing.MetadataType),
 				Metadata:    metadataMap,
 			}, nil
 		}
@@ -498,7 +498,7 @@ func extractFileMetadata(path string, mtime int64, hashKey string) (*inspectArti
 		Type:        result.MetadataType,
 		MimeType:    "application/json",
 		Url:         fmt.Sprintf("%s/api/content?path=%s", contentBaseURL, url.QueryEscape(path)),
-		ResourceUri: fmt.Sprintf("shell://nodes/%s/metadata/%s", path, result.MetadataType),
+		ResourceUri: fmt.Sprintf("synthesis://nodes/%s/metadata/%s", path, result.MetadataType),
 		Metadata:    result.Data,
 	}, nil
 }

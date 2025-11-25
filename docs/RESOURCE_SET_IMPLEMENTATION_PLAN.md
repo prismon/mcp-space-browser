@@ -318,32 +318,32 @@ func (db *DiskDB) ResourceMetricRange(name, metric string, min, max *int64, incl
 ```go
 func (s *MCPServer) registerResourceTemplates() {
     s.mcp.AddResourceTemplate(mcp.ResourceTemplate{
-        URITemplate: "resource://resource-set/{name}",
+        URITemplate: "synthesis://resource-set/{name}",
         Name:        "Resource Set",
         Description: "Access a resource-set by name",
         MimeType:    "application/json",
     })
 
     s.mcp.AddResourceTemplate(mcp.ResourceTemplate{
-        URITemplate: "resource://resource-set/{name}/children",
+        URITemplate: "synthesis://resource-set/{name}/children",
         Name:        "Resource Set Children",
         Description: "Child resource-sets in the DAG",
     })
 
     s.mcp.AddResourceTemplate(mcp.ResourceTemplate{
-        URITemplate: "resource://resource-set/{name}/parents",
+        URITemplate: "synthesis://resource-set/{name}/parents",
         Name:        "Resource Set Parents",
         Description: "Parent resource-sets in the DAG",
     })
 
     s.mcp.AddResourceTemplate(mcp.ResourceTemplate{
-        URITemplate: "resource://resource-set/{name}/entries",
+        URITemplate: "synthesis://resource-set/{name}/entries",
         Name:        "Resource Set Entries",
         Description: "File entries with pagination",
     })
 
     s.mcp.AddResourceTemplate(mcp.ResourceTemplate{
-        URITemplate: "resource://resource-set/{name}/metrics/{metric}",
+        URITemplate: "synthesis://resource-set/{name}/metrics/{metric}",
         Name:        "Resource Metric",
         Description: "Aggregated metric value",
     })
@@ -356,7 +356,7 @@ func (s *MCPServer) registerResourceTemplates() {
 
 ```go
 func (s *MCPServer) handleResourceRead(uri string) (*mcp.ResourceContent, error) {
-    // Parse URI: resource://resource-set/{name}/...
+    // Parse URI: synthesis://resource-set/{name}/...
     // Route to appropriate handler
     // Return JSON content
 }

@@ -157,9 +157,9 @@ func (p *Processor) resolveResource(resourceURL string) (string, func(), error) 
 		// Download to temporary file
 		return p.downloadResource(resourceURL)
 
-	case "shell":
-		// Resolve shell:// resource
-		return p.resolveShellResource(resourceURL)
+	case "synthesis":
+		// Resolve synthesis:// resource
+		return p.resolveSynthesisResource(resourceURL)
 
 	default:
 		return "", nil, fmt.Errorf("unsupported URL scheme: %s", u.Scheme)
@@ -212,13 +212,13 @@ func (p *Processor) downloadResource(resourceURL string) (string, func(), error)
 	return tmpPath, cleanup, nil
 }
 
-// resolveShellResource resolves a shell:// resource to a local file path
-func (p *Processor) resolveShellResource(resourceURL string) (string, func(), error) {
-	// Parse shell:// URL
-	// Format: shell://nodes/<path> or shell://metadata/<hash>
+// resolveSynthesisResource resolves a synthesis:// resource to a local file path
+func (p *Processor) resolveSynthesisResource(resourceURL string) (string, func(), error) {
+	// Parse synthesis:// URL
+	// Format: synthesis://nodes/<path> or synthesis://metadata/<hash>
 	u, err := url.Parse(resourceURL)
 	if err != nil {
-		return "", nil, fmt.Errorf("invalid shell URL: %w", err)
+		return "", nil, fmt.Errorf("invalid synthesis URL: %w", err)
 	}
 
 	// Extract path from URL
@@ -226,7 +226,7 @@ func (p *Processor) resolveShellResource(resourceURL string) (string, func(), er
 	parts := strings.SplitN(path, "/", 2)
 
 	if len(parts) < 2 {
-		return "", nil, fmt.Errorf("invalid shell URL format: %s", resourceURL)
+		return "", nil, fmt.Errorf("invalid synthesis URL format: %s", resourceURL)
 	}
 
 	resourceType := parts[0]
@@ -256,7 +256,7 @@ func (p *Processor) resolveShellResource(resourceURL string) (string, func(), er
 		return "", nil, fmt.Errorf("database not available for metadata lookup")
 
 	default:
-		return "", nil, fmt.Errorf("unsupported shell resource type: %s", resourceType)
+		return "", nil, fmt.Errorf("unsupported synthesis resource type: %s", resourceType)
 	}
 }
 
@@ -295,7 +295,7 @@ func (p *Processor) generateThumbnail(path string, mediaType MediaType, hashKey 
 			Hash:        hashKey,
 			MimeType:    "image/jpeg",
 			CachePath:   cachePath,
-			ResourceURI: fmt.Sprintf("shell://metadata/%s", hashKey),
+			ResourceURI: fmt.Sprintf("synthesis://metadata/%s", hashKey),
 		}, nil
 	}
 
@@ -318,7 +318,7 @@ func (p *Processor) generateThumbnail(path string, mediaType MediaType, hashKey 
 		Hash:        hashKey,
 		MimeType:    result.MimeType,
 		CachePath:   result.OutputPath,
-		ResourceURI: fmt.Sprintf("shell://metadata/%s", hashKey),
+		ResourceURI: fmt.Sprintf("synthesis://metadata/%s", hashKey),
 	}, nil
 }
 
@@ -357,7 +357,7 @@ func (p *Processor) generateTimeline(path string, hashKey string, frames int) ([
 			Hash:        frameHash,
 			MimeType:    "image/jpeg",
 			CachePath:   framePath,
-			ResourceURI: fmt.Sprintf("shell://metadata/%s", frameHash),
+			ResourceURI: fmt.Sprintf("synthesis://metadata/%s", frameHash),
 			Metadata: map[string]any{
 				"frame": i,
 			},
@@ -379,7 +379,7 @@ func (p *Processor) extractMetadata(path string, hashKey string) (*database.Clas
 		Hash:        hashKey,
 		MimeType:    "application/json",
 		CachePath:   path, // No cache file for metadata
-		ResourceURI: fmt.Sprintf("shell://nodes/%s/metadata/%s", path, result.MetadataType),
+		ResourceURI: fmt.Sprintf("synthesis://nodes/%s/metadata/%s", path, result.MetadataType),
 		Metadata:    result.Data,
 	}, nil
 }
