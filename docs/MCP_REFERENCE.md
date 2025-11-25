@@ -30,6 +30,101 @@ MCP tools are designed to be usable by:
 
 ## MCP Tools
 
+### Indexing Tools
+
+#### index
+
+Index a filesystem path and store metadata in the database. Skips indexing if the path was recently scanned (within `maxAge` seconds) unless `force=true`.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| root | string | Yes | - | File or directory path to index |
+| async | boolean | No | true | Run asynchronously (return job ID immediately) |
+| force | boolean | No | false | Force re-indexing even if path was recently scanned |
+| maxAge | number | No | 3600 | Maximum age in seconds before a scan is considered stale (0 = always re-index) |
+
+**Performance Optimization:** By default, the index tool checks when a path was last scanned. If the path was scanned within `maxAge` seconds (default: 1 hour), indexing is skipped to avoid redundant work. Use `force=true` to override this behavior.
+
+**Example (async mode):**
+```json
+{"tool": "index", "params": {"root": "/home/user/Photos"}}
+```
+
+**Response:**
+```json
+{
+  "jobId": 123,
+  "root": "/home/user/Photos",
+  "status": "pending",
+  "statusUrl": "synthesis://jobs/123"
+}
+```
+
+**Example (force re-index):**
+```json
+{"tool": "index", "params": {"root": "/home/user/Photos", "force": true}}
+```
+
+**Example (sync mode with custom max age):**
+```json
+{"tool": "index", "params": {"root": "/home/user/Photos", "async": false, "maxAge": 300}}
+```
+
+**Response (when skipped):**
+```json
+{
+  "root": "/home/user/Photos",
+  "status": "completed",
+  "files": 0,
+  "directories": 0,
+  "totalSize": 0,
+  "durationMs": 5,
+  "skipped": true,
+  "skipReason": "Path was scanned 1200 seconds ago (max age: 3600 seconds). Use force=true to re-index."
+}
+```
+
+---
+
+#### job-progress
+
+Retrieve status for an indexing job.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| jobId | string | Yes | - | Job identifier returned from index |
+
+**Example:**
+```json
+{"tool": "job-progress", "params": {"jobId": "123"}}
+```
+
+---
+
+#### list-jobs
+
+List indexing jobs with optional filtering.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| activeOnly | boolean | No | false | Show only running/pending jobs |
+| status | string | No | - | Filter by status (pending, running, completed, failed, cancelled) |
+| minProgress | number | No | - | Filter by minimum progress (0-100) |
+| maxProgress | number | No | - | Filter by maximum progress (0-100) |
+| limit | number | No | 50 | Maximum jobs to return |
+
+---
+
+#### cancel-job
+
+Cancel a running or pending indexing job.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| jobId | string | Yes | - | Job identifier to cancel |
+
+---
+
 ### Resource Navigation (DAG)
 
 #### resource-children

@@ -99,6 +99,8 @@ Note: Indexing is performed via Plans. Create a plan with a `filesystem.index` s
 ### Core Components
 1. **CLI Entry Point**: Command-line interface for server and utility commands
 2. **Filesystem Crawler**: Stack-based DFS traversal, metadata collection, database updates
+   - **Performance optimization**: Skips indexing if a path was recently scanned (within configurable `maxAge`, default 1 hour)
+   - Use `force=true` in the MCP `index` tool to override and force re-indexing
 3. **Database Layer**: SQLite abstraction with multiple tables (entries, resource_sets, sources, rules, plans, etc.)
 4. **Resource-Set Management** (DAG-based):
    - Named collections of file/directory entries

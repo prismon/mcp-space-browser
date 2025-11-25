@@ -1958,3 +1958,68 @@ func (d *DiskDB) UpdatePathsRecursive(oldPath, newPath string) error {
 
 	return nil
 }
+
+// GetPathLastScanned returns the last_scanned timestamp for a root path.
+// If the path has never been scanned, returns 0.
+// This checks when the root directory entry itself was last scanned.
+func (d *DiskDB) GetPathLastScanned(root string) (int64, error) {
+	var lastScanned sql.NullInt64
+
+	err := d.db.QueryRow(`
+		SELECT last_scanned FROM entries WHERE path = ?
+	`, root).Scan(&lastScanned)
+
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	if !lastScanned.Valid {
+		return 0, nil
+	}
+
+	return lastScanned.Int64, nil
+}
+
+// GetPathScanInfo returns detailed scan information for a path including
+// the last scan time and entry count. Useful for determining if a rescan is needed.
+type PathScanInfo struct {
+	LastScanned int64 // Unix timestamp of last scan
+	EntryCount  int   // Number of entries under this path
+	Exists      bool  // Whether the path exists in the database
+}
+
+func (d *DiskDB) GetPathScanInfo(root string) (*PathScanInfo, error) {
+	info := &PathScanInfo{}
+
+	// Check if the root entry exists and get its last_scanned time
+	var lastScanned sql.NullInt64
+	err := d.db.QueryRow(`
+		SELECT last_scanned FROM entries WHERE path = ?
+	`, root).Scan(&lastScanned)
+
+	if err == sql.ErrNoRows {
+		info.Exists = false
+		return info, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	info.Exists = true
+	if lastScanned.Valid {
+		info.LastScanned = lastScanned.Int64
+	}
+
+	// Get entry count under this path
+	err = d.db.QueryRow(`
+		SELECT COUNT(*) FROM entries WHERE path = ? OR path LIKE ?
+	`, root, root+"/%").Scan(&info.EntryCount)
+	if err != nil {
+		return nil, err
+	}
+
+	return info, nil
+}
