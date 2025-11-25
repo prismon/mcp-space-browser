@@ -220,6 +220,8 @@ Provides full MCP (Model Context Protocol) integration via **tools** and **resou
 - `resource-sum`: Hierarchical aggregation of a metric (replaces disk-du)
 - `resource-time-range`: Filter by time field range (replaces disk-time-range)
 - `resource-metric-range`: Filter by metric value range
+- `resource-is`: Exact match on a field value (e.g., kind="file")
+- `resource-fuzzy-match`: Fuzzy/pattern matching on text fields (contains, prefix, suffix, regex, glob)
 
 **Resource-Set Management:**
 - `resource-set-create`, `resource-set-list`, `resource-set-get`, `resource-set-modify`, `resource-set-delete`

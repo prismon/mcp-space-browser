@@ -183,6 +183,64 @@ Filter resources by a metric within a numeric range.
 }
 ```
 
+### resource-is
+
+Exact match on a field value.
+
+```json
+{
+  "tool": "resource-is",
+  "params": {
+    "name": "photos",
+    "field": "kind",            // Any entry field: kind, path, parent, etc.
+    "value": "file",            // Exact value to match
+    "include_children": true
+  }
+}
+```
+
+**Use cases:**
+- `field: "kind", value: "directory"` - Find all directories
+- `field: "parent", value: "/home/user/Photos"` - Find immediate children
+- `field: "path", value: "/home/user/file.txt"` - Find exact path
+
+### resource-fuzzy-match
+
+Fuzzy/pattern matching on text fields.
+
+```json
+{
+  "tool": "resource-fuzzy-match",
+  "params": {
+    "name": "photos",
+    "field": "path",            // Text field to search
+    "pattern": "vacation",      // Pattern to match
+    "mode": "contains",         // "contains", "prefix", "suffix", "regex", "glob"
+    "case_sensitive": false,
+    "include_children": true
+  }
+}
+```
+
+**Match modes:**
+- `contains`: Path contains substring (SQL LIKE %pattern%)
+- `prefix`: Path starts with pattern (SQL LIKE pattern%)
+- `suffix`: Path ends with pattern (SQL LIKE %pattern)
+- `regex`: Full regex matching (SQLite REGEXP)
+- `glob`: Shell-style globbing (*, ?, [])
+
+**Examples:**
+```json
+// Find all JPEG files
+{"tool": "resource-fuzzy-match", "params": {"name": "photos", "field": "path", "pattern": ".jpg", "mode": "suffix"}}
+
+// Find files in any "backup" directory
+{"tool": "resource-fuzzy-match", "params": {"name": "all-files", "field": "path", "pattern": "*/backup/*", "mode": "glob"}}
+
+// Find files matching regex
+{"tool": "resource-fuzzy-match", "params": {"name": "docs", "field": "path", "pattern": "report_\\d{4}\\.pdf", "mode": "regex"}}
+```
+
 ### resource-children
 
 Get child nodes in the DAG (downstream navigation).
@@ -309,6 +367,144 @@ Resource-sets are exposed as MCP resources for declarative access:
   ]
 }
 ```
+
+---
+
+## Unified Search Engine
+
+All resource query operations (`resource-sum`, `resource-time-range`, `resource-metric-range`, `resource-is`, `resource-fuzzy-match`) are translated into a unified search mechanism that generates optimized SQL queries.
+
+### Search Query Structure
+
+```go
+// ResourceQuery represents a unified query against resources
+type ResourceQuery struct {
+    ResourceSetName  string           `json:"resource_set"`
+    IncludeChildren  bool             `json:"include_children"`
+    Filters          []QueryFilter    `json:"filters"`
+    Aggregation      *QueryAggregation `json:"aggregation,omitempty"`
+    Pagination       *QueryPagination  `json:"pagination,omitempty"`
+}
+
+// QueryFilter represents a single filter condition
+type QueryFilter struct {
+    Field     string      `json:"field"`     // "path", "size", "mtime", "kind", etc.
+    Operator  string      `json:"operator"`  // "eq", "ne", "gt", "gte", "lt", "lte", "in", "like", "regex", "glob"
+    Value     interface{} `json:"value"`
+    CaseSensitive bool    `json:"case_sensitive,omitempty"`
+}
+
+// QueryAggregation for metrics
+type QueryAggregation struct {
+    Function string `json:"function"` // "sum", "count", "avg", "min", "max"
+    Field    string `json:"field"`    // Field to aggregate
+    GroupBy  string `json:"group_by,omitempty"` // Optional grouping
+}
+```
+
+### Tool to SQL Translation
+
+| Tool | Filter Operator | SQL Translation |
+|------|-----------------|-----------------|
+| `resource-is` | `eq` | `field = ?` |
+| `resource-fuzzy-match` (contains) | `like` | `field LIKE '%' \|\| ? \|\| '%'` |
+| `resource-fuzzy-match` (prefix) | `like_prefix` | `field LIKE ? \|\| '%'` |
+| `resource-fuzzy-match` (suffix) | `like_suffix` | `field LIKE '%' \|\| ?` |
+| `resource-fuzzy-match` (regex) | `regex` | `field REGEXP ?` |
+| `resource-fuzzy-match` (glob) | `glob` | `field GLOB ?` |
+| `resource-time-range` | `gte` + `lte` | `field >= ? AND field <= ?` |
+| `resource-metric-range` | `gte` + `lte` | `field >= ? AND field <= ?` |
+| `resource-sum` | (aggregation) | `SELECT SUM(field) FROM ...` |
+
+### Query Execution Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    MCP Tool Request                              │
+│  resource-fuzzy-match(name="photos", field="path",              │
+│                       pattern="vacation", mode="contains")       │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Query Builder                                 │
+│  ResourceQuery{                                                  │
+│    ResourceSetName: "photos",                                    │
+│    IncludeChildren: true,                                        │
+│    Filters: [{Field: "path", Operator: "like", Value: "vacation"}]│
+│  }                                                               │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    SQL Generator                                 │
+│  WITH RECURSIVE descendants AS (                                 │
+│    SELECT id FROM resource_sets WHERE name = 'photos'            │
+│    UNION ALL                                                     │
+│    SELECT e.child_id FROM resource_set_edges e                   │
+│    JOIN descendants d ON e.parent_id = d.id                      │
+│  )                                                               │
+│  SELECT e.* FROM entries e                                       │
+│  JOIN resource_set_entries rse ON e.path = rse.entry_path        │
+│  WHERE rse.set_id IN (SELECT id FROM descendants)                │
+│    AND e.path LIKE '%vacation%'                                  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Result Set                                    │
+│  [Entry{path: "/photos/vacation/beach.jpg", ...},               │
+│   Entry{path: "/photos/vacation/hotel.png", ...}]               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Composable Filters
+
+Multiple filters can be combined using AND/OR logic:
+
+```go
+// Multiple filters (AND by default)
+ResourceQuery{
+    Filters: []QueryFilter{
+        {Field: "kind", Operator: "eq", Value: "file"},
+        {Field: "size", Operator: "gte", Value: 1048576},
+        {Field: "path", Operator: "like_suffix", Value: ".jpg"},
+    }
+}
+
+// Translates to:
+// WHERE kind = 'file' AND size >= 1048576 AND path LIKE '%.jpg'
+```
+
+### DAG Traversal
+
+When `include_children: true`, the query uses a recursive CTE to collect all descendant resource-sets:
+
+```sql
+WITH RECURSIVE descendants(id) AS (
+    -- Base case: the starting resource-set
+    SELECT id FROM resource_sets WHERE name = ?
+
+    UNION ALL
+
+    -- Recursive case: all children
+    SELECT e.child_id
+    FROM resource_set_edges e
+    JOIN descendants d ON e.parent_id = d.id
+)
+SELECT DISTINCT e.*
+FROM entries e
+JOIN resource_set_entries rse ON e.path = rse.entry_path
+WHERE rse.set_id IN (SELECT id FROM descendants)
+  AND [filters...]
+```
+
+### Performance Optimizations
+
+1. **Index Usage**: Queries leverage indexes on `path`, `mtime`, `size`, `kind`
+2. **CTE Materialization**: Recursive CTEs are materialized once for DAG traversal
+3. **Lazy Loading**: Large result sets use cursor-based pagination
+4. **Query Caching**: Identical queries within a time window can be cached
 
 ---
 
@@ -518,6 +714,8 @@ func (db *DiskDB) isAncestor(potentialAncestor, node int64) bool {
 | `resource-sum` | Hierarchical metric aggregation |
 | `resource-time-range` | Filter by time field range |
 | `resource-metric-range` | Filter by metric range |
+| `resource-is` | Exact match on a field value |
+| `resource-fuzzy-match` | Fuzzy/pattern matching on text fields |
 
 **Sources (Data Ingestion):**
 | Tool | Description |

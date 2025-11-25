@@ -143,7 +143,7 @@ curl -X POST http://localhost:3000/mcp \
 
 ### MCP Tools
 
-The MCP server exposes 30 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
+The MCP server exposes 32 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
 
 These tools are accessible via Claude Desktop, Claude Code, or any other MCP-compatible client when the server is running.
 
@@ -157,41 +157,43 @@ These tools are accessible via Claude Desktop, Claude Code, or any other MCP-com
 3. `resource-sum`: Hierarchical aggregation of a metric (replaces disk-du)
 4. `resource-time-range`: Filter resources by time field in range (replaces disk-time-range)
 5. `resource-metric-range`: Filter resources by metric value range
+6. `resource-is`: Exact match on a field value (e.g., kind="file")
+7. `resource-fuzzy-match`: Fuzzy/pattern matching on text fields (contains, prefix, suffix, regex, glob)
 
 **Resource-Set Management:**
-6. `resource-set-create`: Create a named resource-set (DAG node)
-7. `resource-set-list`: List all resource-sets
-8. `resource-set-get`: Get resource-set metadata and entries
-9. `resource-set-modify`: Add/remove entries from a set
-10. `resource-set-delete`: Delete a resource-set
-11. `resource-set-add-child`: Create parent→child edge in DAG
-12. `resource-set-remove-child`: Remove parent→child edge
+8. `resource-set-create`: Create a named resource-set (DAG node)
+9. `resource-set-list`: List all resource-sets
+10. `resource-set-get`: Get resource-set metadata and entries
+11. `resource-set-modify`: Add/remove entries from a set
+12. `resource-set-delete`: Delete a resource-set
+13. `resource-set-add-child`: Create parent→child edge in DAG
+14. `resource-set-remove-child`: Remove parent→child edge
 
 **Unified Source Tools:**
-13. `source-create`: Create a source (filesystem.index, filesystem.watch, query, resource-set)
-14. `source-start`: Start a source to begin monitoring
-15. `source-stop`: Stop a running source
-16. `source-list`: List all configured sources
-17. `source-get`: Get detailed info about a specific source
-18. `source-delete`: Delete a source
-19. `source-execute`: Execute a source once
+15. `source-create`: Create a source (filesystem.index, filesystem.watch, query, resource-set)
+16. `source-start`: Start a source to begin monitoring
+17. `source-stop`: Stop a running source
+18. `source-list`: List all configured sources
+19. `source-get`: Get detailed info about a specific source
+20. `source-delete`: Delete a source
+21. `source-execute`: Execute a source once
 
 **Plan Tools (owns indexing):**
-20. `plan-create`: Create a plan with sources (indexing happens here)
-21. `plan-execute`: Run a plan (triggers filesystem.index sources)
-22. `plan-list`: List all plans
-23. `plan-get`: Get plan definition and execution history
-24. `plan-update`: Modify plan
-25. `plan-delete`: Remove plan
+22. `plan-create`: Create a plan with sources (indexing happens here)
+23. `plan-execute`: Run a plan (triggers filesystem.index sources)
+24. `plan-list`: List all plans
+25. `plan-get`: Get plan definition and execution history
+26. `plan-update`: Modify plan
+27. `plan-delete`: Remove plan
 
 **File Action Tools:**
-26. `rename-files`: Rename files based on a regex pattern
-27. `delete-files`: Delete files or directories from the filesystem
-28. `move-files`: Move files or directories to a destination
+28. `rename-files`: Rename files based on a regex pattern
+29. `delete-files`: Delete files or directories from the filesystem
+30. `move-files`: Move files or directories to a destination
 
 **Session Tools:**
-29. `session-info`: Get session information
-30. `session-set-preferences`: Set session preferences
+31. `session-info`: Get session information
+32. `session-set-preferences`: Set session preferences
 
 ### MCP Resource Templates
 
