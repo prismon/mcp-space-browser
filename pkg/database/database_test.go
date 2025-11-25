@@ -467,6 +467,314 @@ func TestGetEntriesByTimeRange(t *testing.T) {
 	assert.Equal(t, "/test/jun.txt", entries[0].Path)
 }
 
+func TestDB(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Test that DB() returns the underlying database
+	rawDB := db.DB()
+	assert.NotNil(t, rawDB)
+
+	// Verify we can use it to query
+	var count int
+	err = rawDB.QueryRow("SELECT COUNT(*) FROM entries").Scan(&count)
+	assert.NoError(t, err)
+}
+
+func TestLockUnlockIndexing(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Lock indexing
+	err = db.LockIndexing()
+	assert.NoError(t, err, "should acquire lock on first attempt")
+
+	// Try to lock again - should fail
+	err = db.LockIndexing()
+	assert.Error(t, err, "should not acquire lock when already locked")
+
+	// Unlock
+	db.UnlockIndexing()
+
+	// Should be able to lock again
+	err = db.LockIndexing()
+	assert.NoError(t, err, "should acquire lock after unlock")
+	db.UnlockIndexing()
+}
+
+func TestMetadataOperations(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// First create an entry for the metadata
+	entry := &models.Entry{
+		Path: "/test/file.txt",
+		Size: 100,
+		Kind: "file",
+	}
+	err = db.InsertOrUpdate(entry)
+	require.NoError(t, err)
+
+	testHash := "abc123hash"
+
+	t.Run("CreateOrUpdateMetadata", func(t *testing.T) {
+		meta := &models.Metadata{
+			Hash:         testHash,
+			SourcePath:   "/test/file.txt",
+			MetadataType: "thumbnail",
+			MimeType:     "image/jpeg",
+			CachePath:    "/cache/abc123.jpg",
+			FileSize:     1024,
+			CreatedAt:    time.Now().Unix(),
+		}
+		err := db.CreateOrUpdateMetadata(meta)
+		assert.NoError(t, err)
+	})
+
+	t.Run("GetMetadata", func(t *testing.T) {
+		retrieved, err := db.GetMetadata(testHash)
+		assert.NoError(t, err)
+		assert.NotNil(t, retrieved)
+		assert.Equal(t, "thumbnail", retrieved.MetadataType)
+	})
+
+	t.Run("GetMetadataByPath", func(t *testing.T) {
+		metas, err := db.GetMetadataByPath("/test/file.txt")
+		assert.NoError(t, err)
+		assert.NotEmpty(t, metas)
+		assert.Equal(t, "/test/file.txt", metas[0].SourcePath)
+	})
+
+	t.Run("ListMetadata", func(t *testing.T) {
+		// Add another entry and metadata
+		entry2 := &models.Entry{
+			Path: "/test/file2.txt",
+			Size: 200,
+			Kind: "file",
+		}
+		db.InsertOrUpdate(entry2)
+
+		meta2 := &models.Metadata{
+			Hash:         "xyz789hash",
+			SourcePath:   "/test/file2.txt",
+			MetadataType: "thumbnail",
+			MimeType:     "image/jpeg",
+			CachePath:    "/cache/xyz789.jpg",
+			FileSize:     2048,
+			CreatedAt:    time.Now().Unix(),
+		}
+		db.CreateOrUpdateMetadata(meta2)
+
+		metaType := "thumbnail"
+		list, err := db.ListMetadata(&metaType)
+		assert.NoError(t, err)
+		assert.GreaterOrEqual(t, len(list), 2)
+	})
+
+	t.Run("DeleteMetadata", func(t *testing.T) {
+		err := db.DeleteMetadata(testHash)
+		assert.NoError(t, err)
+
+		// Verify deleted
+		retrieved, err := db.GetMetadata(testHash)
+		assert.NoError(t, err)
+		assert.Nil(t, retrieved)
+	})
+}
+
+func TestDeleteEntry(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create an entry
+	entry := &models.Entry{
+		Path: "/test/delete.txt",
+		Size: 100,
+		Kind: "file",
+	}
+	err = db.InsertOrUpdate(entry)
+	require.NoError(t, err)
+
+	// Delete it
+	err = db.DeleteEntry("/test/delete.txt")
+	assert.NoError(t, err)
+
+	// Verify deleted
+	retrieved, err := db.Get("/test/delete.txt")
+	assert.NoError(t, err)
+	assert.Nil(t, retrieved)
+}
+
+func TestDeleteEntryRecursive(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create a directory structure
+	parent := &models.Entry{
+		Path: "/parent",
+		Size: 0,
+		Kind: "directory",
+	}
+	db.InsertOrUpdate(parent)
+
+	child := &models.Entry{
+		Path:   "/parent/child.txt",
+		Parent: stringPtr("/parent"),
+		Size:   100,
+		Kind:   "file",
+	}
+	db.InsertOrUpdate(child)
+
+	// Delete recursively
+	err = db.DeleteEntryRecursive("/parent")
+	assert.NoError(t, err)
+
+	// Verify both deleted
+	parentEntry, _ := db.Get("/parent")
+	assert.Nil(t, parentEntry)
+
+	childEntry, _ := db.Get("/parent/child.txt")
+	assert.Nil(t, childEntry)
+}
+
+func TestUpdateEntryPath(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create an entry
+	entry := &models.Entry{
+		Path: "/old/path.txt",
+		Size: 100,
+		Kind: "file",
+	}
+	err = db.InsertOrUpdate(entry)
+	require.NoError(t, err)
+
+	// Update path
+	err = db.UpdateEntryPath("/old/path.txt", "/new/path.txt")
+	assert.NoError(t, err)
+
+	// Verify old path doesn't exist
+	old, _ := db.Get("/old/path.txt")
+	assert.Nil(t, old)
+
+	// Verify new path exists
+	new, err := db.Get("/new/path.txt")
+	assert.NoError(t, err)
+	assert.NotNil(t, new)
+	assert.Equal(t, "/new/path.txt", new.Path)
+}
+
+func TestUpdatePathsRecursive(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create a directory structure
+	parent := &models.Entry{
+		Path: "/old",
+		Size: 0,
+		Kind: "directory",
+	}
+	db.InsertOrUpdate(parent)
+
+	child := &models.Entry{
+		Path:   "/old/file.txt",
+		Parent: stringPtr("/old"),
+		Size:   100,
+		Kind:   "file",
+	}
+	db.InsertOrUpdate(child)
+
+	// Update paths recursively
+	err = db.UpdatePathsRecursive("/old", "/new")
+	assert.NoError(t, err)
+
+	// Verify old paths don't exist
+	oldParent, _ := db.Get("/old")
+	assert.Nil(t, oldParent)
+
+	// Verify new paths exist
+	newParent, _ := db.Get("/new")
+	assert.NotNil(t, newParent)
+
+	newChild, _ := db.Get("/new/file.txt")
+	assert.NotNil(t, newChild)
+}
+
+func TestGetPathLastScanned(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	scanTime := time.Now().Unix()
+
+	// Create an entry with scan time
+	entry := &models.Entry{
+		Path:        "/test/scanned.txt",
+		Size:        100,
+		Kind:        "file",
+		LastScanned: scanTime,
+	}
+	err = db.InsertOrUpdate(entry)
+	require.NoError(t, err)
+
+	// Get last scanned time
+	lastScanned, err := db.GetPathLastScanned("/test/scanned.txt")
+	assert.NoError(t, err)
+	assert.Equal(t, scanTime, lastScanned)
+
+	// Test non-existent path
+	lastScanned2, err := db.GetPathLastScanned("/nonexistent")
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), lastScanned2)
+}
+
+func TestGetPathScanInfo(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	scanTime := time.Now().Unix()
+
+	// Create a directory with entries
+	parent := &models.Entry{
+		Path:        "/scantest",
+		Size:        0,
+		Kind:        "directory",
+		LastScanned: scanTime,
+	}
+	db.InsertOrUpdate(parent)
+
+	child := &models.Entry{
+		Path:        "/scantest/file.txt",
+		Parent:      stringPtr("/scantest"),
+		Size:        100,
+		Kind:        "file",
+		LastScanned: scanTime,
+	}
+	db.InsertOrUpdate(child)
+
+	// Get scan info
+	scanInfo, err := db.GetPathScanInfo("/scantest")
+	assert.NoError(t, err)
+	assert.NotNil(t, scanInfo)
+	assert.Equal(t, 2, scanInfo.EntryCount) // parent + child
+
+	// Test non-existent path - returns struct with Exists=false
+	scanInfo2, err := db.GetPathScanInfo("/nonexistent")
+	assert.NoError(t, err)
+	assert.NotNil(t, scanInfo2)
+	assert.False(t, scanInfo2.Exists)
+	assert.Equal(t, 0, scanInfo2.EntryCount)
+}
+
 // Helper function
 func stringPtr(s string) *string {
 	return &s
