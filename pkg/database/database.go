@@ -146,6 +146,27 @@ func (d *DiskDB) init() error {
 		return err
 	}
 
+	// Create resource_set_edges table for DAG structure (supports multiple parents)
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS resource_set_edges (
+		parent_id INTEGER NOT NULL,
+		child_id INTEGER NOT NULL,
+		added_at INTEGER DEFAULT (strftime('%s', 'now')),
+		PRIMARY KEY (parent_id, child_id),
+		FOREIGN KEY (parent_id) REFERENCES selection_sets(id) ON DELETE CASCADE,
+		FOREIGN KEY (child_id) REFERENCES selection_sets(id) ON DELETE CASCADE,
+		CHECK (parent_id != child_id)
+	)`); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_edges_parent ON resource_set_edges(parent_id)"); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_edges_child ON resource_set_edges(child_id)"); err != nil {
+		return err
+	}
+
 	// Create queries table
 	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS queries (
 		id INTEGER PRIMARY KEY,
