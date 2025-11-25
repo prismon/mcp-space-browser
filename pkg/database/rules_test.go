@@ -584,6 +584,211 @@ func TestUpdateSelectionSet(t *testing.T) {
 	assert.Equal(t, "Updated description", *retrieved.Description)
 }
 
+func TestGetRuleExecutionNonexistent(t *testing.T) {
+	os.Setenv("GO_ENV", "test")
+	defer os.Unsetenv("GO_ENV")
+
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Get non-existent execution
+	exec, err := db.GetRuleExecution(9999)
+	assert.NoError(t, err)
+	assert.Nil(t, exec)
+}
+
+func TestListRuleExecutionsWithLimit(t *testing.T) {
+	os.Setenv("GO_ENV", "test")
+	defer os.Unsetenv("GO_ENV")
+
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create a rule
+	condition := models.RuleCondition{Type: "size"}
+	conditionJSON, _ := json.Marshal(condition)
+	outcome := models.RuleOutcome{
+		Type:             "selection_set",
+		SelectionSetName: "test-set",
+	}
+	outcomeJSON, _ := json.Marshal(outcome)
+
+	rule := &models.Rule{
+		Name:          "exec-limit-rule",
+		Enabled:       true,
+		ConditionJSON: string(conditionJSON),
+		OutcomeJSON:   string(outcomeJSON),
+	}
+	ruleID, err := db.CreateRule(rule)
+	require.NoError(t, err)
+
+	// Create selection set
+	set := &models.SelectionSet{Name: "test-set"}
+	setID, _ := db.CreateSelectionSet(set)
+
+	// Create multiple executions
+	for i := 0; i < 5; i++ {
+		exec := &models.RuleExecution{
+			RuleID:         ruleID,
+			SelectionSetID: setID,
+			Status:         "success",
+		}
+		_, err := db.CreateRuleExecution(exec)
+		require.NoError(t, err)
+	}
+
+	// List with limit
+	execs, err := db.ListRuleExecutions(ruleID, 3)
+	assert.NoError(t, err)
+	assert.Len(t, execs, 3)
+
+	// List all (limit 0)
+	allExecs, err := db.ListRuleExecutions(ruleID, 0)
+	assert.NoError(t, err)
+	assert.Len(t, allExecs, 5)
+}
+
+func TestListRuleOutcomesEmpty(t *testing.T) {
+	os.Setenv("GO_ENV", "test")
+	defer os.Unsetenv("GO_ENV")
+
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// List outcomes for non-existent execution
+	outcomes, err := db.ListRuleOutcomes(9999)
+	assert.NoError(t, err)
+	assert.Len(t, outcomes, 0)
+}
+
+func TestParseRuleConditionInvalid(t *testing.T) {
+	_, err := ParseRuleCondition("invalid json")
+	assert.Error(t, err)
+}
+
+func TestParseRuleOutcomeInvalid(t *testing.T) {
+	_, err := ParseRuleOutcome("invalid json")
+	assert.Error(t, err)
+}
+
+func TestUpdateSelectionSetNonexistent(t *testing.T) {
+	os.Setenv("GO_ENV", "test")
+	defer os.Unsetenv("GO_ENV")
+
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	desc := "New desc"
+	err = db.UpdateSelectionSet("nonexistent-set", &desc)
+	assert.Error(t, err)
+}
+
+func TestGetResourceSetStatsFromRules(t *testing.T) {
+	os.Setenv("GO_ENV", "test")
+	defer os.Unsetenv("GO_ENV")
+
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create a selection set
+	set := &models.SelectionSet{Name: "rule-stats-set"}
+	_, err = db.CreateSelectionSet(set)
+	require.NoError(t, err)
+
+	// Create entries
+	now := time.Now().Unix()
+	for i := 0; i < 5; i++ {
+		entry := &models.Entry{
+			Path: "/rulestats/file" + string(rune('a'+i)) + ".txt",
+			Size: int64(i * 100),
+			Kind: "file",
+			Mtime: now,
+		}
+		db.InsertOrUpdate(entry)
+	}
+
+	// Add entries to set
+	paths := []string{"/rulestats/filea.txt", "/rulestats/fileb.txt", "/rulestats/filec.txt"}
+	db.AddToSelectionSet("rule-stats-set", paths)
+
+	// Get stats
+	stats, err := db.GetResourceSetStats("rule-stats-set")
+	assert.NoError(t, err)
+	assert.NotNil(t, stats)
+}
+
+func TestListRuleOutcomesBySelectionSetWithLimit(t *testing.T) {
+	os.Setenv("GO_ENV", "test")
+	defer os.Unsetenv("GO_ENV")
+
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create rule
+	condition := models.RuleCondition{Type: "size"}
+	conditionJSON, _ := json.Marshal(condition)
+	outcome := models.RuleOutcome{
+		Type:             "selection_set",
+		SelectionSetName: "limit-test-set",
+	}
+	outcomeJSON, _ := json.Marshal(outcome)
+
+	rule := &models.Rule{
+		Name:          "limit-outcome-rule",
+		Enabled:       true,
+		ConditionJSON: string(conditionJSON),
+		OutcomeJSON:   string(outcomeJSON),
+	}
+	ruleID, _ := db.CreateRule(rule)
+
+	// Create selection set
+	set := &models.SelectionSet{Name: "limit-test-set"}
+	setID, _ := db.CreateSelectionSet(set)
+
+	// Create execution
+	exec := &models.RuleExecution{
+		RuleID:         ruleID,
+		SelectionSetID: setID,
+		Status:         "success",
+	}
+	execID, _ := db.CreateRuleExecution(exec)
+
+	// Create multiple entries and outcomes
+	for i := 0; i < 5; i++ {
+		entry := &models.Entry{
+			Path: "/limit/file" + string(rune('a'+i)) + ".txt",
+			Size: int64(i * 100),
+			Kind: "file",
+		}
+		db.InsertOrUpdate(entry)
+
+		outcomeRecord := &models.RuleOutcomeRecord{
+			ExecutionID:    execID,
+			SelectionSetID: setID,
+			EntryPath:      entry.Path,
+			OutcomeType:    "test",
+			Status:         "success",
+		}
+		db.CreateRuleOutcome(outcomeRecord)
+	}
+
+	// List with limit
+	outcomes, err := db.ListRuleOutcomesBySelectionSet(setID, 3)
+	assert.NoError(t, err)
+	assert.Len(t, outcomes, 3)
+
+	// List all
+	allOutcomes, err := db.ListRuleOutcomesBySelectionSet(setID, 0)
+	assert.NoError(t, err)
+	assert.Len(t, allOutcomes, 5)
+}
+
 // Helper function
 func strPtr(s string) *string {
 	return &s

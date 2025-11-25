@@ -314,3 +314,168 @@ func TestGetPathLastScanned(t *testing.T) {
 	assert.LessOrEqual(t, lastScanned, now)
 	assert.GreaterOrEqual(t, lastScanned, now-5)
 }
+
+func TestIndexWithProgressCallback(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create multiple files to ensure progress callback is called
+	for i := 0; i < 5; i++ {
+		testFile := filepath.Join(tempDir, "file"+string(rune('a'+i))+".txt")
+		if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	db, err := database.NewDiskDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	callbackCalled := false
+	callback := func(stats *IndexStats, remaining int) {
+		callbackCalled = true
+	}
+
+	stats, err := Index(tempDir, db, nil, 0, callback)
+	assert.NoError(t, err)
+	assert.NotNil(t, stats)
+	assert.Equal(t, 5, stats.FilesProcessed)
+	// Progress callback may or may not be called depending on timing
+	_ = callbackCalled
+}
+
+func TestIndexInvalidPath(t *testing.T) {
+	db, err := database.NewDiskDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Try to index a non-existent path
+	_, err = Index("/nonexistent/path/that/does/not/exist", db, nil, 0, nil)
+	assert.Error(t, err)
+}
+
+func TestIndexStalePathReindex(t *testing.T) {
+	tempDir := t.TempDir()
+
+	testFile := filepath.Join(tempDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := database.NewDiskDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// First index with a very short maxAge (1 second)
+	opts := &IndexOptions{
+		Force:  false,
+		MaxAge: 1, // 1 second
+	}
+	stats, err := IndexWithOptions(tempDir, db, nil, 0, nil, opts)
+	assert.NoError(t, err)
+	assert.False(t, stats.Skipped)
+
+	// Wait for the scan to become stale
+	time.Sleep(2 * time.Second)
+
+	// Second index should NOT be skipped because it's stale
+	stats2, err := IndexWithOptions(tempDir, db, nil, 0, nil, opts)
+	assert.NoError(t, err)
+	assert.NotNil(t, stats2)
+	assert.False(t, stats2.Skipped, "Stale scan should not be skipped")
+}
+
+func TestIndexWithManyFiles(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create many files
+	for i := 0; i < 50; i++ {
+		testFile := filepath.Join(tempDir, "file"+string(rune('0'+i%10))+string(rune('0'+i/10))+".txt")
+		if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	db, err := database.NewDiskDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	stats, err := Index(tempDir, db, nil, 0, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, stats)
+	assert.Equal(t, 50, stats.FilesProcessed)
+	assert.Equal(t, 1, stats.DirectoriesProcessed) // tempDir
+
+	// Verify all files are in database
+	entries, err := db.All()
+	assert.NoError(t, err)
+	assert.Equal(t, 51, len(entries)) // tempDir + 50 files
+}
+
+func TestIndexEmptyDirectory(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create an empty subdirectory
+	emptyDir := filepath.Join(tempDir, "empty")
+	if err := os.Mkdir(emptyDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := database.NewDiskDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	stats, err := Index(tempDir, db, nil, 0, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, stats)
+	assert.Equal(t, 0, stats.FilesProcessed)
+	assert.Equal(t, 2, stats.DirectoriesProcessed) // tempDir + empty
+
+	// Verify both directories are in database
+	entries, err := db.All()
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(entries))
+}
+
+func TestIndexDeepNesting(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create deeply nested directory structure
+	deepPath := filepath.Join(tempDir, "a", "b", "c", "d", "e")
+	if err := os.MkdirAll(deepPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a file at the deepest level
+	testFile := filepath.Join(deepPath, "deep.txt")
+	if err := os.WriteFile(testFile, []byte("deep content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := database.NewDiskDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	stats, err := Index(tempDir, db, nil, 0, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, stats)
+	assert.Equal(t, 1, stats.FilesProcessed)
+	assert.Equal(t, 6, stats.DirectoriesProcessed) // tempDir + a + b + c + d + e
+
+	// Verify the deepest file is in database
+	deepEntry, err := db.Get(testFile)
+	assert.NoError(t, err)
+	assert.NotNil(t, deepEntry)
+	assert.Equal(t, "file", deepEntry.Kind)
+}

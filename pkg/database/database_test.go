@@ -1,6 +1,8 @@
 package database
 
 import (
+	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -773,6 +775,912 @@ func TestGetPathScanInfo(t *testing.T) {
 	assert.NotNil(t, scanInfo2)
 	assert.False(t, scanInfo2.Exists)
 	assert.Equal(t, 0, scanInfo2.EntryCount)
+}
+
+func TestGetTreeWithOptions(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now().Unix()
+	ctx := context.Background()
+
+	// Create a directory structure
+	root := &models.Entry{
+		Path: "/root", Size: 0, Kind: "directory",
+		LastScanned: now, Mtime: now,
+	}
+	db.InsertOrUpdate(root)
+
+	subdir := &models.Entry{
+		Path: "/root/subdir", Parent: stringPtr("/root"),
+		Size: 0, Kind: "directory",
+		LastScanned: now, Mtime: now,
+	}
+	db.InsertOrUpdate(subdir)
+
+	file1 := &models.Entry{
+		Path: "/root/file1.txt", Parent: stringPtr("/root"),
+		Size: 1000, Kind: "file",
+		LastScanned: now, Mtime: now,
+	}
+	db.InsertOrUpdate(file1)
+
+	file2 := &models.Entry{
+		Path: "/root/file2.txt", Parent: stringPtr("/root"),
+		Size: 500, Kind: "file",
+		LastScanned: now, Mtime: now,
+	}
+	db.InsertOrUpdate(file2)
+
+	subfile := &models.Entry{
+		Path: "/root/subdir/subfile.txt", Parent: stringPtr("/root/subdir"),
+		Size: 200, Kind: "file",
+		LastScanned: now, Mtime: now,
+	}
+	db.InsertOrUpdate(subfile)
+
+	db.ComputeAggregates("/root")
+
+	// Test with default options
+	nodesReturned := 0
+	opts := TreeOptions{
+		MaxDepth:       10,
+		Limit:          nil,
+		MinSize:        0,
+		SortBy:         "size",
+		DescendingSort: true,
+		ChildThreshold: 1000,
+		NodesReturned:  &nodesReturned,
+	}
+	tree, err := db.GetTreeWithOptions(ctx, "/root", opts)
+	assert.NoError(t, err)
+	assert.NotNil(t, tree)
+	assert.Equal(t, "root", tree.Name)
+	assert.Equal(t, "directory", tree.Kind)
+	assert.GreaterOrEqual(t, len(tree.Children), 2)
+
+	// Test with max depth = 1
+	nodesReturned = 0
+	opts.MaxDepth = 1
+	opts.CurrentDepth = 0
+	tree2, err := db.GetTreeWithOptions(ctx, "/root", opts)
+	assert.NoError(t, err)
+	assert.NotNil(t, tree2)
+
+	// Test with min size filter
+	nodesReturned = 0
+	opts.MaxDepth = 10
+	opts.MinSize = 800
+	tree3, err := db.GetTreeWithOptions(ctx, "/root", opts)
+	assert.NoError(t, err)
+	assert.NotNil(t, tree3)
+
+	// Test non-existent path
+	_, err = db.GetTreeWithOptions(ctx, "/nonexistent", opts)
+	assert.Error(t, err)
+}
+
+func TestGetTreeWithOptionsManyChildren(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now().Unix()
+	ctx := context.Background()
+
+	// Create root directory
+	root := &models.Entry{
+		Path: "/manychildren", Size: 0, Kind: "directory",
+		LastScanned: now, Mtime: now,
+	}
+	db.InsertOrUpdate(root)
+
+	// Create many children to trigger threshold
+	for i := 0; i < 20; i++ {
+		file := &models.Entry{
+			Path:        filepath.Join("/manychildren", "file"+string(rune('0'+i%10))+string(rune('0'+i/10))+".txt"),
+			Parent:      stringPtr("/manychildren"),
+			Size:        int64(i * 100),
+			Kind:        "file",
+			LastScanned: now,
+			Mtime:       now,
+		}
+		db.InsertOrUpdate(file)
+	}
+
+	// Test with low threshold to trigger summarization
+	nodesReturned := 0
+	opts := TreeOptions{
+		MaxDepth:       10,
+		MinSize:        0,
+		SortBy:         "size",
+		DescendingSort: true,
+		ChildThreshold: 5, // Low threshold to trigger summary
+		NodesReturned:  &nodesReturned,
+	}
+
+	tree, err := db.GetTreeWithOptions(ctx, "/manychildren", opts)
+	assert.NoError(t, err)
+	assert.NotNil(t, tree)
+	assert.True(t, tree.Truncated)
+	assert.NotNil(t, tree.Summary)
+}
+
+func TestGetTreeSorting(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now().Unix()
+	ctx := context.Background()
+
+	root := &models.Entry{
+		Path: "/sortroot", Size: 0, Kind: "directory",
+		LastScanned: now, Mtime: now,
+	}
+	db.InsertOrUpdate(root)
+
+	// Create files with different sizes and mtimes
+	file1 := &models.Entry{
+		Path: "/sortroot/afile.txt", Parent: stringPtr("/sortroot"),
+		Size: 100, Kind: "file",
+		LastScanned: now, Mtime: now - 100,
+	}
+	db.InsertOrUpdate(file1)
+
+	file2 := &models.Entry{
+		Path: "/sortroot/bfile.txt", Parent: stringPtr("/sortroot"),
+		Size: 200, Kind: "file",
+		LastScanned: now, Mtime: now - 50,
+	}
+	db.InsertOrUpdate(file2)
+
+	// Test sort by size descending
+	nodesReturned := 0
+	opts := TreeOptions{
+		MaxDepth:       10,
+		SortBy:         "size",
+		DescendingSort: true,
+		ChildThreshold: 1000,
+		NodesReturned:  &nodesReturned,
+	}
+	tree, err := db.GetTreeWithOptions(ctx, "/sortroot", opts)
+	assert.NoError(t, err)
+	assert.NotNil(t, tree)
+	if len(tree.Children) >= 2 {
+		assert.GreaterOrEqual(t, tree.Children[0].Size, tree.Children[1].Size)
+	}
+
+	// Test sort by name
+	nodesReturned = 0
+	opts.SortBy = "name"
+	opts.DescendingSort = false
+	tree2, err := db.GetTreeWithOptions(ctx, "/sortroot", opts)
+	assert.NoError(t, err)
+	assert.NotNil(t, tree2)
+
+	// Test sort by mtime
+	nodesReturned = 0
+	opts.SortBy = "mtime"
+	opts.DescendingSort = true
+	tree3, err := db.GetTreeWithOptions(ctx, "/sortroot", opts)
+	assert.NoError(t, err)
+	assert.NotNil(t, tree3)
+}
+
+func TestAddRemoveSelectionSet(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create a selection set
+	desc := "Test selection"
+	set := &models.SelectionSet{
+		Name:        "test-set",
+		Description: &desc,
+	}
+	_, err = db.CreateSelectionSet(set)
+	assert.NoError(t, err)
+
+	// Create some entries
+	now := time.Now().Unix()
+	entry1 := &models.Entry{
+		Path: "/test1.txt", Size: 100, Kind: "file",
+		LastScanned: now, Mtime: now,
+	}
+	db.InsertOrUpdate(entry1)
+
+	entry2 := &models.Entry{
+		Path: "/test2.txt", Size: 200, Kind: "file",
+		LastScanned: now, Mtime: now,
+	}
+	db.InsertOrUpdate(entry2)
+
+	// Add entries to selection set
+	err = db.AddToSelectionSet("test-set", []string{"/test1.txt", "/test2.txt"})
+	assert.NoError(t, err)
+
+	// Get selection set entries
+	entries, err := db.GetSelectionSetEntries("test-set")
+	assert.NoError(t, err)
+	assert.Len(t, entries, 2)
+
+	// Remove one entry
+	err = db.RemoveFromSelectionSet("test-set", []string{"/test1.txt"})
+	assert.NoError(t, err)
+
+	// Verify removal
+	entries, err = db.GetSelectionSetEntries("test-set")
+	assert.NoError(t, err)
+	assert.Len(t, entries, 1)
+
+	// Test adding to non-existent set
+	err = db.AddToSelectionSet("nonexistent", []string{"/test1.txt"})
+	assert.Error(t, err)
+
+	// Test removing from non-existent set
+	err = db.RemoveFromSelectionSet("nonexistent", []string{"/test1.txt"})
+	assert.Error(t, err)
+}
+
+func TestTransactionDoubleBegin(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Begin a transaction
+	err = db.BeginTransaction()
+	assert.NoError(t, err)
+
+	// Begin again should error (already in transaction)
+	err = db.BeginTransaction()
+	assert.Error(t, err)
+
+	// Rollback the first transaction
+	err = db.RollbackTransaction()
+	assert.NoError(t, err)
+
+	// Now should be able to begin again
+	err = db.BeginTransaction()
+	assert.NoError(t, err)
+
+	// Commit the transaction
+	err = db.CommitTransaction()
+	assert.NoError(t, err)
+}
+
+func TestExecuteFileFilterExtended(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now().Unix()
+	oldTime := now - 86400*30 // 30 days ago
+
+	// Insert test files
+	files := []struct {
+		path  string
+		size  int64
+		mtime int64
+	}{
+		{"/root/doc.txt", 1000, now},
+		{"/root/image.jpg", 5000, oldTime},
+		{"/root/large.mp4", 100000, now},
+		{"/root/subdir/small.txt", 100, now},
+		{"/root/test_file.log", 500, oldTime},
+	}
+	for _, f := range files {
+		entry := &models.Entry{
+			Path:        f.path,
+			Parent:      stringPtr(filepath.Dir(f.path)),
+			Size:        f.size,
+			Kind:        "file",
+			Mtime:       f.mtime,
+			LastScanned: now,
+		}
+		db.InsertOrUpdate(entry)
+	}
+
+	t.Run("FilterByPath", func(t *testing.T) {
+		path := "/root"
+		filter := &models.FileFilter{Path: &path}
+		entries, err := db.ExecuteFileFilter(filter)
+		assert.NoError(t, err)
+		assert.Len(t, entries, 5)
+	})
+
+	t.Run("FilterByExtensions", func(t *testing.T) {
+		filter := &models.FileFilter{
+			Extensions: []string{"txt", "log"},
+		}
+		entries, err := db.ExecuteFileFilter(filter)
+		assert.NoError(t, err)
+		assert.Len(t, entries, 3)
+	})
+
+	t.Run("FilterByMaxSize", func(t *testing.T) {
+		maxSize := int64(1000)
+		filter := &models.FileFilter{MaxSize: &maxSize}
+		entries, err := db.ExecuteFileFilter(filter)
+		assert.NoError(t, err)
+		assert.Len(t, entries, 3) // doc.txt (1000), small.txt (100), test_file.log (500)
+	})
+
+	t.Run("FilterByDateRange", func(t *testing.T) {
+		// Only recent files
+		minDate := time.Unix(now-86400, 0).Format("2006-01-02")
+		filter := &models.FileFilter{MinDate: &minDate}
+		entries, err := db.ExecuteFileFilter(filter)
+		assert.NoError(t, err)
+		assert.GreaterOrEqual(t, len(entries), 2)
+	})
+
+	t.Run("FilterByNameContains", func(t *testing.T) {
+		name := "test"
+		filter := &models.FileFilter{NameContains: &name}
+		entries, err := db.ExecuteFileFilter(filter)
+		assert.NoError(t, err)
+		assert.Len(t, entries, 1)
+		assert.Contains(t, entries[0].Path, "test")
+	})
+
+	t.Run("FilterByPathContains", func(t *testing.T) {
+		path := "subdir"
+		filter := &models.FileFilter{PathContains: &path}
+		entries, err := db.ExecuteFileFilter(filter)
+		assert.NoError(t, err)
+		assert.Len(t, entries, 1)
+	})
+
+	t.Run("FilterWithSortBy", func(t *testing.T) {
+		sortBy := "size"
+		descending := true
+		filter := &models.FileFilter{SortBy: &sortBy, DescendingSort: &descending}
+		entries, err := db.ExecuteFileFilter(filter)
+		assert.NoError(t, err)
+		assert.GreaterOrEqual(t, len(entries), 2)
+		if len(entries) >= 2 {
+			assert.GreaterOrEqual(t, entries[0].Size, entries[1].Size)
+		}
+	})
+
+	t.Run("FilterWithLimit", func(t *testing.T) {
+		limit := 2
+		filter := &models.FileFilter{Limit: &limit}
+		entries, err := db.ExecuteFileFilter(filter)
+		assert.NoError(t, err)
+		assert.Len(t, entries, 2)
+	})
+
+	t.Run("FilterByPattern", func(t *testing.T) {
+		pattern := ".*\\.txt$"
+		filter := &models.FileFilter{Pattern: &pattern}
+		entries, err := db.ExecuteFileFilter(filter)
+		assert.NoError(t, err)
+		// All should be .txt files
+		for _, e := range entries {
+			assert.True(t, filepath.Ext(e.Path) == ".txt")
+		}
+	})
+
+	t.Run("InvalidPattern", func(t *testing.T) {
+		pattern := "[invalid"
+		filter := &models.FileFilter{Pattern: &pattern}
+		_, err := db.ExecuteFileFilter(filter)
+		assert.Error(t, err)
+	})
+
+	t.Run("InvalidSortField", func(t *testing.T) {
+		sortBy := "invalid_field"
+		filter := &models.FileFilter{SortBy: &sortBy}
+		_, err := db.ExecuteFileFilter(filter)
+		assert.Error(t, err)
+	})
+}
+
+func TestQueryOperations(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now().Unix()
+
+	// Insert test files
+	for i := 0; i < 5; i++ {
+		entry := &models.Entry{
+			Path:        filepath.Join("/test", "file"+string(rune('a'+i))+".txt"),
+			Size:        int64(i * 100),
+			Kind:        "file",
+			Mtime:       now,
+			LastScanned: now,
+		}
+		db.InsertOrUpdate(entry)
+	}
+
+	var queryID int64
+
+	t.Run("CreateQuery", func(t *testing.T) {
+		filter := models.FileFilter{
+			Extensions: []string{"txt"},
+		}
+		filterJSON, _ := json.Marshal(filter)
+		query := &models.Query{
+			Name:      "test-query",
+			QueryType: "file_filter",
+			QueryJSON: string(filterJSON),
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		id, err := db.CreateQuery(query)
+		assert.NoError(t, err)
+		assert.Greater(t, id, int64(0))
+		queryID = id
+	})
+
+	t.Run("GetQuery", func(t *testing.T) {
+		query, err := db.GetQuery("test-query")
+		assert.NoError(t, err)
+		assert.NotNil(t, query)
+		assert.Equal(t, "test-query", query.Name)
+	})
+
+	t.Run("ListQueries", func(t *testing.T) {
+		queries, err := db.ListQueries()
+		assert.NoError(t, err)
+		assert.GreaterOrEqual(t, len(queries), 1)
+	})
+
+	t.Run("ExecuteQuery", func(t *testing.T) {
+		entries, err := db.ExecuteQuery("test-query")
+		assert.NoError(t, err)
+		assert.NotEmpty(t, entries)
+	})
+
+	t.Run("RecordQueryExecution", func(t *testing.T) {
+		filesMatched := 5
+		durationMs := 100
+		exec := &models.QueryExecution{
+			QueryID:      queryID,
+			ExecutedAt:   now,
+			FilesMatched: &filesMatched,
+			DurationMs:   &durationMs,
+			Status:       "success",
+		}
+		err := db.RecordQueryExecution(exec)
+		assert.NoError(t, err)
+	})
+
+	t.Run("DeleteQuery", func(t *testing.T) {
+		err := db.DeleteQuery("test-query")
+		assert.NoError(t, err)
+
+		query, err := db.GetQuery("test-query")
+		assert.NoError(t, err)
+		assert.Nil(t, query)
+	})
+
+	t.Run("ExecuteNonexistentQuery", func(t *testing.T) {
+		_, err := db.ExecuteQuery("nonexistent")
+		assert.Error(t, err)
+	})
+}
+
+func TestCommitTransactionNoTx(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Commit without begin should error
+	err = db.CommitTransaction()
+	assert.Error(t, err)
+}
+
+func TestInsertOrUpdateWithTransaction(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now().Unix()
+
+	// Begin transaction
+	err = db.BeginTransaction()
+	require.NoError(t, err)
+
+	// Insert entries within transaction
+	for i := 0; i < 5; i++ {
+		entry := &models.Entry{
+			Path:        filepath.Join("/txtest", "file"+string(rune('a'+i))+".txt"),
+			Size:        int64(i * 100),
+			Kind:        "file",
+			Mtime:       now,
+			LastScanned: now,
+		}
+		err := db.InsertOrUpdate(entry)
+		assert.NoError(t, err)
+	}
+
+	// Commit
+	err = db.CommitTransaction()
+	assert.NoError(t, err)
+
+	// Verify entries exist
+	entries, err := db.All()
+	assert.NoError(t, err)
+	assert.Len(t, entries, 5)
+}
+
+func TestTransactionRollback(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now().Unix()
+
+	// First insert an entry outside transaction
+	initialEntry := &models.Entry{
+		Path:        "/initial.txt",
+		Size:        100,
+		Kind:        "file",
+		Mtime:       now,
+		LastScanned: now,
+	}
+	err = db.InsertOrUpdate(initialEntry)
+	require.NoError(t, err)
+
+	// Begin transaction
+	err = db.BeginTransaction()
+	require.NoError(t, err)
+
+	// Insert entries within transaction
+	for i := 0; i < 3; i++ {
+		entry := &models.Entry{
+			Path:        filepath.Join("/rollback", "file"+string(rune('a'+i))+".txt"),
+			Size:        int64(i * 100),
+			Kind:        "file",
+			Mtime:       now,
+			LastScanned: now,
+		}
+		err := db.InsertOrUpdate(entry)
+		assert.NoError(t, err)
+	}
+
+	// Rollback
+	err = db.RollbackTransaction()
+	assert.NoError(t, err)
+
+	// Verify only initial entry exists
+	entries, err := db.All()
+	assert.NoError(t, err)
+	assert.Len(t, entries, 1)
+	assert.Equal(t, "/initial.txt", entries[0].Path)
+}
+
+func TestSelectionSetOperations(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	t.Run("CreateSelectionSet", func(t *testing.T) {
+		desc := "Test description"
+		set := &models.SelectionSet{
+			Name:        "my-set",
+			Description: &desc,
+		}
+		id, err := db.CreateSelectionSet(set)
+		assert.NoError(t, err)
+		assert.Greater(t, id, int64(0))
+	})
+
+	t.Run("GetSelectionSet", func(t *testing.T) {
+		set, err := db.GetSelectionSet("my-set")
+		assert.NoError(t, err)
+		assert.NotNil(t, set)
+		assert.Equal(t, "my-set", set.Name)
+	})
+
+	t.Run("GetNonexistentSelectionSet", func(t *testing.T) {
+		set, err := db.GetSelectionSet("nonexistent")
+		assert.NoError(t, err)
+		assert.Nil(t, set)
+	})
+
+	t.Run("ListSelectionSets", func(t *testing.T) {
+		sets, err := db.ListSelectionSets()
+		assert.NoError(t, err)
+		assert.GreaterOrEqual(t, len(sets), 1)
+	})
+
+	t.Run("DeleteSelectionSet", func(t *testing.T) {
+		err := db.DeleteSelectionSet("my-set")
+		assert.NoError(t, err)
+
+		set, err := db.GetSelectionSet("my-set")
+		assert.NoError(t, err)
+		assert.Nil(t, set)
+	})
+}
+
+func TestComputeAggregatesEmptyPath(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Compute aggregates on non-existent path should not error
+	err = db.ComputeAggregates("/nonexistent")
+	assert.NoError(t, err)
+}
+
+func TestGetDiskUsageSummaryEmpty(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Get summary for empty path
+	summary, err := db.GetDiskUsageSummary("/nonexistent")
+	assert.NoError(t, err)
+	assert.NotNil(t, summary)
+	assert.Equal(t, int64(0), summary.TotalSize)
+}
+
+func TestGetEntriesByTimeRangeFullRange(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create entries with different times
+	now := time.Now().Unix()
+	for i := 0; i < 5; i++ {
+		entry := &models.Entry{
+			Path:        filepath.Join("/test", "file"+string(rune('a'+i))+".txt"),
+			Size:        int64(i * 100),
+			Kind:        "file",
+			Mtime:       now - int64(i*86400), // Each file 1 day older
+			LastScanned: now,
+		}
+		db.InsertOrUpdate(entry)
+	}
+
+	// Query with full time range
+	startDate := time.Unix(now-86400*10, 0).Format("2006-01-02")
+	endDate := time.Unix(now+86400, 0).Format("2006-01-02")
+	entries, err := db.GetEntriesByTimeRange(startDate, endDate, nil)
+	assert.NoError(t, err)
+	assert.Len(t, entries, 5)
+
+	// Query with narrower range
+	maxDate := time.Unix(now-86400*2, 0).Format("2006-01-02")
+	entries2, err := db.GetEntriesByTimeRange(startDate, maxDate, nil)
+	assert.NoError(t, err)
+	assert.GreaterOrEqual(t, len(entries2), 1)
+}
+
+func TestChildrenWithSort(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now().Unix()
+
+	// Create parent directory
+	parent := &models.Entry{
+		Path:        "/parent",
+		Size:        0,
+		Kind:        "directory",
+		Mtime:       now,
+		LastScanned: now,
+	}
+	db.InsertOrUpdate(parent)
+
+	// Create children with different sizes
+	for i := 0; i < 5; i++ {
+		child := &models.Entry{
+			Path:        filepath.Join("/parent", "child"+string(rune('a'+i))+".txt"),
+			Parent:      stringPtr("/parent"),
+			Size:        int64((5 - i) * 100),
+			Kind:        "file",
+			Mtime:       now,
+			LastScanned: now,
+		}
+		db.InsertOrUpdate(child)
+	}
+
+	// Get children
+	children, err := db.Children("/parent")
+	assert.NoError(t, err)
+	assert.Len(t, children, 5)
+}
+
+func TestComputeAggregatesDeep(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now().Unix()
+
+	// Create deep directory structure
+	// /root
+	//   /root/a
+	//     /root/a/b
+	//       /root/a/b/file.txt (100)
+	root := &models.Entry{
+		Path: "/root", Size: 0, Kind: "directory",
+		Mtime: now, LastScanned: now,
+	}
+	db.InsertOrUpdate(root)
+
+	dirA := &models.Entry{
+		Path: "/root/a", Parent: stringPtr("/root"),
+		Size: 0, Kind: "directory",
+		Mtime: now, LastScanned: now,
+	}
+	db.InsertOrUpdate(dirA)
+
+	dirB := &models.Entry{
+		Path: "/root/a/b", Parent: stringPtr("/root/a"),
+		Size: 0, Kind: "directory",
+		Mtime: now, LastScanned: now,
+	}
+	db.InsertOrUpdate(dirB)
+
+	file := &models.Entry{
+		Path: "/root/a/b/file.txt", Parent: stringPtr("/root/a/b"),
+		Size: 100, Kind: "file",
+		Mtime: now, LastScanned: now,
+	}
+	db.InsertOrUpdate(file)
+
+	// Compute aggregates
+	err = db.ComputeAggregates("/root")
+	assert.NoError(t, err)
+
+	// Verify sizes propagated up
+	rootEntry, _ := db.Get("/root")
+	assert.Equal(t, int64(100), rootEntry.Size)
+
+	aEntry, _ := db.Get("/root/a")
+	assert.Equal(t, int64(100), aEntry.Size)
+
+	bEntry, _ := db.Get("/root/a/b")
+	assert.Equal(t, int64(100), bEntry.Size)
+}
+
+func TestUpdateEntryPathNonexistent(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Try to update nonexistent path - should error
+	err = db.UpdateEntryPath("/nonexistent/old.txt", "/nonexistent/new.txt")
+	assert.Error(t, err) // Should error when path doesn't exist
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestGetMetadataNonexistent(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Get nonexistent metadata
+	meta, err := db.GetMetadata("nonexistent-hash")
+	assert.NoError(t, err)
+	assert.Nil(t, meta)
+}
+
+func TestListMetadataNilFilter(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Create entry and metadata
+	entry := &models.Entry{
+		Path: "/test.txt", Size: 100, Kind: "file",
+	}
+	db.InsertOrUpdate(entry)
+
+	meta := &models.Metadata{
+		Hash:         "test-hash",
+		SourcePath:   "/test.txt",
+		MetadataType: "thumbnail",
+		CreatedAt:    time.Now().Unix(),
+	}
+	db.CreateOrUpdateMetadata(meta)
+
+	// List with nil filter
+	metas, err := db.ListMetadata(nil)
+	assert.NoError(t, err)
+	assert.GreaterOrEqual(t, len(metas), 1)
+}
+
+func TestSelectionSetWithMultipleEntries(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now().Unix()
+
+	// Create selection set
+	desc := "Test"
+	set := &models.SelectionSet{
+		Name:        "multi-set",
+		Description: &desc,
+	}
+	_, err = db.CreateSelectionSet(set)
+	require.NoError(t, err)
+
+	// Create many entries
+	paths := []string{}
+	for i := 0; i < 10; i++ {
+		entry := &models.Entry{
+			Path: filepath.Join("/test", "file"+string(rune('a'+i))+".txt"),
+			Size: int64(i * 100), Kind: "file",
+			Mtime: now, LastScanned: now,
+		}
+		db.InsertOrUpdate(entry)
+		paths = append(paths, entry.Path)
+	}
+
+	// Add all to selection set
+	err = db.AddToSelectionSet("multi-set", paths)
+	assert.NoError(t, err)
+
+	// Verify count
+	entries, err := db.GetSelectionSetEntries("multi-set")
+	assert.NoError(t, err)
+	assert.Len(t, entries, 10)
+
+	// Remove half
+	err = db.RemoveFromSelectionSet("multi-set", paths[:5])
+	assert.NoError(t, err)
+
+	// Verify count
+	entries, err = db.GetSelectionSetEntries("multi-set")
+	assert.NoError(t, err)
+	assert.Len(t, entries, 5)
+}
+
+func TestDeleteStaleRecursive(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	oldTime := time.Now().Unix() - 1000
+	newTime := time.Now().Unix()
+
+	// Create directory structure with old and new entries
+	parent := &models.Entry{
+		Path: "/stale", Size: 0, Kind: "directory",
+		Mtime: newTime, LastScanned: newTime,
+	}
+	db.InsertOrUpdate(parent)
+
+	oldChild := &models.Entry{
+		Path:   "/stale/old.txt",
+		Parent: stringPtr("/stale"),
+		Size:   100, Kind: "file",
+		Mtime: oldTime, LastScanned: oldTime,
+	}
+	db.InsertOrUpdate(oldChild)
+
+	newChild := &models.Entry{
+		Path:   "/stale/new.txt",
+		Parent: stringPtr("/stale"),
+		Size:   200, Kind: "file",
+		Mtime: newTime, LastScanned: newTime,
+	}
+	db.InsertOrUpdate(newChild)
+
+	// Delete stale entries
+	err = db.DeleteStale("/stale", newTime)
+	assert.NoError(t, err)
+
+	// Old entry should be deleted
+	oldEntry, _ := db.Get("/stale/old.txt")
+	assert.Nil(t, oldEntry)
+
+	// New entry should still exist
+	newEntry, _ := db.Get("/stale/new.txt")
+	assert.NotNil(t, newEntry)
 }
 
 // Helper function
