@@ -50,6 +50,12 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	// Type-specific metadata templates for nodes
 	registerNodeThumbnailTemplate(s, db)       // Thumbnail for a specific node
 	registerNodeVideoTimelineTemplate(s, db)   // Video timeline for a specific node
+
+	// Resource-set DAG templates
+	registerResourceSetChildrenTemplate(s, db)
+	registerResourceSetParentsTemplate(s, db)
+	registerResourceSetMetricsTemplate(s, db)
+	registerResourceSetStatsTemplate(s, db)
 }
 
 // Static Resources
@@ -1125,4 +1131,246 @@ func registerNodeVideoTimelineTemplate(s *server.MCPServer, db *database.DiskDB)
 			},
 		}, nil
 	})
+}
+
+// Resource-Set DAG Templates
+
+func registerResourceSetChildrenTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://selection-sets/{name}/children",
+		"Resource Set Children",
+		mcp.WithTemplateDescription("Child resource sets in the DAG (downstream navigation)"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract name from URI: shell://selection-sets/{name}/children
+		uri := request.Params.URI
+		prefix := "shell://selection-sets/"
+		suffix := "/children"
+
+		if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, suffix) {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		name := strings.TrimPrefix(uri, prefix)
+		name = strings.TrimSuffix(name, suffix)
+
+		if name == "" {
+			return nil, fmt.Errorf("name parameter is required")
+		}
+
+		children, err := db.GetResourceSetChildren(name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get children: %w", err)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"resource_set": name,
+			"children":     children,
+			"count":        len(children),
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal children: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerResourceSetParentsTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://selection-sets/{name}/parents",
+		"Resource Set Parents",
+		mcp.WithTemplateDescription("Parent resource sets in the DAG (upstream navigation)"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract name from URI: shell://selection-sets/{name}/parents
+		uri := request.Params.URI
+		prefix := "shell://selection-sets/"
+		suffix := "/parents"
+
+		if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, suffix) {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		name := strings.TrimPrefix(uri, prefix)
+		name = strings.TrimSuffix(name, suffix)
+
+		if name == "" {
+			return nil, fmt.Errorf("name parameter is required")
+		}
+
+		parents, err := db.GetResourceSetParents(name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get parents: %w", err)
+		}
+
+		data, err := json.MarshalIndent(map[string]interface{}{
+			"resource_set": name,
+			"parents":      parents,
+			"count":        len(parents),
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal parents: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerResourceSetMetricsTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://selection-sets/{name}/metrics/{metric}",
+		"Resource Set Metric",
+		mcp.WithTemplateDescription("Aggregated metric value for a resource set (size, count, files, directories)"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract name and metric from URI: shell://selection-sets/{name}/metrics/{metric}
+		uri := request.Params.URI
+		prefix := "shell://selection-sets/"
+
+		if !strings.HasPrefix(uri, prefix) {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		rest := strings.TrimPrefix(uri, prefix)
+		parts := strings.Split(rest, "/metrics/")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		name := parts[0]
+		metric := parts[1]
+
+		if name == "" || metric == "" {
+			return nil, fmt.Errorf("name and metric parameters are required")
+		}
+
+		result, err := db.ResourceSum(name, metric, false) // Direct set only by default
+		if err != nil {
+			return nil, fmt.Errorf("failed to compute metric: %w", err)
+		}
+
+		response := map[string]interface{}{
+			"resource_set": name,
+			"metric":       metric,
+			"value":        result.Value,
+		}
+
+		// Add human-readable format for size
+		if metric == "size" {
+			response["human_readable"] = formatResourceSize(result.Value)
+		}
+
+		data, err := json.MarshalIndent(response, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal metric: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+func registerResourceSetStatsTemplate(s *server.MCPServer, db *database.DiskDB) {
+	template := mcp.NewResourceTemplate(
+		"shell://selection-sets/{name}/stats",
+		"Resource Set Statistics",
+		mcp.WithTemplateDescription("Comprehensive statistics for a resource set including entry count, size, and DAG relationships"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		// Extract name from URI: shell://selection-sets/{name}/stats
+		uri := request.Params.URI
+		prefix := "shell://selection-sets/"
+		suffix := "/stats"
+
+		if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, suffix) {
+			return nil, fmt.Errorf("invalid URI format: %s", uri)
+		}
+
+		name := strings.TrimPrefix(uri, prefix)
+		name = strings.TrimSuffix(name, suffix)
+
+		if name == "" {
+			return nil, fmt.Errorf("name parameter is required")
+		}
+
+		stats, err := db.GetResourceSetStats(name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get stats: %w", err)
+		}
+
+		response := map[string]interface{}{
+			"resource_set":   name,
+			"id":             stats.ID,
+			"description":    stats.Description,
+			"entry_count":    stats.EntryCount,
+			"total_size":     stats.TotalSize,
+			"human_readable": formatResourceSize(stats.TotalSize),
+			"child_count":    stats.ChildCount,
+			"parent_count":   stats.ParentCount,
+			"created_at":     stats.CreatedAt,
+			"updated_at":     stats.UpdatedAt,
+		}
+
+		data, err := json.MarshalIndent(response, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal stats: %w", err)
+		}
+
+		return []mcp.ResourceContents{
+			&mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "application/json",
+				Text:     string(data),
+			},
+		}, nil
+	})
+}
+
+// formatResourceSize formats bytes as human-readable string
+func formatResourceSize(bytes int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+		TB = GB * 1024
+	)
+
+	switch {
+	case bytes >= TB:
+		return strconv.FormatFloat(float64(bytes)/TB, 'f', 2, 64) + " TB"
+	case bytes >= GB:
+		return strconv.FormatFloat(float64(bytes)/GB, 'f', 2, 64) + " GB"
+	case bytes >= MB:
+		return strconv.FormatFloat(float64(bytes)/MB, 'f', 2, 64) + " MB"
+	case bytes >= KB:
+		return strconv.FormatFloat(float64(bytes)/KB, 'f', 2, 64) + " KB"
+	default:
+		return strconv.FormatInt(bytes, 10) + " bytes"
+	}
 }

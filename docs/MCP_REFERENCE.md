@@ -223,6 +223,55 @@ Fuzzy/pattern matching on text fields.
 
 ---
 
+#### resource-search
+
+Comprehensive search with multiple filter criteria combined.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| name | string | Yes | - | Resource-set name |
+| include_children | boolean | No | false | Include child sets |
+| kind | string | No | - | Filter by kind (file, directory) |
+| extension | string | No | - | Filter by extension (.jpg, pdf) |
+| path_contains | string | No | - | Filter paths containing string |
+| name_contains | string | No | - | Filter names containing string |
+| min_size | integer | No | - | Minimum file size in bytes |
+| max_size | integer | No | - | Maximum file size in bytes |
+| min_mtime | string | No | - | Minimum modification time (ISO date) |
+| max_mtime | string | No | - | Maximum modification time (ISO date) |
+| limit | integer | No | 100 | Maximum results |
+| offset | integer | No | 0 | Pagination offset |
+| sort_by | string | No | size | Sort field (size, name, mtime) |
+| sort_desc | boolean | No | true | Sort descending |
+
+**Example:**
+```json
+{"tool": "resource-search", "params": {
+  "name": "all-media",
+  "include_children": true,
+  "kind": "file",
+  "extension": ".jpg",
+  "min_size": 1048576,
+  "sort_by": "mtime",
+  "limit": 50
+}}
+```
+
+**Response:**
+```json
+{
+  "resource_set": "all-media",
+  "entries": [...],
+  "total_count": 234,
+  "returned_count": 50,
+  "offset": 0,
+  "limit": 50,
+  "has_more": true
+}
+```
+
+---
+
 ### Resource-Set Management
 
 #### resource-set-create
@@ -597,11 +646,12 @@ Resources provide declarative, URI-based access to data.
 
 | URI Pattern | Description | MIME Type |
 |-------------|-------------|-----------|
-| `resource://resource-set/{name}` | Resource-set metadata | application/json |
-| `resource://resource-set/{name}/entries` | File entries in set | application/json |
-| `resource://resource-set/{name}/children` | Child resource-sets | application/json |
-| `resource://resource-set/{name}/parents` | Parent resource-sets | application/json |
-| `resource://resource-set/{name}/metrics/{metric}` | Aggregated metric | application/json |
+| `shell://selection-sets/{name}` | Resource-set metadata | application/json |
+| `shell://selection-sets/{name}/entries` | File entries in set | application/json |
+| `shell://selection-sets/{name}/children` | Child resource-sets (DAG downstream) | application/json |
+| `shell://selection-sets/{name}/parents` | Parent resource-sets (DAG upstream) | application/json |
+| `shell://selection-sets/{name}/stats` | Comprehensive statistics | application/json |
+| `shell://selection-sets/{name}/metrics/{metric}` | Aggregated metric (size, count, files, directories) | application/json |
 
 ### Static Resources
 

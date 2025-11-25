@@ -66,6 +66,9 @@ func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 
 	// Source management tools
 	registerSourceTools(s, db)
+
+	// Resource-centric tools (DAG navigation, metrics, queries)
+	registerResourceTools(s, db)
 }
 
 // Tree compression utilities
