@@ -28,9 +28,9 @@ type Plan struct {
 
 // PlanSource defines where to get files and what metadata to generate
 type PlanSource struct {
-	Type            string                     `json:"type"`               // "filesystem", "selection_set", "query"
+	Type            string                     `json:"type"`               // "filesystem", "resource_set", "query"
 	Paths           []string                   `json:"paths,omitempty"`    // Root paths to scan (for filesystem)
-	SourceRef       *string                    `json:"source_ref,omitempty"` // Reference to selection_set or query name
+	SourceRef       *string                    `json:"source_ref,omitempty"` // Reference to resource_set or query name
 	Characteristics []CharacteristicGenerator  `json:"characteristics,omitempty"`
 	FollowSymlinks  bool                       `json:"follow_symlinks,omitempty"`
 	MaxDepth        *int                       `json:"max_depth,omitempty"`
@@ -147,10 +147,10 @@ func (p *Plan) Validate() error {
 
 	// Validate outcomes (use existing RuleOutcome validation)
 	for i, outcome := range p.Outcomes {
-		if outcome.SelectionSetName == "" {
-			return fmt.Errorf("outcome[%d]: selectionSetName is required", i)
+		if outcome.ResourceSetName == "" {
+			return fmt.Errorf("outcome[%d]: resourceSetName is required", i)
 		}
-		if outcome.Type != "selection_set" && outcome.Type != "classifier" && outcome.Type != "chained" {
+		if outcome.Type != "resource_set" && outcome.Type != "classifier" && outcome.Type != "chained" {
 			return fmt.Errorf("outcome[%d]: invalid outcome type: %s", i, outcome.Type)
 		}
 	}
@@ -165,7 +165,7 @@ func (ps *PlanSource) Validate() error {
 		if len(ps.Paths) == 0 {
 			return fmt.Errorf("filesystem source requires at least one path")
 		}
-	case "selection_set", "query":
+	case "resource_set", "query":
 		if ps.SourceRef == nil || *ps.SourceRef == "" {
 			return fmt.Errorf("%s source requires source_ref", ps.Type)
 		}

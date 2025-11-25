@@ -32,12 +32,12 @@ func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 	registerListJobsTool(s, db)
 	registerCancelJobTool(s, db)
 
-	// Selection set tools
-	registerSelectionSetCreate(s, db)
-	registerSelectionSetList(s, db)
-	registerSelectionSetGet(s, db)
-	registerSelectionSetModify(s, db)
-	registerSelectionSetDelete(s, db)
+	// Resource set tools
+	registerResourceSetCreate(s, db)
+	registerResourceSetList(s, db)
+	registerResourceSetGet(s, db)
+	registerResourceSetModify(s, db)
+	registerResourceSetDelete(s, db)
 
 	// Query tools
 	registerQueryCreate(s, db)
@@ -937,17 +937,17 @@ func registerCancelJobTool(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-// Selection Set Tools
+// Resource Set Tools
 
-func registerSelectionSetCreate(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("selection-set-create",
-		mcp.WithDescription("Create a new selection set (pure item storage)"),
+func registerResourceSetCreate(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("resource-set-create",
+		mcp.WithDescription("Create a new resource set (DAG node for organizing files)"),
 		mcp.WithString("name",
 			mcp.Required(),
-			mcp.Description("Name of the selection set"),
+			mcp.Description("Name of the resource set"),
 		),
 		mcp.WithString("description",
-			mcp.Description("Description of the selection set"),
+			mcp.Description("Description of the resource set"),
 		),
 	)
 
@@ -961,31 +961,31 @@ func registerSelectionSetCreate(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		set := &models.SelectionSet{
+		set := &models.ResourceSet{
 			Name:        args.Name,
 			Description: args.Description,
 			CreatedAt:   time.Now().Unix(),
 			UpdatedAt:   time.Now().Unix(),
 		}
 
-		id, err := db.CreateSelectionSet(set)
+		id, err := db.CreateResourceSet(set)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to create selection set: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to create resource set: %v", err)), nil
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("Created selection set '%s' with ID %d", args.Name, id)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("Created resource set '%s' with ID %d", args.Name, id)), nil
 	})
 }
 
-func registerSelectionSetList(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("selection-set-list",
-		mcp.WithDescription("List all selection sets"),
+func registerResourceSetList(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("resource-set-list",
+		mcp.WithDescription("List all resource sets"),
 	)
 
 	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		sets, err := db.ListSelectionSets()
+		sets, err := db.ListResourceSets()
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to list selection sets: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to list resource sets: %v", err)), nil
 		}
 
 		result, err := json.Marshal(sets)
@@ -997,12 +997,12 @@ func registerSelectionSetList(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-func registerSelectionSetGet(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("selection-set-get",
-		mcp.WithDescription("Get entries in a selection set"),
+func registerResourceSetGet(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("resource-set-get",
+		mcp.WithDescription("Get entries in a resource set"),
 		mcp.WithString("name",
 			mcp.Required(),
-			mcp.Description("Name of the selection set"),
+			mcp.Description("Name of the resource set"),
 		),
 	)
 
@@ -1015,14 +1015,14 @@ func registerSelectionSetGet(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		entries, err := db.GetSelectionSetEntries(args.Name)
+		entries, err := db.GetResourceSetEntries(args.Name)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to get selection set entries: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to get resource set entries: %v", err)), nil
 		}
 
 		// Compress if necessary
 		maxResponseSize := 512000 // 500KB
-		contextInfo := fmt.Sprintf("Selection set: %s", args.Name)
+		contextInfo := fmt.Sprintf("Resource set: %s", args.Name)
 
 		result, err := compressEntryList(entries, maxResponseSize, contextInfo)
 		if err != nil {
@@ -1033,12 +1033,12 @@ func registerSelectionSetGet(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-func registerSelectionSetModify(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("selection-set-modify",
-		mcp.WithDescription("Add or remove entries from a selection set"),
+func registerResourceSetModify(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("resource-set-modify",
+		mcp.WithDescription("Add or remove entries from a resource set"),
 		mcp.WithString("name",
 			mcp.Required(),
-			mcp.Description("Name of the selection set"),
+			mcp.Description("Name of the resource set"),
 		),
 		mcp.WithString("operation",
 			mcp.Required(),
@@ -1071,27 +1071,27 @@ func registerSelectionSetModify(s *server.MCPServer, db *database.DiskDB) {
 
 		var err error
 		if args.Operation == "add" {
-			err = db.AddToSelectionSet(args.Name, paths)
+			err = db.AddToResourceSet(args.Name, paths)
 		} else if args.Operation == "remove" {
-			err = db.RemoveFromSelectionSet(args.Name, paths)
+			err = db.RemoveFromResourceSet(args.Name, paths)
 		} else {
 			return mcp.NewToolResultError("Invalid operation. Use 'add' or 'remove'"), nil
 		}
 
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to modify selection set: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to modify resource set: %v", err)), nil
 		}
 
 		return mcp.NewToolResultText(fmt.Sprintf("Successfully %sed %d entries", args.Operation, len(paths))), nil
 	})
 }
 
-func registerSelectionSetDelete(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("selection-set-delete",
-		mcp.WithDescription("Delete a selection set"),
+func registerResourceSetDelete(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("resource-set-delete",
+		mcp.WithDescription("Delete a resource set"),
 		mcp.WithString("name",
 			mcp.Required(),
-			mcp.Description("Name of the selection set"),
+			mcp.Description("Name of the resource set"),
 		),
 	)
 
@@ -1104,11 +1104,11 @@ func registerSelectionSetDelete(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		if err := db.DeleteSelectionSet(args.Name); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to delete selection set: %v", err)), nil
+		if err := db.DeleteResourceSet(args.Name); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to delete resource set: %v", err)), nil
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("Deleted selection set '%s'", args.Name)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("Deleted resource set '%s'", args.Name)), nil
 	})
 }
 

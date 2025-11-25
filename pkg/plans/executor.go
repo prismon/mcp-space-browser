@@ -132,7 +132,7 @@ func (e *Executor) resolveSources(sources []models.PlanSource) ([]*models.Entry,
 		entries, err := e.resolveSource(source)
 		if err != nil {
 			// Check if this is a configuration error (invalid type) vs transient error
-			if source.Type != "filesystem" && source.Type != "selection_set" && source.Type != "query" {
+			if source.Type != "filesystem" && source.Type != "resource_set" && source.Type != "query" {
 				// Invalid source type is a configuration error - fail fast
 				return nil, fmt.Errorf("source[%d]: %w", i, err)
 			}
@@ -160,8 +160,8 @@ func (e *Executor) resolveSource(source models.PlanSource) ([]*models.Entry, err
 	switch source.Type {
 	case "filesystem":
 		return e.resolveFilesystemSource(source)
-	case "selection_set":
-		return e.resolveSelectionSetSource(source)
+	case "resource_set":
+		return e.resolveResourceSetSource(source)
 	case "query":
 		return e.resolveQuerySource(source)
 	default:
@@ -232,12 +232,12 @@ func (e *Executor) collectEntriesFromTree(node *models.TreeNode, entries *[]*mod
 	}
 }
 
-func (e *Executor) resolveSelectionSetSource(source models.PlanSource) ([]*models.Entry, error) {
+func (e *Executor) resolveResourceSetSource(source models.PlanSource) ([]*models.Entry, error) {
 	if source.SourceRef == nil {
-		return nil, fmt.Errorf("selection_set source requires source_ref")
+		return nil, fmt.Errorf("resource_set source requires source_ref")
 	}
 
-	return e.db.GetSelectionSetEntries(*source.SourceRef)
+	return e.db.GetResourceSetEntries(*source.SourceRef)
 }
 
 func (e *Executor) resolveQuerySource(source models.PlanSource) ([]*models.Entry, error) {

@@ -608,7 +608,7 @@ Resources provide declarative, URI-based access to data.
 | URI | Description |
 |-----|-------------|
 | `shell://nodes` | All filesystem entries |
-| `shell://selection-sets` | All selection sets |
+| `resource://resource-sets` | All resource sets (DAG nodes) |
 | `shell://jobs` | All indexing jobs |
 | `shell://jobs/pending` | Pending jobs |
 | `shell://jobs/running` | Running jobs |
@@ -624,8 +624,10 @@ Resources provide declarative, URI-based access to data.
 | URI Pattern | Description |
 |-------------|-------------|
 | `shell://nodes/{path}` | Single filesystem entry |
-| `shell://selection-sets/{name}` | Selection set by name |
-| `shell://selection-sets/{name}/entries` | Entries in selection set |
+| `resource://resource-set/{name}` | Resource set by name |
+| `resource://resource-set/{name}/entries` | Entries in resource set |
+| `resource://resource-set/{name}/children` | Child resource sets |
+| `resource://resource-set/{name}/parents` | Parent resource sets |
 | `shell://jobs/{id}` | Job by ID |
 | `shell://plans/{name}` | Plan by name |
 | `shell://plans/{name}/executions` | Plan execution history |

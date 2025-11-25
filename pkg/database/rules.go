@@ -167,21 +167,21 @@ func (d *DiskDB) DeleteRule(name string) error {
 // Rule Execution Operations
 
 // CreateRuleExecution creates a new rule execution record
-// IMPORTANT: selection_set_id is REQUIRED - every rule execution must be associated with a selection set
+// IMPORTANT: resource_set_id is REQUIRED - every rule execution must be associated with a selection set
 func (d *DiskDB) CreateRuleExecution(execution *models.RuleExecution) (int64, error) {
-	if execution.SelectionSetID == 0 {
-		return 0, fmt.Errorf("selection_set_id is required for rule execution")
+	if execution.ResourceSetID == 0 {
+		return 0, fmt.Errorf("resource_set_id is required for rule execution")
 	}
 
 	log.WithFields(logrus.Fields{
 		"ruleID":         execution.RuleID,
-		"selectionSetID": execution.SelectionSetID,
+		"selectionSetID": execution.ResourceSetID,
 	}).Debug("Creating rule execution record")
 
 	result, err := d.db.Exec(`
-		INSERT INTO rule_executions (rule_id, selection_set_id, entries_matched, entries_processed, status, error_message, duration_ms)
+		INSERT INTO rule_executions (rule_id, resource_set_id, entries_matched, entries_processed, status, error_message, duration_ms)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, execution.RuleID, execution.SelectionSetID, execution.EntriesMatched, execution.EntriesProcessed,
+	`, execution.RuleID, execution.ResourceSetID, execution.EntriesMatched, execution.EntriesProcessed,
 		execution.Status, execution.ErrorMessage, execution.DurationMs)
 
 	if err != nil {
@@ -198,10 +198,10 @@ func (d *DiskDB) GetRuleExecution(id int64) (*models.RuleExecution, error) {
 	var durationMs sql.NullInt64
 
 	err := d.db.QueryRow(`
-		SELECT id, rule_id, selection_set_id, executed_at, entries_matched, entries_processed, status, error_message, duration_ms
+		SELECT id, rule_id, resource_set_id, executed_at, entries_matched, entries_processed, status, error_message, duration_ms
 		FROM rule_executions WHERE id = ?
 	`, id).Scan(
-		&execution.ID, &execution.RuleID, &execution.SelectionSetID, &execution.ExecutedAt,
+		&execution.ID, &execution.RuleID, &execution.ResourceSetID, &execution.ExecutedAt,
 		&execution.EntriesMatched, &execution.EntriesProcessed, &execution.Status,
 		&errorMessage, &durationMs,
 	)
@@ -227,7 +227,7 @@ func (d *DiskDB) GetRuleExecution(id int64) (*models.RuleExecution, error) {
 // ListRuleExecutions retrieves executions for a rule
 func (d *DiskDB) ListRuleExecutions(ruleID int64, limit int) ([]*models.RuleExecution, error) {
 	query := `
-		SELECT id, rule_id, selection_set_id, executed_at, entries_matched, entries_processed, status, error_message, duration_ms
+		SELECT id, rule_id, resource_set_id, executed_at, entries_matched, entries_processed, status, error_message, duration_ms
 		FROM rule_executions
 		WHERE rule_id = ?
 		ORDER BY executed_at DESC
@@ -252,7 +252,7 @@ func (d *DiskDB) ListRuleExecutions(ruleID int64, limit int) ([]*models.RuleExec
 		var durationMs sql.NullInt64
 
 		if err := rows.Scan(
-			&execution.ID, &execution.RuleID, &execution.SelectionSetID, &execution.ExecutedAt,
+			&execution.ID, &execution.RuleID, &execution.ResourceSetID, &execution.ExecutedAt,
 			&execution.EntriesMatched, &execution.EntriesProcessed, &execution.Status,
 			&errorMessage, &durationMs,
 		); err != nil {
@@ -276,9 +276,9 @@ func (d *DiskDB) ListRuleExecutions(ruleID int64, limit int) ([]*models.RuleExec
 // ListRuleExecutionsBySelectionSet retrieves executions associated with a selection set
 func (d *DiskDB) ListRuleExecutionsBySelectionSet(selectionSetID int64, limit int) ([]*models.RuleExecution, error) {
 	query := `
-		SELECT id, rule_id, selection_set_id, executed_at, entries_matched, entries_processed, status, error_message, duration_ms
+		SELECT id, rule_id, resource_set_id, executed_at, entries_matched, entries_processed, status, error_message, duration_ms
 		FROM rule_executions
-		WHERE selection_set_id = ?
+		WHERE resource_set_id = ?
 		ORDER BY executed_at DESC
 	`
 	args := []interface{}{selectionSetID}
@@ -301,7 +301,7 @@ func (d *DiskDB) ListRuleExecutionsBySelectionSet(selectionSetID int64, limit in
 		var durationMs sql.NullInt64
 
 		if err := rows.Scan(
-			&execution.ID, &execution.RuleID, &execution.SelectionSetID, &execution.ExecutedAt,
+			&execution.ID, &execution.RuleID, &execution.ResourceSetID, &execution.ExecutedAt,
 			&execution.EntriesMatched, &execution.EntriesProcessed, &execution.Status,
 			&errorMessage, &durationMs,
 		); err != nil {
@@ -325,23 +325,23 @@ func (d *DiskDB) ListRuleExecutionsBySelectionSet(selectionSetID int64, limit in
 // Rule Outcome Operations
 
 // CreateRuleOutcome creates a new rule outcome record
-// IMPORTANT: selection_set_id is REQUIRED - every outcome must be associated with a selection set
+// IMPORTANT: resource_set_id is REQUIRED - every outcome must be associated with a selection set
 func (d *DiskDB) CreateRuleOutcome(outcome *models.RuleOutcomeRecord) (int64, error) {
-	if outcome.SelectionSetID == 0 {
-		return 0, fmt.Errorf("selection_set_id is required for rule outcome")
+	if outcome.ResourceSetID == 0 {
+		return 0, fmt.Errorf("resource_set_id is required for rule outcome")
 	}
 
 	log.WithFields(logrus.Fields{
 		"executionID":    outcome.ExecutionID,
-		"selectionSetID": outcome.SelectionSetID,
+		"selectionSetID": outcome.ResourceSetID,
 		"entryPath":      outcome.EntryPath,
 		"outcomeType":    outcome.OutcomeType,
 	}).Trace("Creating rule outcome record")
 
 	result, err := d.db.Exec(`
-		INSERT INTO rule_outcomes (execution_id, selection_set_id, entry_path, outcome_type, outcome_data, status, error_message)
+		INSERT INTO rule_outcomes (execution_id, resource_set_id, entry_path, outcome_type, outcome_data, status, error_message)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, outcome.ExecutionID, outcome.SelectionSetID, outcome.EntryPath, outcome.OutcomeType,
+	`, outcome.ExecutionID, outcome.ResourceSetID, outcome.EntryPath, outcome.OutcomeType,
 		outcome.OutcomeData, outcome.Status, outcome.ErrorMessage)
 
 	if err != nil {
@@ -354,7 +354,7 @@ func (d *DiskDB) CreateRuleOutcome(outcome *models.RuleOutcomeRecord) (int64, er
 // ListRuleOutcomes retrieves outcomes for a rule execution
 func (d *DiskDB) ListRuleOutcomes(executionID int64) ([]*models.RuleOutcomeRecord, error) {
 	rows, err := d.db.Query(`
-		SELECT id, execution_id, selection_set_id, entry_path, outcome_type, outcome_data, status, error_message, created_at
+		SELECT id, execution_id, resource_set_id, entry_path, outcome_type, outcome_data, status, error_message, created_at
 		FROM rule_outcomes
 		WHERE execution_id = ?
 		ORDER BY created_at ASC
@@ -371,7 +371,7 @@ func (d *DiskDB) ListRuleOutcomes(executionID int64) ([]*models.RuleOutcomeRecor
 		var outcomeData, errorMessage sql.NullString
 
 		if err := rows.Scan(
-			&outcome.ID, &outcome.ExecutionID, &outcome.SelectionSetID, &outcome.EntryPath,
+			&outcome.ID, &outcome.ExecutionID, &outcome.ResourceSetID, &outcome.EntryPath,
 			&outcome.OutcomeType, &outcomeData, &outcome.Status, &errorMessage, &outcome.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -393,9 +393,9 @@ func (d *DiskDB) ListRuleOutcomes(executionID int64) ([]*models.RuleOutcomeRecor
 // ListRuleOutcomesBySelectionSet retrieves outcomes associated with a selection set
 func (d *DiskDB) ListRuleOutcomesBySelectionSet(selectionSetID int64, limit int) ([]*models.RuleOutcomeRecord, error) {
 	query := `
-		SELECT id, execution_id, selection_set_id, entry_path, outcome_type, outcome_data, status, error_message, created_at
+		SELECT id, execution_id, resource_set_id, entry_path, outcome_type, outcome_data, status, error_message, created_at
 		FROM rule_outcomes
-		WHERE selection_set_id = ?
+		WHERE resource_set_id = ?
 		ORDER BY created_at DESC
 	`
 	args := []interface{}{selectionSetID}
@@ -417,7 +417,7 @@ func (d *DiskDB) ListRuleOutcomesBySelectionSet(selectionSetID int64, limit int)
 		var outcomeData, errorMessage sql.NullString
 
 		if err := rows.Scan(
-			&outcome.ID, &outcome.ExecutionID, &outcome.SelectionSetID, &outcome.EntryPath,
+			&outcome.ID, &outcome.ExecutionID, &outcome.ResourceSetID, &outcome.EntryPath,
 			&outcome.OutcomeType, &outcomeData, &outcome.Status, &errorMessage, &outcome.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -438,10 +438,10 @@ func (d *DiskDB) ListRuleOutcomesBySelectionSet(selectionSetID int64, limit int)
 
 // Helper Functions
 
-// ValidateRuleOutcome validates that an outcome has a required selection set
+// ValidateRuleOutcome validates that an outcome has a required resource set
 func ValidateRuleOutcome(outcome *models.RuleOutcome) error {
-	if outcome.SelectionSetName == "" {
-		return fmt.Errorf("selectionSetName is required for all rule outcomes")
+	if outcome.ResourceSetName == "" {
+		return fmt.Errorf("resourceSetName is required for all rule outcomes")
 	}
 
 	// Validate chained outcomes recursively
@@ -456,42 +456,42 @@ func ValidateRuleOutcome(outcome *models.RuleOutcome) error {
 	return nil
 }
 
-// EnsureSelectionSetForOutcome ensures a selection set exists for the given outcome
+// EnsureResourceSetForOutcome ensures a resource set exists for the given outcome
 // If it doesn't exist, it creates one
-func (d *DiskDB) EnsureSelectionSetForOutcome(outcome *models.RuleOutcome, ruleName string) (int64, error) {
-	if outcome.SelectionSetName == "" {
-		return 0, fmt.Errorf("selectionSetName is required")
+func (d *DiskDB) EnsureResourceSetForOutcome(outcome *models.RuleOutcome, ruleName string) (int64, error) {
+	if outcome.ResourceSetName == "" {
+		return 0, fmt.Errorf("resourceSetName is required")
 	}
 
-	// Check if selection set exists
-	set, err := d.GetSelectionSet(outcome.SelectionSetName)
+	// Check if resource set exists
+	set, err := d.GetResourceSet(outcome.ResourceSetName)
 	if err != nil {
-		return 0, fmt.Errorf("failed to check selection set: %w", err)
+		return 0, fmt.Errorf("failed to check resource set: %w", err)
 	}
 
 	if set != nil {
 		return set.ID, nil
 	}
 
-	// Create new selection set
+	// Create new resource set
 	description := fmt.Sprintf("Auto-created for rule: %s", ruleName)
-	newSet := &models.SelectionSet{
-		Name:        outcome.SelectionSetName,
+	newSet := &models.ResourceSet{
+		Name:        outcome.ResourceSetName,
 		Description: &description,
 		CreatedAt:   time.Now().Unix(),
 		UpdatedAt:   time.Now().Unix(),
 	}
 
-	setID, err := d.CreateSelectionSet(newSet)
+	setID, err := d.CreateResourceSet(newSet)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create selection set: %w", err)
+		return 0, fmt.Errorf("failed to create resource set: %w", err)
 	}
 
 	log.WithFields(logrus.Fields{
-		"setName": outcome.SelectionSetName,
+		"setName": outcome.ResourceSetName,
 		"setID":   setID,
 		"rule":    ruleName,
-	}).Info("Auto-created selection set for rule outcome")
+	}).Info("Auto-created resource set for rule outcome")
 
 	return setID, nil
 }

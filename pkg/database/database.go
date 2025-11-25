@@ -119,8 +119,8 @@ func (d *DiskDB) init() error {
 		return err
 	}
 
-	// Create selection_sets table (simplified - pure item storage)
-	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS selection_sets (
+	// Create resource_sets table (DAG nodes - supports multiple parents)
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS resource_sets (
 		id INTEGER PRIMARY KEY,
 		name TEXT UNIQUE NOT NULL,
 		description TEXT,
@@ -130,19 +130,40 @@ func (d *DiskDB) init() error {
 		return err
 	}
 
-	// Create selection_set_entries table
-	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS selection_set_entries (
+	// Create resource_set_entries table (links sets to filesystem entries)
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS resource_set_entries (
 		set_id INTEGER NOT NULL,
 		entry_path TEXT NOT NULL,
 		added_at INTEGER DEFAULT (strftime('%s', 'now')),
 		PRIMARY KEY (set_id, entry_path),
-		FOREIGN KEY (set_id) REFERENCES selection_sets(id) ON DELETE CASCADE,
+		FOREIGN KEY (set_id) REFERENCES resource_sets(id) ON DELETE CASCADE,
 		FOREIGN KEY (entry_path) REFERENCES entries(path) ON DELETE CASCADE
 	)`); err != nil {
 		return err
 	}
 
-	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_set_entries ON selection_set_entries(set_id)"); err != nil {
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_resource_set_entries ON resource_set_entries(set_id)"); err != nil {
+		return err
+	}
+
+	// Create resource_set_edges table (DAG parent-child relationships)
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS resource_set_edges (
+		parent_id INTEGER NOT NULL,
+		child_id INTEGER NOT NULL,
+		added_at INTEGER DEFAULT (strftime('%s', 'now')),
+		PRIMARY KEY (parent_id, child_id),
+		FOREIGN KEY (parent_id) REFERENCES resource_sets(id) ON DELETE CASCADE,
+		FOREIGN KEY (child_id) REFERENCES resource_sets(id) ON DELETE CASCADE,
+		CHECK (parent_id != child_id)
+	)`); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_edges_parent ON resource_set_edges(parent_id)"); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_edges_child ON resource_set_edges(child_id)"); err != nil {
 		return err
 	}
 
@@ -153,7 +174,7 @@ func (d *DiskDB) init() error {
 		description TEXT,
 		query_type TEXT CHECK(query_type IN ('file_filter', 'custom_script')),
 		query_json TEXT NOT NULL,
-		target_selection_set TEXT,
+		target_resource_set TEXT,
 		update_mode TEXT CHECK(update_mode IN ('replace', 'append', 'merge')) DEFAULT 'replace',
 		created_at INTEGER DEFAULT (strftime('%s', 'now')),
 		updated_at INTEGER DEFAULT (strftime('%s', 'now')),
@@ -252,7 +273,7 @@ func (d *DiskDB) init() error {
 	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS rule_executions (
 		id INTEGER PRIMARY KEY,
 		rule_id INTEGER NOT NULL,
-		selection_set_id INTEGER NOT NULL,
+		resource_set_id INTEGER NOT NULL,
 		executed_at INTEGER DEFAULT (strftime('%s', 'now')),
 		entries_matched INTEGER DEFAULT 0,
 		entries_processed INTEGER DEFAULT 0,
@@ -260,7 +281,7 @@ func (d *DiskDB) init() error {
 		error_message TEXT,
 		duration_ms INTEGER,
 		FOREIGN KEY (rule_id) REFERENCES rules(id) ON DELETE CASCADE,
-		FOREIGN KEY (selection_set_id) REFERENCES selection_sets(id) ON DELETE CASCADE
+		FOREIGN KEY (resource_set_id) REFERENCES resource_sets(id) ON DELETE CASCADE
 	)`); err != nil {
 		return err
 	}
@@ -269,7 +290,7 @@ func (d *DiskDB) init() error {
 		return err
 	}
 
-	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_rule_executions_selection_set ON rule_executions(selection_set_id)"); err != nil {
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_rule_executions_resource_set ON rule_executions(resource_set_id)"); err != nil {
 		return err
 	}
 
@@ -277,7 +298,7 @@ func (d *DiskDB) init() error {
 	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS rule_outcomes (
 		id INTEGER PRIMARY KEY,
 		execution_id INTEGER NOT NULL,
-		selection_set_id INTEGER NOT NULL,
+		resource_set_id INTEGER NOT NULL,
 		entry_path TEXT NOT NULL,
 		outcome_type TEXT NOT NULL,
 		outcome_data TEXT,
@@ -285,7 +306,7 @@ func (d *DiskDB) init() error {
 		error_message TEXT,
 		created_at INTEGER DEFAULT (strftime('%s', 'now')),
 		FOREIGN KEY (execution_id) REFERENCES rule_executions(id) ON DELETE CASCADE,
-		FOREIGN KEY (selection_set_id) REFERENCES selection_sets(id) ON DELETE CASCADE,
+		FOREIGN KEY (resource_set_id) REFERENCES resource_sets(id) ON DELETE CASCADE,
 		FOREIGN KEY (entry_path) REFERENCES entries(path) ON DELETE CASCADE
 	)`); err != nil {
 		return err
@@ -295,7 +316,7 @@ func (d *DiskDB) init() error {
 		return err
 	}
 
-	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_rule_outcomes_selection_set ON rule_outcomes(selection_set_id)"); err != nil {
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_rule_outcomes_resource_set ON rule_outcomes(resource_set_id)"); err != nil {
 		return err
 	}
 
@@ -1241,217 +1262,6 @@ func (d *DiskDB) GetEntriesByTimeRange(startDate, endDate string, root *string) 
 	return entries, rows.Err()
 }
 
-// Selection Set Operations
-
-// CreateSelectionSet creates a new selection set
-func (d *DiskDB) CreateSelectionSet(set *models.SelectionSet) (int64, error) {
-	log.WithFields(logrus.Fields{
-		"name": set.Name,
-	}).Info("Creating selection set")
-
-	result, err := d.db.Exec(`
-		INSERT INTO selection_sets (name, description)
-		VALUES (?, ?)
-	`, set.Name, set.Description)
-
-	if err != nil {
-		return 0, err
-	}
-
-	return result.LastInsertId()
-}
-
-// GetSelectionSet retrieves a selection set by name
-func (d *DiskDB) GetSelectionSet(name string) (*models.SelectionSet, error) {
-	var set models.SelectionSet
-	var description sql.NullString
-
-	err := d.db.QueryRow(`SELECT id, name, description, created_at, updated_at FROM selection_sets WHERE name = ?`, name).
-		Scan(&set.ID, &set.Name, &description, &set.CreatedAt, &set.UpdatedAt)
-
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	if description.Valid {
-		set.Description = &description.String
-	}
-
-	return &set, nil
-}
-
-// ListSelectionSets retrieves all selection sets
-func (d *DiskDB) ListSelectionSets() ([]*models.SelectionSet, error) {
-	rows, err := d.db.Query(`SELECT id, name, description, created_at, updated_at FROM selection_sets ORDER BY created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var sets []*models.SelectionSet
-	for rows.Next() {
-		var set models.SelectionSet
-		var description sql.NullString
-
-		if err := rows.Scan(&set.ID, &set.Name, &description, &set.CreatedAt, &set.UpdatedAt); err != nil {
-			return nil, err
-		}
-
-		if description.Valid {
-			set.Description = &description.String
-		}
-
-		sets = append(sets, &set)
-	}
-
-	return sets, rows.Err()
-}
-
-// DeleteSelectionSet deletes a selection set
-func (d *DiskDB) DeleteSelectionSet(name string) error {
-	log.WithField("name", name).Info("Deleting selection set")
-	_, err := d.db.Exec(`DELETE FROM selection_sets WHERE name = ?`, name)
-	return err
-}
-
-// AddToSelectionSet adds entries to a selection set
-func (d *DiskDB) AddToSelectionSet(setName string, paths []string) error {
-	set, err := d.GetSelectionSet(setName)
-	if err != nil {
-		return err
-	}
-	if set == nil {
-		return fmt.Errorf("selection set '%s' not found", setName)
-	}
-
-	tx, err := d.db.Begin()
-	if err != nil {
-		return err
-	}
-
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO selection_set_entries (set_id, entry_path) VALUES (?, ?)`)
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	defer stmt.Close()
-
-	for _, path := range paths {
-		if _, err := stmt.Exec(set.ID, path); err != nil {
-			tx.Rollback()
-			return err
-		}
-	}
-
-	// Update the set's updated_at timestamp
-	if _, err := tx.Exec(`UPDATE selection_sets SET updated_at = strftime('%s', 'now') WHERE id = ?`, set.ID); err != nil {
-		tx.Rollback()
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
-	log.WithFields(logrus.Fields{
-		"setName": setName,
-		"count":   len(paths),
-	}).Info("Added entries to selection set")
-
-	return nil
-}
-
-// RemoveFromSelectionSet removes entries from a selection set
-func (d *DiskDB) RemoveFromSelectionSet(setName string, paths []string) error {
-	set, err := d.GetSelectionSet(setName)
-	if err != nil {
-		return err
-	}
-	if set == nil {
-		return fmt.Errorf("selection set '%s' not found", setName)
-	}
-
-	tx, err := d.db.Begin()
-	if err != nil {
-		return err
-	}
-
-	stmt, err := tx.Prepare(`DELETE FROM selection_set_entries WHERE set_id = ? AND entry_path = ?`)
-	if err != nil {
-		tx.Rollback()
-		return err
-	}
-	defer stmt.Close()
-
-	for _, path := range paths {
-		if _, err := stmt.Exec(set.ID, path); err != nil {
-			tx.Rollback()
-			return err
-		}
-	}
-
-	// Update the set's updated_at timestamp
-	if _, err := tx.Exec(`UPDATE selection_sets SET updated_at = strftime('%s', 'now') WHERE id = ?`, set.ID); err != nil {
-		tx.Rollback()
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
-	log.WithFields(logrus.Fields{
-		"setName": setName,
-		"count":   len(paths),
-	}).Info("Removed entries from selection set")
-
-	return nil
-}
-
-// GetSelectionSetEntries retrieves all entries in a selection set
-func (d *DiskDB) GetSelectionSetEntries(setName string) ([]*models.Entry, error) {
-	set, err := d.GetSelectionSet(setName)
-	if err != nil {
-		return nil, err
-	}
-	if set == nil {
-		return nil, fmt.Errorf("selection set '%s' not found", setName)
-	}
-
-	rows, err := d.db.Query(`
-		SELECT e.id, e.path, e.parent, e.size, e.kind, e.ctime, e.mtime, e.last_scanned
-		FROM entries e
-		JOIN selection_set_entries sse ON e.path = sse.entry_path
-		WHERE sse.set_id = ?
-		ORDER BY e.path
-	`, set.ID)
-
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var entries []*models.Entry
-	for rows.Next() {
-		var entry models.Entry
-		var parent sql.NullString
-
-		if err := rows.Scan(&entry.ID, &entry.Path, &parent, &entry.Size, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned); err != nil {
-			return nil, err
-		}
-
-		if parent.Valid {
-			entry.Parent = &parent.String
-		}
-
-		entries = append(entries, &entry)
-	}
-
-	return entries, rows.Err()
-}
 
 // Query Operations
 
@@ -1460,9 +1270,9 @@ func (d *DiskDB) CreateQuery(query *models.Query) (int64, error) {
 	log.WithField("name", query.Name).Info("Creating query")
 
 	result, err := d.db.Exec(`
-		INSERT INTO queries (name, description, query_type, query_json, target_selection_set, update_mode)
+		INSERT INTO queries (name, description, query_type, query_json, target_resource_set, update_mode)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, query.Name, query.Description, query.QueryType, query.QueryJSON, query.TargetSelectionSet, query.UpdateMode)
+	`, query.Name, query.Description, query.QueryType, query.QueryJSON, query.TargetResourceSet, query.UpdateMode)
 
 	if err != nil {
 		return 0, err
@@ -1478,7 +1288,7 @@ func (d *DiskDB) GetQuery(name string) (*models.Query, error) {
 	var lastExecuted sql.NullInt64
 
 	err := d.db.QueryRow(`
-		SELECT id, name, description, query_type, query_json, target_selection_set, update_mode,
+		SELECT id, name, description, query_type, query_json, target_resource_set, update_mode,
 		       created_at, updated_at, last_executed, execution_count
 		FROM queries WHERE name = ?
 	`, name).Scan(
@@ -1498,7 +1308,7 @@ func (d *DiskDB) GetQuery(name string) (*models.Query, error) {
 		query.Description = &description.String
 	}
 	if targetSet.Valid {
-		query.TargetSelectionSet = &targetSet.String
+		query.TargetResourceSet = &targetSet.String
 	}
 	if updateMode.Valid {
 		query.UpdateMode = &updateMode.String
@@ -1513,7 +1323,7 @@ func (d *DiskDB) GetQuery(name string) (*models.Query, error) {
 // ListQueries retrieves all queries
 func (d *DiskDB) ListQueries() ([]*models.Query, error) {
 	rows, err := d.db.Query(`
-		SELECT id, name, description, query_type, query_json, target_selection_set, update_mode,
+		SELECT id, name, description, query_type, query_json, target_resource_set, update_mode,
 		       created_at, updated_at, last_executed, execution_count
 		FROM queries ORDER BY created_at DESC
 	`)
@@ -1540,7 +1350,7 @@ func (d *DiskDB) ListQueries() ([]*models.Query, error) {
 			query.Description = &description.String
 		}
 		if targetSet.Valid {
-			query.TargetSelectionSet = &targetSet.String
+			query.TargetResourceSet = &targetSet.String
 		}
 		if updateMode.Valid {
 			query.UpdateMode = &updateMode.String

@@ -50,8 +50,8 @@ func (oa *OutcomeApplier) ApplyAll(entries []*models.Entry, outcomes []models.Ru
 // Apply executes a single outcome on matched entries
 func (oa *OutcomeApplier) Apply(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) (int, error) {
 	switch outcome.Type {
-	case "selection_set":
-		return oa.applySelectionSet(entries, outcome, execID, planID)
+	case "resource_set":
+		return oa.applyResourceSet(entries, outcome, execID, planID)
 	case "classifier":
 		return oa.applyClassifier(entries, outcome, execID, planID)
 	case "chained":
@@ -61,30 +61,30 @@ func (oa *OutcomeApplier) Apply(entries []*models.Entry, outcome models.RuleOutc
 	}
 }
 
-func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) (int, error) {
-	if outcome.SelectionSetName == "" {
-		return 0, fmt.Errorf("selectionSetName is required for selection_set outcome")
+func (oa *OutcomeApplier) applyResourceSet(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) (int, error) {
+	if outcome.ResourceSetName == "" {
+		return 0, fmt.Errorf("resourceSetName is required for resource_set outcome")
 	}
 
-	setName := outcome.SelectionSetName
+	setName := outcome.ResourceSetName
 	paths := make([]string, len(entries))
 	for i, entry := range entries {
 		paths[i] = entry.Path
 	}
 
-	// Ensure selection set exists
-	set, err := oa.db.GetSelectionSet(setName)
+	// Ensure resource set exists
+	set, err := oa.db.GetResourceSet(setName)
 	if err != nil || set == nil {
 		// Create if doesn't exist
 		desc := "Auto-created by plan"
-		_, createErr := oa.db.CreateSelectionSet(&models.SelectionSet{
+		_, createErr := oa.db.CreateResourceSet(&models.ResourceSet{
 			Name:        setName,
 			Description: &desc,
 		})
 		if createErr != nil {
-			return 0, fmt.Errorf("failed to create selection set: %w", createErr)
+			return 0, fmt.Errorf("failed to create resource set: %w", createErr)
 		}
-		oa.logger.Infof("Created selection set: %s", setName)
+		oa.logger.Infof("Created resource set: %s", setName)
 	}
 
 	// Apply operation
@@ -96,9 +96,9 @@ func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome mod
 
 	switch operation {
 	case "add":
-		opErr = oa.db.AddToSelectionSet(setName, paths)
+		opErr = oa.db.AddToResourceSet(setName, paths)
 	case "remove":
-		opErr = oa.db.RemoveFromSelectionSet(setName, paths)
+		opErr = oa.db.RemoveFromResourceSet(setName, paths)
 	default:
 		return 0, fmt.Errorf("invalid operation: %s", operation)
 	}
@@ -110,15 +110,15 @@ func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome mod
 	// Record outcomes for audit
 	for _, entry := range entries {
 		outcomeData, _ := json.Marshal(map[string]string{
-			"selection_set": setName,
-			"operation":     operation,
+			"resource_set": setName,
+			"operation":    operation,
 		})
 
 		record := &models.PlanOutcomeRecord{
 			ExecutionID: execID,
 			PlanID:      planID,
 			EntryPath:   entry.Path,
-			OutcomeType: "selection_set",
+			OutcomeType: "resource_set",
 			OutcomeData: string(outcomeData),
 			Status:      "success",
 		}
@@ -132,7 +132,7 @@ func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome mod
 		"operation": operation,
 		"set":       setName,
 		"count":     len(entries),
-	}).Info("Applied selection_set outcome")
+	}).Info("Applied resource_set outcome")
 
 	return len(entries), nil
 }

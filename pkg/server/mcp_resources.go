@@ -17,7 +17,7 @@ import (
 func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	// Register static resources
 	registerEntriesResource(s, db)
-	registerSelectionSetsResource(s, db)
+	registerResourceSetsResource(s, db)
 	registerQueriesResource(s, db)
 	registerPlansResource(s, db)
 	registerPlanExecutionsResource(s, db)
@@ -37,8 +37,8 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 
 	// Register resource templates
 	registerEntryTemplate(s, db)
-	registerSelectionSetTemplate(s, db)
-	registerSelectionSetEntriesTemplate(s, db)
+	registerResourceSetTemplate(s, db)
+	registerResourceSetEntriesTemplate(s, db)
 	registerQueryTemplate(s, db)
 	registerQueryExecutionsTemplate(s, db)
 	registerPlanTemplate(s, db)
@@ -83,23 +83,23 @@ func registerEntriesResource(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-func registerSelectionSetsResource(s *server.MCPServer, db *database.DiskDB) {
+func registerResourceSetsResource(s *server.MCPServer, db *database.DiskDB) {
 	resource := mcp.NewResource(
-		"shell://selection-sets",
-		"All Selection Sets",
-		mcp.WithResourceDescription("List of all selection sets (named groups of files)"),
+		"resource://resource-sets",
+		"All Resource Sets",
+		mcp.WithResourceDescription("List of all resource sets (DAG nodes for organizing files)"),
 		mcp.WithMIMEType("application/json"),
 	)
 
 	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		sets, err := db.ListSelectionSets()
+		sets, err := db.ListResourceSets()
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch selection sets: %w", err)
+			return nil, fmt.Errorf("failed to fetch resource sets: %w", err)
 		}
 
 		data, err := json.MarshalIndent(sets, "", "  ")
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal selection sets: %w", err)
+			return nil, fmt.Errorf("failed to marshal resource sets: %w", err)
 		}
 
 		return []mcp.ResourceContents{
@@ -375,18 +375,18 @@ func registerEntryTemplate(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-func registerSelectionSetTemplate(s *server.MCPServer, db *database.DiskDB) {
+func registerResourceSetTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"shell://selection-sets/{name}",
-		"Selection Set",
-		mcp.WithTemplateDescription("Individual selection set by name"),
+		"resource://resource-set/{name}",
+		"Resource Set",
+		mcp.WithTemplateDescription("Individual resource set by name"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract name from URI: shell://selection-sets/{name}
+		// Extract name from URI: resource://resource-set/{name}
 		uri := request.Params.URI
-		prefix := "shell://selection-sets/"
+		prefix := "resource://resource-set/"
 		if !strings.HasPrefix(uri, prefix) {
 			return nil, fmt.Errorf("invalid URI format: %s", uri)
 		}
@@ -399,18 +399,18 @@ func registerSelectionSetTemplate(s *server.MCPServer, db *database.DiskDB) {
 			return nil, fmt.Errorf("name parameter is required")
 		}
 
-		set, err := db.GetSelectionSet(name)
+		set, err := db.GetResourceSet(name)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch selection set: %w", err)
+			return nil, fmt.Errorf("failed to fetch resource set: %w", err)
 		}
 
 		if set == nil {
-			return nil, fmt.Errorf("selection set not found: %s", name)
+			return nil, fmt.Errorf("resource set not found: %s", name)
 		}
 
 		data, err := json.MarshalIndent(set, "", "  ")
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal selection set: %w", err)
+			return nil, fmt.Errorf("failed to marshal resource set: %w", err)
 		}
 
 		return []mcp.ResourceContents{
@@ -423,18 +423,18 @@ func registerSelectionSetTemplate(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-func registerSelectionSetEntriesTemplate(s *server.MCPServer, db *database.DiskDB) {
+func registerResourceSetEntriesTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"shell://selection-sets/{name}/entries",
-		"Selection Set Entries",
-		mcp.WithTemplateDescription("All entries in a selection set"),
+		"resource://resource-set/{name}/entries",
+		"Resource Set Entries",
+		mcp.WithTemplateDescription("All entries in a resource set"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract name from URI: shell://selection-sets/{name}/entries
+		// Extract name from URI: resource://resource-set/{name}/entries
 		uri := request.Params.URI
-		prefix := "shell://selection-sets/"
+		prefix := "resource://resource-set/"
 		suffix := "/entries"
 
 		if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, suffix) {
@@ -448,9 +448,9 @@ func registerSelectionSetEntriesTemplate(s *server.MCPServer, db *database.DiskD
 			return nil, fmt.Errorf("name parameter is required")
 		}
 
-		entries, err := db.GetSelectionSetEntries(name)
+		entries, err := db.GetResourceSetEntries(name)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch selection set entries: %w", err)
+			return nil, fmt.Errorf("failed to fetch resource set entries: %w", err)
 		}
 
 		data, err := json.MarshalIndent(entries, "", "  ")
