@@ -2,120 +2,321 @@
 
 ## Overview
 
-This document describes the architectural refactoring from "Selection Sets" to "Resource Sets" with three major enhancements:
+This document describes the architectural refactoring to a **resource-centric model** where:
 
-1. **Rename**: selection-set → resource-set
-2. **Nesting**: Resource-sets can contain other resource-sets
-3. **Unified Sources**: Rationalize query, source, and plan systems into a single "Sources" abstraction
+1. **Resource-Sets form a DAG** (Directed Acyclic Graph) with bidirectional navigation
+2. **Operations are resource-centric** with neutral naming (not file-specific)
+3. **Indexing moves to Plans** rather than being a standalone operation
+4. **MCP Resources + Tools** provide dual access patterns for all resources
 
 ## Design Principles
 
-1. **Composition over Configuration**: Resource-sets compose through nesting rather than complex configuration
-2. **Single Abstraction**: "Source" is the unified concept for anything that populates a resource-set
-3. **Plans as Orchestrators**: Plans combine resource-sets with sources and define execution flow
-4. **Audit Trail**: All operations are tracked for debugging and compliance
+1. **DAG over Trees**: Resource-sets can have multiple parents and children (no cycles)
+2. **Resource-Neutral Operations**: Tools work on abstract resources, not just files
+3. **Plans Own Indexing**: All data ingestion happens through Plans with Sources
+4. **Dual Access**: Resources accessible via MCP tools AND resource templates
+5. **Bidirectional Navigation**: Navigate both to children and parents
+6. **Metric Aggregation**: Hierarchical rollup of any metric through the DAG
 
 ---
 
 ## Core Concepts
 
-### 1. Resource-Set (formerly Selection-Set)
+### 1. Resource-Set as DAG Node
 
-A **Resource-Set** is a named collection that can contain:
-- File/directory entries (paths from the `entries` table)
-- References to other resource-sets (enabling composition)
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Resource-Set                            │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Entries (files/directories)                          │   │
-│  │  - /home/user/photos/vacation.jpg                    │   │
-│  │  - /home/user/photos/birthday.mp4                    │   │
-│  └─────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Child Resource-Sets (nested)                         │   │
-│  │  - "archived-photos" (resource-set reference)         │   │
-│  │  - "shared-photos" (resource-set reference)           │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Key Properties:**
-- Pure storage container (no logic about HOW items got there)
-- Tracks when each item was added
-- Can be nested arbitrarily deep (cycles prevented by validation)
-- Can be used as input/output for Sources
-
-### 2. Source (Unified Abstraction)
-
-A **Source** is anything that populates a resource-set with entries. This unifies:
-- Current `sources` table (filesystem.index, filesystem.watch)
-- Current `queries` table (query filters)
-- Plan source resolution logic
+A **Resource-Set** is a node in a Directed Acyclic Graph that can:
+- Contain resources (file/directory entries)
+- Have multiple parent resource-sets
+- Have multiple child resource-sets
+- Be traversed in both directions
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                         SOURCES                              │
-├─────────────────────────────────────────────────────────────┤
-│  filesystem.index     │  One-time filesystem scan           │
-│  filesystem.watch     │  Real-time filesystem monitoring    │
-│  query                │  File filter against indexed data   │
-│  resource-set         │  Copy from another resource-set     │
-└─────────────────────────────────────────────────────────────┘
+                    ┌─────────────┐
+                    │  all-media  │
+                    └──────┬──────┘
+                           │
+           ┌───────────────┼───────────────┐
+           ▼               ▼               ▼
+    ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+    │   photos    │ │   videos    │ │    audio    │
+    └──────┬──────┘ └──────┬──────┘ └─────────────┘
+           │               │
+           ▼               ▼
+    ┌─────────────┐ ┌─────────────┐
+    │  vacation   │ │  tutorials  │  ← Can have multiple parents
+    └─────────────┘ └─────────────┘
+           │
+           ▼
+    ┌─────────────┐
+    │  shared     │  ← Multiple parents: vacation + tutorials
+    └─────────────┘
 ```
 
-**Source Types:**
+**DAG Properties:**
+- Nodes can have 0..N parents (roots have 0)
+- Nodes can have 0..N children (leaves have 0)
+- **No cycles allowed** (enforced at add-child time)
+- Bidirectional traversal: `resource-children` and `resource-parent`
 
-| Type | Description | Config |
-|------|-------------|--------|
-| `filesystem.index` | One-time scan of directory tree | `path`, `recursive`, `max_depth` |
-| `filesystem.watch` | Live monitoring with fsnotify | `path`, `recursive`, `debounce_ms` |
-| `query` | Filter entries using FileFilter | `filter` (path, size, date, pattern) |
-| `resource-set` | Reference another resource-set | `source_set_name`, `operation` |
+### 2. Resource-Centric Operations
 
-**Source Lifecycle:**
-1. **Created**: Source definition stored in database
-2. **Started**: Source begins populating its target resource-set
-3. **Running**: Actively processing (continuous for watch, finite for others)
-4. **Stopped**: Source stops populating
-5. **Completed**: For finite sources, indicates successful completion
+Operations are designed to work on abstract resources with metrics, not tied to files:
 
-### 3. Plan
+| Operation | Description | Replaces |
+|-----------|-------------|----------|
+| `resource-sum` | Hierarchical aggregation of a metric | `disk-du` |
+| `resource-time-range` | Filter resources by time field in range | `disk-time-range` |
+| `resource-metric-range` | Filter resources by metric in range | (new) |
+| `resource-children` | Get child nodes in DAG | `disk-tree` (partial) |
+| `resource-parent` | Get parent nodes (".."-like) | (new) |
 
-A **Plan** orchestrates resource-sets and sources to define complete data processing workflows.
+### 3. Plans Own Indexing
+
+**Key Change**: `disk-index` is no longer a standalone tool. Indexing is an operation that:
+- Belongs to a **Plan**
+- Uses a **Source** (type: `filesystem.index`)
+- Populates a **Resource-Set**
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                          PLAN                                │
 │                                                              │
-│  ┌───────────────┐      ┌───────────────┐                  │
-│  │ Resource-Sets │      │    Sources    │                  │
-│  │               │←─────│               │                  │
-│  │ - photos      │      │ - fs.watch    │                  │
-│  │ - videos      │      │ - query       │                  │
-│  │ - media (nest)│      │               │                  │
-│  └───────────────┘      └───────────────┘                  │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  Sources (what to ingest)                             │   │
+│  │  - filesystem.index: /home/user/Photos               │   │
+│  │  - filesystem.watch: /home/user/Downloads            │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                           │                                  │
+│                           ▼                                  │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  Resource-Sets (where to store)                       │   │
+│  │  - photos, videos, downloads                          │   │
+│  └─────────────────────────────────────────────────────┘   │
 │                                                              │
-│  Execution: oneshot | continuous                             │
-│  Status: active | paused | disabled                          │
+│  Execution: plan-execute "my-plan"                           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Plan Components:**
-- **Resource-Sets**: The containers being managed
-- **Sources**: The mechanisms populating those containers
-- **Conditions**: Optional filters applied during source execution
-- **Outcomes**: Actions taken on matched entries
+### 4. MCP Resource Templates
+
+Resources are accessible via **two patterns**:
+
+**1. Tools (imperative):**
+```json
+{"tool": "resource-children", "params": {"name": "photos"}}
+```
+
+**2. Resource Templates (declarative):**
+```
+resource://resource-set/photos
+resource://resource-set/photos/children
+resource://resource-set/photos/parents
+resource://resource-set/photos/entries
+resource://resource-set/photos/metrics/size
+```
+
+---
+
+## Resource Operations
+
+### resource-sum
+
+Hierarchical aggregation of a metric across the DAG.
+
+```json
+{
+  "tool": "resource-sum",
+  "params": {
+    "name": "all-media",
+    "metric": "size",           // "size", "count", "duration", custom
+    "include_children": true,   // Aggregate through DAG
+    "depth": null               // null = unlimited
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "resource_set": "all-media",
+  "metric": "size",
+  "value": 1073741824,
+  "breakdown": [
+    {"name": "photos", "value": 524288000},
+    {"name": "videos", "value": 536870912},
+    {"name": "audio", "value": 12582912}
+  ]
+}
+```
+
+### resource-time-range
+
+Filter resources by a time field within a range.
+
+```json
+{
+  "tool": "resource-time-range",
+  "params": {
+    "name": "photos",
+    "field": "mtime",           // "mtime", "ctime", "added_at"
+    "min": "2024-01-01",
+    "max": "2024-12-31",
+    "include_children": true
+  }
+}
+```
+
+### resource-metric-range
+
+Filter resources by a metric within a numeric range.
+
+```json
+{
+  "tool": "resource-metric-range",
+  "params": {
+    "name": "videos",
+    "metric": "size",
+    "min": 1073741824,          // 1GB minimum
+    "max": null,                // No maximum
+    "include_children": true
+  }
+}
+```
+
+### resource-children
+
+Get child nodes in the DAG (downstream navigation).
+
+```json
+{
+  "tool": "resource-children",
+  "params": {
+    "name": "all-media",
+    "depth": 1,                 // 1 = immediate, null = all
+    "include_entries": false    // Include file entries?
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "resource_set": "all-media",
+  "children": [
+    {"name": "photos", "entry_count": 1234, "child_count": 2},
+    {"name": "videos", "entry_count": 56, "child_count": 1},
+    {"name": "audio", "entry_count": 789, "child_count": 0}
+  ]
+}
+```
+
+### resource-parent
+
+Get parent nodes in the DAG (upstream navigation, like "..").
+
+```json
+{
+  "tool": "resource-parent",
+  "params": {
+    "name": "vacation",
+    "depth": 1                  // 1 = immediate, null = all ancestors
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "resource_set": "vacation",
+  "parents": [
+    {"name": "photos"},
+    {"name": "videos"}          // Multiple parents allowed in DAG
+  ]
+}
+```
+
+---
+
+## MCP Resource Templates
+
+Resource-sets are exposed as MCP resources for declarative access:
+
+### Resource URIs
+
+| URI Pattern | Description |
+|-------------|-------------|
+| `resource://resource-set/{name}` | Resource-set metadata |
+| `resource://resource-set/{name}/entries` | File entries in set |
+| `resource://resource-set/{name}/children` | Child resource-sets |
+| `resource://resource-set/{name}/parents` | Parent resource-sets |
+| `resource://resource-set/{name}/metrics/{metric}` | Aggregated metric |
+| `resource://resource-set/{name}/tree` | Full subtree (entries + children) |
+
+### Example Resource Access
+
+```json
+// MCP resources/read request
+{
+  "method": "resources/read",
+  "params": {
+    "uri": "resource://resource-set/photos/metrics/size"
+  }
+}
+
+// Response
+{
+  "contents": [
+    {
+      "uri": "resource://resource-set/photos/metrics/size",
+      "mimeType": "application/json",
+      "text": "{\"value\": 524288000, \"unit\": \"bytes\"}"
+    }
+  ]
+}
+```
+
+### Resource Templates Definition
+
+```json
+{
+  "resourceTemplates": [
+    {
+      "uriTemplate": "resource://resource-set/{name}",
+      "name": "Resource Set",
+      "description": "Access a resource-set by name",
+      "mimeType": "application/json"
+    },
+    {
+      "uriTemplate": "resource://resource-set/{name}/children",
+      "name": "Resource Set Children",
+      "description": "Child resource-sets in the DAG"
+    },
+    {
+      "uriTemplate": "resource://resource-set/{name}/parents",
+      "name": "Resource Set Parents",
+      "description": "Parent resource-sets in the DAG"
+    },
+    {
+      "uriTemplate": "resource://resource-set/{name}/entries?limit={limit}&offset={offset}",
+      "name": "Resource Set Entries",
+      "description": "File entries with pagination"
+    },
+    {
+      "uriTemplate": "resource://resource-set/{name}/metrics/{metric}",
+      "name": "Resource Metric",
+      "description": "Aggregated metric value"
+    }
+  ]
+}
+```
 
 ---
 
 ## Data Model
 
-### Resource-Set
+### ResourceSet (DAG Node)
 
 ```go
-// ResourceSet is a named collection of entries and/or other resource-sets
 type ResourceSet struct {
     ID          int64   `db:"id" json:"id"`
     Name        string  `db:"name" json:"name"`
@@ -124,17 +325,17 @@ type ResourceSet struct {
     UpdatedAt   int64   `db:"updated_at" json:"updated_at"`
 }
 
-// ResourceSetEntry links a resource-set to a file/directory entry
+// DAG edges (supports multiple parents)
+type ResourceSetEdge struct {
+    ParentID  int64 `db:"parent_id" json:"parent_id"`
+    ChildID   int64 `db:"child_id" json:"child_id"`
+    AddedAt   int64 `db:"added_at" json:"added_at"`
+}
+
+// File entries within a resource-set
 type ResourceSetEntry struct {
     SetID     int64  `db:"set_id" json:"set_id"`
     EntryPath string `db:"entry_path" json:"entry_path"`
-    AddedAt   int64  `db:"added_at" json:"added_at"`
-}
-
-// ResourceSetChild links a parent resource-set to a child resource-set
-type ResourceSetChild struct {
-    ParentID  int64  `db:"parent_id" json:"parent_id"`
-    ChildID   int64  `db:"child_id" json:"child_id"`
     AddedAt   int64  `db:"added_at" json:"added_at"`
 }
 ```
@@ -151,115 +352,38 @@ const (
     SourceTypeResourceSet     SourceType = "resource-set"
 )
 
-type SourceStatus string
-
-const (
-    SourceStatusStopped   SourceStatus = "stopped"
-    SourceStatusStarting  SourceStatus = "starting"
-    SourceStatusRunning   SourceStatus = "running"
-    SourceStatusStopping  SourceStatus = "stopping"
-    SourceStatusCompleted SourceStatus = "completed"
-    SourceStatusError     SourceStatus = "error"
-)
-
-// Source represents any mechanism that populates a resource-set
 type Source struct {
-    ID              int64        `db:"id" json:"id"`
-    Name            string       `db:"name" json:"name"`
-    Type            SourceType   `db:"type" json:"type"`
-
-    // Target resource-set this source populates
-    TargetSetName   string       `db:"target_set_name" json:"target_set_name"`
-    UpdateMode      string       `db:"update_mode" json:"update_mode"` // "replace", "append", "merge"
-
-    // Type-specific configuration (JSON)
-    ConfigJSON      string       `db:"config_json" json:"-"`
-
-    // Runtime state
-    Status          SourceStatus `db:"status" json:"status"`
-    Enabled         bool         `db:"enabled" json:"enabled"`
-
-    // Metadata
-    CreatedAt       int64        `db:"created_at" json:"created_at"`
-    UpdatedAt       int64        `db:"updated_at" json:"updated_at"`
-    LastRunAt       *int64       `db:"last_run_at" json:"last_run_at,omitempty"`
-    LastError       *string      `db:"last_error" json:"last_error,omitempty"`
-
-    // Parsed config (not stored)
-    Config          interface{}  `db:"-" json:"config,omitempty"`
-}
-
-// FilesystemIndexConfig for filesystem.index sources
-type FilesystemIndexConfig struct {
-    Path       string `json:"path"`
-    Recursive  bool   `json:"recursive"`
-    MaxDepth   *int   `json:"max_depth,omitempty"`
-    IncludeHidden bool `json:"include_hidden"`
-}
-
-// FilesystemWatchConfig for filesystem.watch sources
-type FilesystemWatchConfig struct {
-    Path           string `json:"path"`
-    Recursive      bool   `json:"recursive"`
-    DebounceMs     int    `json:"debounce_ms"`
-    BatchSize      int    `json:"batch_size"`
-}
-
-// QueryConfig for query sources
-type QueryConfig struct {
-    Filter FileFilter `json:"filter"`
-}
-
-// ResourceSetSourceConfig for resource-set sources
-type ResourceSetSourceConfig struct {
-    SourceSetName string `json:"source_set_name"`
-    IncludeNested bool   `json:"include_nested"` // Flatten nested sets
+    ID            int64        `db:"id" json:"id"`
+    Name          string       `db:"name" json:"name"`
+    Type          SourceType   `db:"type" json:"type"`
+    TargetSetName string       `db:"target_set_name" json:"target_set_name"`
+    UpdateMode    string       `db:"update_mode" json:"update_mode"`
+    ConfigJSON    string       `db:"config_json" json:"-"`
+    Status        SourceStatus `db:"status" json:"status"`
+    Enabled       bool         `db:"enabled" json:"enabled"`
+    CreatedAt     int64        `db:"created_at" json:"created_at"`
+    UpdatedAt     int64        `db:"updated_at" json:"updated_at"`
+    LastRunAt     *int64       `db:"last_run_at" json:"last_run_at,omitempty"`
+    LastError     *string      `db:"last_error" json:"last_error,omitempty"`
 }
 ```
 
-### Plan
+### Plan (Orchestrator)
 
 ```go
-// Plan orchestrates resource-sets and sources
 type Plan struct {
-    ID             int64   `db:"id" json:"id"`
-    Name           string  `db:"name" json:"name"`
-    Description    *string `db:"description" json:"description,omitempty"`
-
-    // Execution mode
-    Mode           string  `db:"mode" json:"mode"`     // "oneshot", "continuous"
-    Status         string  `db:"status" json:"status"` // "active", "paused", "disabled"
-
-    // Configuration (JSON)
-    ResourceSetsJSON string  `db:"resource_sets_json" json:"-"` // Resource-sets managed by this plan
-    SourcesJSON      string  `db:"sources_json" json:"-"`       // Sources that populate the sets
-    ConditionsJSON   *string `db:"conditions_json" json:"-"`    // Optional filtering
-    OutcomesJSON     *string `db:"outcomes_json" json:"-"`      // Optional actions
-
-    // Metadata
-    CreatedAt      int64  `db:"created_at" json:"created_at"`
-    UpdatedAt      int64  `db:"updated_at" json:"updated_at"`
-    LastRunAt      *int64 `db:"last_run_at" json:"last_run_at,omitempty"`
-
-    // Parsed fields (not stored)
-    ResourceSets   []PlanResourceSet `db:"-" json:"resource_sets,omitempty"`
-    Sources        []PlanSource      `db:"-" json:"sources,omitempty"`
-    Conditions     *RuleCondition    `db:"-" json:"conditions,omitempty"`
-    Outcomes       []RuleOutcome     `db:"-" json:"outcomes,omitempty"`
-}
-
-// PlanResourceSet defines a resource-set within a plan
-type PlanResourceSet struct {
-    Name        string   `json:"name"`
-    Description *string  `json:"description,omitempty"`
-    Children    []string `json:"children,omitempty"` // Nested resource-set names
-}
-
-// PlanSource references a source by name and defines execution order
-type PlanSource struct {
-    SourceName  string   `json:"source_name"`
-    DependsOn   []string `json:"depends_on,omitempty"` // Source names this depends on
-    Conditions  *RuleCondition `json:"conditions,omitempty"` // Override plan-level conditions
+    ID               int64   `db:"id" json:"id"`
+    Name             string  `db:"name" json:"name"`
+    Description      *string `db:"description" json:"description,omitempty"`
+    Mode             string  `db:"mode" json:"mode"`     // "oneshot", "continuous"
+    Status           string  `db:"status" json:"status"` // "active", "paused", "disabled"
+    ResourceSetsJSON string  `db:"resource_sets_json" json:"-"`
+    SourcesJSON      string  `db:"sources_json" json:"-"`
+    ConditionsJSON   *string `db:"conditions_json" json:"-"`
+    OutcomesJSON     *string `db:"outcomes_json" json:"-"`
+    CreatedAt        int64   `db:"created_at" json:"created_at"`
+    UpdatedAt        int64   `db:"updated_at" json:"updated_at"`
+    LastRunAt        *int64  `db:"last_run_at" json:"last_run_at,omitempty"`
 }
 ```
 
@@ -267,10 +391,8 @@ type PlanSource struct {
 
 ## Database Schema
 
-### New Tables
-
 ```sql
--- Resource sets (renamed from selection_sets)
+-- Resource-sets (DAG nodes)
 CREATE TABLE resource_sets (
     id INTEGER PRIMARY KEY,
     name TEXT UNIQUE NOT NULL,
@@ -279,20 +401,8 @@ CREATE TABLE resource_sets (
     updated_at INTEGER DEFAULT (strftime('%s', 'now'))
 );
 
--- Resource set entries (links to filesystem entries)
-CREATE TABLE resource_set_entries (
-    set_id INTEGER NOT NULL,
-    entry_path TEXT NOT NULL,
-    added_at INTEGER DEFAULT (strftime('%s', 'now')),
-    PRIMARY KEY (set_id, entry_path),
-    FOREIGN KEY (set_id) REFERENCES resource_sets(id) ON DELETE CASCADE,
-    FOREIGN KEY (entry_path) REFERENCES entries(path) ON DELETE CASCADE
-);
-
-CREATE INDEX idx_resource_set_entries ON resource_set_entries(set_id);
-
--- Resource set children (nesting support)
-CREATE TABLE resource_set_children (
+-- DAG edges (parent-child relationships, supports multiple parents)
+CREATE TABLE resource_set_edges (
     parent_id INTEGER NOT NULL,
     child_id INTEGER NOT NULL,
     added_at INTEGER DEFAULT (strftime('%s', 'now')),
@@ -302,380 +412,218 @@ CREATE TABLE resource_set_children (
     CHECK (parent_id != child_id)
 );
 
-CREATE INDEX idx_resource_set_children_parent ON resource_set_children(parent_id);
-CREATE INDEX idx_resource_set_children_child ON resource_set_children(child_id);
+CREATE INDEX idx_edges_parent ON resource_set_edges(parent_id);
+CREATE INDEX idx_edges_child ON resource_set_edges(child_id);
 
--- Unified sources table (replaces both sources and queries tables)
+-- File entries within resource-sets
+CREATE TABLE resource_set_entries (
+    set_id INTEGER NOT NULL,
+    entry_path TEXT NOT NULL,
+    added_at INTEGER DEFAULT (strftime('%s', 'now')),
+    PRIMARY KEY (set_id, entry_path),
+    FOREIGN KEY (set_id) REFERENCES resource_sets(id) ON DELETE CASCADE,
+    FOREIGN KEY (entry_path) REFERENCES entries(path) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_set_entries ON resource_set_entries(set_id);
+
+-- Unified sources (all ingestion mechanisms)
 CREATE TABLE sources (
     id INTEGER PRIMARY KEY,
     name TEXT UNIQUE NOT NULL,
     type TEXT NOT NULL CHECK(type IN ('filesystem.index', 'filesystem.watch', 'query', 'resource-set')),
-
-    -- Target resource-set
     target_set_name TEXT NOT NULL,
     update_mode TEXT DEFAULT 'append' CHECK(update_mode IN ('replace', 'append', 'merge')),
-
-    -- Type-specific configuration
     config_json TEXT NOT NULL,
-
-    -- Runtime state
     status TEXT DEFAULT 'stopped' CHECK(status IN ('stopped', 'starting', 'running', 'stopping', 'completed', 'error')),
     enabled INTEGER DEFAULT 1,
-
-    -- Metadata
     created_at INTEGER DEFAULT (strftime('%s', 'now')),
     updated_at INTEGER DEFAULT (strftime('%s', 'now')),
     last_run_at INTEGER,
     last_error TEXT,
-
     FOREIGN KEY (target_set_name) REFERENCES resource_sets(name) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_sources_type ON sources(type);
-CREATE INDEX idx_sources_target ON sources(target_set_name);
-CREATE INDEX idx_sources_status ON sources(status);
-
--- Source execution history
-CREATE TABLE source_executions (
-    id INTEGER PRIMARY KEY,
-    source_id INTEGER NOT NULL,
-    source_name TEXT NOT NULL,
-
-    started_at INTEGER NOT NULL,
-    completed_at INTEGER,
-    duration_ms INTEGER,
-
-    entries_processed INTEGER DEFAULT 0,
-    entries_added INTEGER DEFAULT 0,
-    entries_removed INTEGER DEFAULT 0,
-
-    status TEXT DEFAULT 'running' CHECK(status IN ('running', 'success', 'partial', 'error')),
-    error_message TEXT,
-
-    FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
-);
-
-CREATE INDEX idx_source_executions_source ON source_executions(source_id);
-CREATE INDEX idx_source_executions_status ON source_executions(status);
-
--- Plans table (orchestration layer)
+-- Plans (orchestration of resource-sets and sources)
 CREATE TABLE plans (
     id INTEGER PRIMARY KEY,
     name TEXT UNIQUE NOT NULL,
     description TEXT,
     mode TEXT DEFAULT 'oneshot' CHECK(mode IN ('oneshot', 'continuous')),
     status TEXT DEFAULT 'active' CHECK(status IN ('active', 'paused', 'disabled')),
-
-    resource_sets_json TEXT NOT NULL,  -- JSON array of PlanResourceSet
-    sources_json TEXT NOT NULL,        -- JSON array of PlanSource
-    conditions_json TEXT,              -- Optional RuleCondition
-    outcomes_json TEXT,                -- Optional RuleOutcome array
-
+    resource_sets_json TEXT NOT NULL,
+    sources_json TEXT NOT NULL,
+    conditions_json TEXT,
+    outcomes_json TEXT,
     created_at INTEGER DEFAULT (strftime('%s', 'now')),
     updated_at INTEGER DEFAULT (strftime('%s', 'now')),
     last_run_at INTEGER
 );
-
-CREATE INDEX idx_plans_status ON plans(status);
-CREATE INDEX idx_plans_mode ON plans(mode);
-
--- Plan execution history
-CREATE TABLE plan_executions (
-    id INTEGER PRIMARY KEY,
-    plan_id INTEGER NOT NULL,
-    plan_name TEXT NOT NULL,
-
-    started_at INTEGER NOT NULL,
-    completed_at INTEGER,
-    duration_ms INTEGER,
-
-    sources_executed INTEGER DEFAULT 0,
-    entries_processed INTEGER DEFAULT 0,
-    entries_matched INTEGER DEFAULT 0,
-    outcomes_applied INTEGER DEFAULT 0,
-
-    status TEXT DEFAULT 'running' CHECK(status IN ('running', 'success', 'partial', 'error')),
-    error_message TEXT,
-
-    FOREIGN KEY (plan_id) REFERENCES plans(id) ON DELETE CASCADE
-);
-
-CREATE INDEX idx_plan_executions_plan ON plan_executions(plan_id);
 ```
 
 ---
 
-## Migration Strategy
+## DAG Cycle Prevention
 
-### Phase 1: Schema Migration
+When adding an edge (parent → child), verify no cycle would be created:
 
-```sql
--- 1. Create new resource_sets table
-CREATE TABLE resource_sets AS SELECT id, name, description, created_at, updated_at FROM selection_sets;
+```go
+func (db *DiskDB) AddResourceSetChild(parentName, childName string) error {
+    // 1. Get IDs
+    parent, child := getByName(parentName), getByName(childName)
 
--- 2. Create new resource_set_entries table
-CREATE TABLE resource_set_entries AS SELECT set_id, entry_path, added_at FROM selection_set_entries;
+    // 2. Check for self-reference
+    if parent.ID == child.ID {
+        return ErrSelfReference
+    }
 
--- 3. Create resource_set_children table (new)
-CREATE TABLE resource_set_children (...);
+    // 3. Check if adding this edge would create a cycle
+    // (child cannot be an ancestor of parent)
+    if db.isAncestor(child.ID, parent.ID) {
+        return ErrCycleDetected
+    }
 
--- 4. Migrate queries to sources
-INSERT INTO sources (name, type, target_set_name, update_mode, config_json, status, enabled, created_at, updated_at, last_run_at)
-SELECT
-    name,
-    'query',
-    COALESCE(target_selection_set, name || '-results'),
-    COALESCE(update_mode, 'replace'),
-    query_json,
-    'stopped',
-    1,
-    created_at,
-    updated_at,
-    last_executed
-FROM queries;
+    // 4. Add edge
+    return db.insertEdge(parent.ID, child.ID)
+}
 
--- 5. Migrate existing sources (filesystem only)
-UPDATE sources SET type =
-    CASE
-        WHEN type = 'manual' THEN 'filesystem.index'
-        WHEN type = 'live' THEN 'filesystem.watch'
-        ELSE type
-    END;
-
--- 6. Drop old tables (after verification)
-DROP TABLE selection_sets;
-DROP TABLE selection_set_entries;
-DROP TABLE queries;
-DROP TABLE query_executions;
+func (db *DiskDB) isAncestor(potentialAncestor, node int64) bool {
+    // BFS/DFS from node upward through parents
+    // Return true if potentialAncestor is found
+}
 ```
-
-### Phase 2: Code Migration
-
-1. **Rename all Go types**: `SelectionSet` → `ResourceSet`
-2. **Update database methods**: `pkg/database/selection_sets.go` → `pkg/database/resource_sets.go`
-3. **Unify source handling**: Merge `pkg/sources/` with query execution
-4. **Update MCP tools**: `selection-set-*` → `resource-set-*`
-5. **Update tests**
-
-### Phase 3: Backward Compatibility
-
-- Provide MCP tool aliases: `selection-set-*` redirects to `resource-set-*` with deprecation warning
-- Migration CLI command: `mcp-space-browser migrate --from=v1 --to=v2`
 
 ---
 
-## API Changes
+## API Summary
 
 ### MCP Tools
 
-**Renamed Tools:**
-| Old Name | New Name |
-|----------|----------|
-| `selection-set-create` | `resource-set-create` |
-| `selection-set-list` | `resource-set-list` |
-| `selection-set-get` | `resource-set-get` |
-| `selection-set-modify` | `resource-set-modify` |
-| `selection-set-delete` | `resource-set-delete` |
-
-**New Tools for Nesting:**
+**Resource Navigation:**
 | Tool | Description |
 |------|-------------|
-| `resource-set-add-child` | Add a child resource-set to a parent |
-| `resource-set-remove-child` | Remove a child resource-set |
-| `resource-set-get-all` | Get all entries including nested sets (flattened) |
+| `resource-set-create` | Create a resource-set node |
+| `resource-set-list` | List all resource-sets |
+| `resource-set-get` | Get resource-set metadata |
+| `resource-set-modify` | Add/remove entries |
+| `resource-set-delete` | Delete a resource-set |
+| `resource-set-add-child` | Create parent→child edge |
+| `resource-set-remove-child` | Remove parent→child edge |
+| `resource-children` | Get child nodes in DAG |
+| `resource-parent` | Get parent nodes in DAG |
 
-**Unified Source Tools:**
+**Resource Queries:**
 | Tool | Description |
 |------|-------------|
-| `source-create` | Create any source type |
+| `resource-sum` | Hierarchical metric aggregation |
+| `resource-time-range` | Filter by time field range |
+| `resource-metric-range` | Filter by metric range |
+
+**Sources (Data Ingestion):**
+| Tool | Description |
+|------|-------------|
+| `source-create` | Create a source |
 | `source-start` | Start a source |
 | `source-stop` | Stop a source |
-| `source-list` | List all sources (all types) |
+| `source-list` | List all sources |
 | `source-get` | Get source details |
 | `source-delete` | Delete a source |
-| `source-execute` | Execute a source once (for query/index types) |
+| `source-execute` | Execute source once |
 
-**Removed Tools (absorbed into source-*):**
+**Plans (Orchestration):**
+| Tool | Description |
+|------|-------------|
+| `plan-create` | Create a plan with sources |
+| `plan-execute` | Run a plan (triggers indexing) |
+| `plan-list` | List all plans |
+| `plan-get` | Get plan details |
+| `plan-update` | Modify plan |
+| `plan-delete` | Remove plan |
+
+**Removed Tools:**
 | Old Tool | Replacement |
 |----------|-------------|
-| `query-create` | `source-create` with `type: "query"` |
-| `query-execute` | `source-execute` |
-| `query-list` | `source-list` with `type: "query"` filter |
-| `query-get` | `source-get` |
-| `query-update` | `source-update` |
-| `query-delete` | `source-delete` |
+| `disk-index` | `plan-execute` with filesystem.index source |
+| `disk-du` | `resource-sum` with metric: "size" |
+| `disk-time-range` | `resource-time-range` |
+| `disk-tree` | `resource-children` + `resource-set-get` |
+| `navigate` | `resource-children` + `resource-parent` |
+
+### MCP Resources
+
+| URI Template | Description |
+|--------------|-------------|
+| `resource://resource-set/{name}` | Resource-set metadata |
+| `resource://resource-set/{name}/entries` | File entries |
+| `resource://resource-set/{name}/children` | Child sets |
+| `resource://resource-set/{name}/parents` | Parent sets |
+| `resource://resource-set/{name}/metrics/{metric}` | Aggregated metric |
 
 ---
 
-## Example Usage
+## Example Workflows
 
-### Creating a Nested Resource-Set Structure
-
-```json
-// Create parent resource-set
-{
-  "tool": "resource-set-create",
-  "params": {
-    "name": "all-media",
-    "description": "All media files"
-  }
-}
-
-// Create child resource-sets
-{
-  "tool": "resource-set-create",
-  "params": {
-    "name": "photos",
-    "description": "Photo files"
-  }
-}
-
-{
-  "tool": "resource-set-create",
-  "params": {
-    "name": "videos",
-    "description": "Video files"
-  }
-}
-
-// Add children to parent
-{
-  "tool": "resource-set-add-child",
-  "params": {
-    "parent": "all-media",
-    "child": "photos"
-  }
-}
-
-{
-  "tool": "resource-set-add-child",
-  "params": {
-    "parent": "all-media",
-    "child": "videos"
-  }
-}
-
-// Get all entries (flattened from all nested sets)
-{
-  "tool": "resource-set-get-all",
-  "params": {
-    "name": "all-media"
-  }
-}
-```
-
-### Creating Sources to Populate Resource-Sets
+### 1. Initial Setup (Index Files via Plan)
 
 ```json
-// Filesystem watch source for photos
-{
-  "tool": "source-create",
-  "params": {
-    "name": "watch-photos",
-    "type": "filesystem.watch",
-    "target_set": "photos",
-    "config": {
-      "path": "/home/user/Photos",
-      "recursive": true,
-      "debounce_ms": 500
-    }
-  }
-}
+// Step 1: Create resource-sets
+{"tool": "resource-set-create", "params": {"name": "photos"}}
+{"tool": "resource-set-create", "params": {"name": "videos"}}
+{"tool": "resource-set-create", "params": {"name": "all-media"}}
 
-// Query source for large videos
-{
-  "tool": "source-create",
-  "params": {
-    "name": "large-videos-query",
-    "type": "query",
-    "target_set": "videos",
-    "update_mode": "append",
-    "config": {
-      "filter": {
-        "path": "/home/user/Videos",
-        "extensions": ["mp4", "mkv", "avi"],
-        "minSize": 1073741824
-      }
-    }
-  }
-}
+// Step 2: Build DAG structure
+{"tool": "resource-set-add-child", "params": {"parent": "all-media", "child": "photos"}}
+{"tool": "resource-set-add-child", "params": {"parent": "all-media", "child": "videos"}}
 
-// Start the watch source
-{
-  "tool": "source-start",
-  "params": {
-    "name": "watch-photos"
-  }
-}
-
-// Execute the query source
-{
-  "tool": "source-execute",
-  "params": {
-    "name": "large-videos-query"
-  }
-}
-```
-
-### Creating a Plan
-
-```json
+// Step 3: Create plan with sources
 {
   "tool": "plan-create",
   "params": {
-    "name": "media-organizer",
-    "description": "Organize all media files",
-    "mode": "continuous",
-    "resource_sets": [
-      {
-        "name": "all-media",
-        "children": ["photos", "videos", "audio"]
-      }
-    ],
+    "name": "index-media",
     "sources": [
-      {"source_name": "watch-photos"},
-      {"source_name": "watch-videos"},
-      {"source_name": "large-videos-query", "depends_on": ["watch-videos"]}
-    ],
-    "conditions": {
-      "type": "any",
-      "conditions": [
-        {"type": "media_type", "mediaType": "image"},
-        {"type": "media_type", "mediaType": "video"},
-        {"type": "media_type", "mediaType": "audio"}
-      ]
-    },
-    "outcomes": [
-      {
-        "type": "selection_set",
-        "selectionSetName": "processed-media",
-        "operation": "add"
-      }
+      {"name": "index-photos", "type": "filesystem.index", "target_set": "photos",
+       "config": {"path": "/home/user/Photos", "recursive": true}},
+      {"name": "index-videos", "type": "filesystem.index", "target_set": "videos",
+       "config": {"path": "/home/user/Videos", "recursive": true}}
     ]
   }
 }
+
+// Step 4: Execute plan (this does the indexing!)
+{"tool": "plan-execute", "params": {"name": "index-media"}}
+```
+
+### 2. Query Resources
+
+```json
+// Get total size of all media (aggregated through DAG)
+{"tool": "resource-sum", "params": {"name": "all-media", "metric": "size"}}
+
+// Find large videos
+{"tool": "resource-metric-range", "params": {"name": "videos", "metric": "size", "min": 1073741824}}
+
+// Find recent photos
+{"tool": "resource-time-range", "params": {"name": "photos", "field": "mtime", "min": "2024-01-01"}}
+```
+
+### 3. Navigate DAG
+
+```json
+// What's in all-media?
+{"tool": "resource-children", "params": {"name": "all-media"}}
+
+// What sets contain "vacation"?
+{"tool": "resource-parent", "params": {"name": "vacation"}}
 ```
 
 ---
 
-## Benefits of This Architecture
+## Benefits
 
-1. **Simplified Mental Model**: One abstraction (Source) for all data population
-2. **Composability**: Resource-sets compose through nesting
-3. **Flexibility**: Any source type can target any resource-set
-4. **Consistency**: Uniform API for all source operations
-5. **Extensibility**: Easy to add new source types (S3, HTTP, etc.)
-6. **Auditability**: Complete execution history for all sources
-
----
-
-## Comparison: Before vs After
-
-| Aspect | Before | After |
-|--------|--------|-------|
-| Collections | SelectionSet (flat) | ResourceSet (nestable) |
-| Filesystem Indexing | Source (manual/live) | Source (filesystem.index/watch) |
-| Query Filtering | Query (separate system) | Source (type: query) |
-| Plan Sources | 3 types (filesystem, selection_set, query) | References Source by name |
-| APIs | 3 separate tool groups | 2 unified tool groups |
-| Database Tables | 4 tables (selection_sets, queries, sources, plans) | 3 tables (resource_sets, sources, plans) |
+1. **Resource-Neutral**: Operations work on any resources, not tied to files
+2. **DAG Flexibility**: Multiple inheritance paths, no rigid hierarchy
+3. **Bidirectional Navigation**: Easy to traverse up and down
+4. **Metric Aggregation**: Roll up any metric through the graph
+5. **Dual Access**: Tools for actions, Resources for state
+6. **Clean Separation**: Plans own ingestion, Sets own storage
+7. **Extensible**: Easy to add new source types, metrics, operations

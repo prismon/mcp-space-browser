@@ -143,55 +143,67 @@ curl -X POST http://localhost:3000/mcp \
 
 ### MCP Tools
 
-The MCP server exposes 32 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
+The MCP server exposes 30 MCP tools at the `/mcp` endpoint for disk space analysis through the Model Context Protocol.
 
 These tools are accessible via Claude Desktop, Claude Code, or any other MCP-compatible client when the server is running.
 
 #### Available MCP Tools
 
-**Core Tools (5):**
-1. `disk-index`: Index a directory tree
-2. `disk-du`: Get disk usage for a path
-3. `disk-tree`: Get hierarchical tree structure
-4. `disk-time-range`: Find files modified within a date range
-5. `navigate`: Navigate to a directory and list its contents with summary statistics
+**Resource Navigation (DAG):**
+1. `resource-children`: Get child nodes in DAG (downstream navigation)
+2. `resource-parent`: Get parent nodes in DAG (upstream navigation, like "..")
 
-**Resource-Set Tools (8):**
-6. `resource-set-create`: Create a named file grouping
+**Resource Queries:**
+3. `resource-sum`: Hierarchical aggregation of a metric (replaces disk-du)
+4. `resource-time-range`: Filter resources by time field in range (replaces disk-time-range)
+5. `resource-metric-range`: Filter resources by metric value range
+
+**Resource-Set Management:**
+6. `resource-set-create`: Create a named resource-set (DAG node)
 7. `resource-set-list`: List all resource-sets
-8. `resource-set-get`: Get entries in a resource-set
+8. `resource-set-get`: Get resource-set metadata and entries
 9. `resource-set-modify`: Add/remove entries from a set
 10. `resource-set-delete`: Delete a resource-set
-11. `resource-set-add-child`: Add a child resource-set (nesting)
-12. `resource-set-remove-child`: Remove a child resource-set
-13. `resource-set-get-all`: Get all entries including nested sets (flattened)
+11. `resource-set-add-child`: Create parent→child edge in DAG
+12. `resource-set-remove-child`: Remove parent→child edge
 
-**Unified Source Tools (8):**
-14. `source-create`: Create a source (filesystem.index, filesystem.watch, query, resource-set)
-15. `source-start`: Start a source to begin indexing/monitoring
-16. `source-stop`: Stop a running source
-17. `source-list`: List all configured sources
-18. `source-get`: Get detailed info about a specific source
-19. `source-delete`: Delete a source
-20. `source-execute`: Execute a source once (for query/index types)
-21. `source-stats`: Get live statistics for a running source
+**Unified Source Tools:**
+13. `source-create`: Create a source (filesystem.index, filesystem.watch, query, resource-set)
+14. `source-start`: Start a source to begin monitoring
+15. `source-stop`: Stop a running source
+16. `source-list`: List all configured sources
+17. `source-get`: Get detailed info about a specific source
+18. `source-delete`: Delete a source
+19. `source-execute`: Execute a source once
 
-**Plan Tools (6):**
-22. `plan-create`: Create a new plan (orchestrates resource-sets and sources)
-23. `plan-execute`: Run a plan
-24. `plan-list`: List all plans
-25. `plan-get`: Get plan definition and execution history
-26. `plan-update`: Modify plan
-27. `plan-delete`: Remove plan
+**Plan Tools (owns indexing):**
+20. `plan-create`: Create a plan with sources (indexing happens here)
+21. `plan-execute`: Run a plan (triggers filesystem.index sources)
+22. `plan-list`: List all plans
+23. `plan-get`: Get plan definition and execution history
+24. `plan-update`: Modify plan
+25. `plan-delete`: Remove plan
 
-**File Action Tools (3):**
-28. `rename-files`: Rename files based on a regex pattern
-29. `delete-files`: Delete files or directories from the filesystem
-30. `move-files`: Move files or directories to a destination
+**File Action Tools:**
+26. `rename-files`: Rename files based on a regex pattern
+27. `delete-files`: Delete files or directories from the filesystem
+28. `move-files`: Move files or directories to a destination
 
-**Session Tools (2):**
-31. `session-info`: Get session information
-32. `session-set-preferences`: Set session preferences
+**Session Tools:**
+29. `session-info`: Get session information
+30. `session-set-preferences`: Set session preferences
+
+### MCP Resource Templates
+
+Resources are also accessible via declarative URIs:
+
+| URI Template | Description |
+|--------------|-------------|
+| `resource://resource-set/{name}` | Resource-set metadata |
+| `resource://resource-set/{name}/children` | Child resource-sets in DAG |
+| `resource://resource-set/{name}/parents` | Parent resource-sets in DAG |
+| `resource://resource-set/{name}/entries` | File entries with pagination |
+| `resource://resource-set/{name}/metrics/{metric}` | Aggregated metric value |
 
 ## Configuration
 
@@ -200,7 +212,7 @@ These tools are accessible via Claude Desktop, Claude Code, or any other MCP-com
 By default, the database is stored at `disk.db`. You can specify a custom path:
 
 ```bash
-./mcp-space-browser --db=/path/to/custom.db disk-index /home/user
+./mcp-space-browser --db=/path/to/custom.db server --port=3000
 ```
 
 ### Log Level
@@ -208,7 +220,7 @@ By default, the database is stored at `disk.db`. You can specify a custom path:
 Set the log level via environment variable:
 
 ```bash
-LOG_LEVEL=debug ./mcp-space-browser disk-index /home/user
+LOG_LEVEL=debug ./mcp-space-browser server --port=3000
 ```
 
 Available levels: `trace`, `debug`, `info`, `warn`, `error`
@@ -262,12 +274,13 @@ CREATE TABLE resource_set_entries (
   PRIMARY KEY (set_id, entry_path)
 )
 
--- Nesting support (resource-sets can contain other resource-sets)
-CREATE TABLE resource_set_children (
+-- DAG edges (resource-sets can have multiple parents)
+CREATE TABLE resource_set_edges (
   parent_id INTEGER NOT NULL,
   child_id INTEGER NOT NULL,
   added_at INTEGER,
-  PRIMARY KEY (parent_id, child_id)
+  PRIMARY KEY (parent_id, child_id),
+  CHECK (parent_id != child_id)
 )
 ```
 
