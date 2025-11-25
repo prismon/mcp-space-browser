@@ -319,7 +319,7 @@ func compressEntryList(entries []*models.Entry, maxSizeBytes int, contextInfo st
 
 func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 	tool := mcp.NewTool("index",
-		mcp.WithDescription("Index the specified path and track progress with synthesis://jobs/{id}."),
+		mcp.WithDescription("Index the specified path and track progress with synthesis://jobs/{id}. Skips indexing if the path was recently scanned (within maxAge seconds) unless force=true."),
 		mcp.WithString("root",
 			mcp.Required(),
 			mcp.Description("File or directory path to index"),
@@ -327,19 +327,40 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 		mcp.WithBoolean("async",
 			mcp.Description("Run asynchronously and return job ID immediately (default: true)"),
 		),
+		mcp.WithBoolean("force",
+			mcp.Description("Force re-indexing even if the path was recently scanned (default: false)"),
+		),
+		mcp.WithNumber("maxAge",
+			mcp.Description("Maximum age in seconds before a scan is considered stale (default: 3600 = 1 hour). Set to 0 to always re-index."),
+		),
 	)
 
 	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args struct {
-			Root  string `json:"root"`
-			Async *bool  `json:"async,omitempty"`
+			Root   string  `json:"root"`
+			Async  *bool   `json:"async,omitempty"`
+			Force  *bool   `json:"force,omitempty"`
+			MaxAge *int64  `json:"maxAge,omitempty"`
 		}
 
 		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		log.WithField("root", args.Root).Info("Executing index via MCP")
+		// Build index options
+		indexOpts := crawler.DefaultIndexOptions()
+		if args.Force != nil {
+			indexOpts.Force = *args.Force
+		}
+		if args.MaxAge != nil {
+			indexOpts.MaxAge = *args.MaxAge
+		}
+
+		log.WithFields(logrus.Fields{
+			"root":   args.Root,
+			"force":  indexOpts.Force,
+			"maxAge": indexOpts.MaxAge,
+		}).Info("Executing index via MCP")
 
 		// Default to async mode
 		asyncMode := getBoolOrDefault(args.Async, true)
@@ -401,8 +422,8 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 					return
 				}
 
-				// Run the indexing with job tracking
-				stats, err := crawler.Index(expandedPath, db, nil, jobID, nil)
+				// Run the indexing with job tracking and options
+				stats, err := crawler.IndexWithOptions(expandedPath, db, nil, jobID, nil, indexOpts)
 
 				// Update job with final status
 				if err != nil {
@@ -411,6 +432,16 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 						log.WithError(updateErr).WithField("jobID", jobID).Error("Failed to update job status to failed")
 					}
 					log.WithError(err).WithField("jobID", jobID).Error("Indexing failed")
+				} else if stats.Skipped {
+					// Indexing was skipped due to recent scan
+					if err := db.UpdateIndexJobStatus(jobID, "completed", nil); err != nil {
+						log.WithError(err).WithField("jobID", jobID).Error("Failed to mark job as completed")
+					}
+					log.WithFields(logrus.Fields{
+						"jobID":      jobID,
+						"path":       expandedPath,
+						"skipReason": stats.SkipReason,
+					}).Info("Indexing skipped - path recently scanned")
 				} else {
 					// Mark as completed with final stats
 					if err := db.UpdateIndexJobStatus(jobID, "completed", nil); err != nil {
@@ -455,7 +486,7 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid path: %v", err)), nil
 		}
 
-		stats, err := crawler.Index(expandedPath, db, nil, 0, nil)
+		stats, err := crawler.IndexWithOptions(expandedPath, db, nil, 0, nil, indexOpts)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Indexing failed: %v", err)), nil
 		}
@@ -467,6 +498,11 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 			"directories": stats.DirectoriesProcessed,
 			"totalSize":   stats.TotalSize,
 			"durationMs":  stats.Duration.Milliseconds(),
+			"skipped":     stats.Skipped,
+		}
+
+		if stats.Skipped {
+			response["skipReason"] = stats.SkipReason
 		}
 
 		payload, err := json.Marshal(response)

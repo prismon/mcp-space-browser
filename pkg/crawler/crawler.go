@@ -19,10 +19,33 @@ const (
 	// batchSize is the number of entries to process before committing a transaction
 	// This prevents holding locks for too long during large scans
 	batchSize = 1000
+
+	// DefaultMaxAge is the default maximum age (in seconds) before a path is considered stale
+	// and needs to be re-indexed. Default: 1 hour (3600 seconds)
+	DefaultMaxAge = 3600
 )
 
 func init() {
 	log = logger.WithName("crawler")
+}
+
+// IndexOptions configures the behavior of the Index operation
+type IndexOptions struct {
+	// Force forces re-indexing even if the path was recently scanned
+	Force bool
+
+	// MaxAge is the maximum age in seconds before a scan is considered stale.
+	// If a path was scanned within MaxAge seconds, indexing will be skipped (unless Force is true).
+	// Default: 3600 (1 hour). Set to 0 to always re-index.
+	MaxAge int64
+}
+
+// DefaultIndexOptions returns the default indexing options
+func DefaultIndexOptions() *IndexOptions {
+	return &IndexOptions{
+		Force:  false,
+		MaxAge: DefaultMaxAge,
+	}
 }
 
 // IndexStats contains statistics about an indexing operation
@@ -34,6 +57,8 @@ type IndexStats struct {
 	Duration             time.Duration
 	StartTime            time.Time
 	EndTime              time.Time
+	Skipped              bool   // True if indexing was skipped due to recent scan
+	SkipReason           string // Reason for skipping (if Skipped is true)
 }
 
 // ProgressCallback is a callback function for progress updates during indexing
@@ -46,8 +71,19 @@ type ProgressCallback func(stats *IndexStats, remaining int)
 // If jobID is provided (non-zero), it will update job progress in the database
 // If progressCallback is provided, it will be called with progress updates
 func Index(root string, db *database.DiskDB, src source.Source, jobID int64, progressCallback ProgressCallback) (*IndexStats, error) {
+	return IndexWithOptions(root, db, src, jobID, progressCallback, nil)
+}
+
+// IndexWithOptions performs indexing with configurable options
+// If opts is nil, default options will be used (skip if scanned within 1 hour)
+func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID int64, progressCallback ProgressCallback, opts *IndexOptions) (*IndexStats, error) {
 	startTime := time.Now()
 	ctx := context.Background()
+
+	// Use default options if none provided
+	if opts == nil {
+		opts = DefaultIndexOptions()
+	}
 
 	// Use default filesystem source if none provided
 	if src == nil {
@@ -58,6 +94,56 @@ func Index(root string, db *database.DiskDB, src source.Source, jobID int64, pro
 	abs, err := source.ValidatePath(root)
 	if err != nil {
 		return nil, err
+	}
+
+	// Check if the path was recently scanned (unless Force is set)
+	if !opts.Force && opts.MaxAge > 0 {
+		scanInfo, err := db.GetPathScanInfo(abs)
+		if err != nil {
+			log.WithError(err).WithField("path", abs).Warn("Failed to get path scan info, proceeding with indexing")
+		} else if scanInfo.Exists && scanInfo.LastScanned > 0 {
+			now := time.Now().Unix()
+			age := now - scanInfo.LastScanned
+
+			if age < opts.MaxAge {
+				log.WithFields(logrus.Fields{
+					"path":        abs,
+					"lastScanned": time.Unix(scanInfo.LastScanned, 0).Format(time.RFC3339),
+					"ageSeconds":  age,
+					"maxAge":      opts.MaxAge,
+					"entryCount":  scanInfo.EntryCount,
+				}).Info("Skipping indexing - path was recently scanned")
+
+				// Update job status if provided
+				if jobID > 0 {
+					if err := db.UpdateIndexJobProgress(jobID, 100, &database.IndexJobMetadata{
+						FilesProcessed:       0,
+						DirectoriesProcessed: 0,
+						TotalSize:            0,
+						ErrorCount:           0,
+					}); err != nil {
+						log.WithError(err).WithField("jobID", jobID).Error("Failed to update job progress")
+					}
+				}
+
+				return &IndexStats{
+					StartTime:  startTime,
+					EndTime:    time.Now(),
+					Duration:   time.Since(startTime),
+					Skipped:    true,
+					SkipReason: fmt.Sprintf("Path was scanned %d seconds ago (max age: %d seconds). Use force=true to re-index.", age, opts.MaxAge),
+				}, nil
+			}
+
+			log.WithFields(logrus.Fields{
+				"path":        abs,
+				"lastScanned": time.Unix(scanInfo.LastScanned, 0).Format(time.RFC3339),
+				"ageSeconds":  age,
+				"maxAge":      opts.MaxAge,
+			}).Info("Path scan is stale, proceeding with re-indexing")
+		}
+	} else if opts.Force {
+		log.WithField("path", abs).Info("Force flag set, proceeding with indexing regardless of last scan time")
 	}
 
 	// Acquire indexing lock to prevent concurrent indexing operations
