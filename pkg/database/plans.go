@@ -80,7 +80,7 @@ func (d *DiskDB) GetPlan(name string) (*models.Plan, error) {
 		&plan.UpdatedAt,
 		&lastRunAt,
 	)
-	if err == sql.ErrNoRows {
+	if IsNotFound(err) {
 		return nil, fmt.Errorf("plan not found: %s", name)
 	}
 	if err != nil {

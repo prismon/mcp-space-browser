@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -22,6 +23,12 @@ var log *logrus.Entry
 
 func init() {
 	log = logger.WithName("db")
+}
+
+// IsNotFound returns true if the error indicates no rows were found.
+// This is a helper to standardize the sql.ErrNoRows check across the codebase.
+func IsNotFound(err error) bool {
+	return errors.Is(err, sql.ErrNoRows)
 }
 
 // DiskDB represents the database connection and operations
@@ -466,7 +473,7 @@ func (d *DiskDB) Get(path string) (*models.Entry, error) {
 	err := d.db.QueryRow(`SELECT id, path, parent, size, kind, ctime, mtime, last_scanned FROM entries WHERE path = ?`, path).
 		Scan(&entry.ID, &entry.Path, &parent, &entry.Size, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned)
 
-	if err == sql.ErrNoRows {
+	if IsNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -1031,7 +1038,7 @@ func (d *DiskDB) GetDiskUsageSummary(root string) (*models.DiskUsageSummary, err
 		ORDER BY size DESC LIMIT 1
 	`, root, root+"/%").Scan(&largestFile, &largestFileSize)
 
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !IsNotFound(err) {
 		return nil, err
 	}
 
@@ -1049,7 +1056,7 @@ func (d *DiskDB) GetDiskUsageSummary(root string) (*models.DiskUsageSummary, err
 		ORDER BY mtime ASC LIMIT 1
 	`, root, root+"/%").Scan(&oldestFile, &oldestFileTime)
 
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !IsNotFound(err) {
 		return nil, err
 	}
 
@@ -1066,7 +1073,7 @@ func (d *DiskDB) GetDiskUsageSummary(root string) (*models.DiskUsageSummary, err
 		ORDER BY mtime DESC LIMIT 1
 	`, root, root+"/%").Scan(&newestFile, &newestFileTime)
 
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !IsNotFound(err) {
 		return nil, err
 	}
 
@@ -1290,7 +1297,7 @@ func (d *DiskDB) GetSelectionSet(name string) (*models.SelectionSet, error) {
 	err := d.db.QueryRow(`SELECT id, name, description, created_at, updated_at FROM selection_sets WHERE name = ?`, name).
 		Scan(&set.ID, &set.Name, &description, &set.CreatedAt, &set.UpdatedAt)
 
-	if err == sql.ErrNoRows {
+	if IsNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -1508,7 +1515,7 @@ func (d *DiskDB) GetQuery(name string) (*models.Query, error) {
 		&lastExecuted, &query.ExecutionCount,
 	)
 
-	if err == sql.ErrNoRows {
+	if IsNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -1741,7 +1748,7 @@ func (d *DiskDB) GetMetadata(hash string) (*models.Metadata, error) {
 		&metadata.MimeType, &metadata.CachePath, &metadata.FileSize, &metadataJson, &metadata.CreatedAt,
 	)
 
-	if err == sql.ErrNoRows {
+	if IsNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -1969,7 +1976,7 @@ func (d *DiskDB) GetPathLastScanned(root string) (int64, error) {
 		SELECT last_scanned FROM entries WHERE path = ?
 	`, root).Scan(&lastScanned)
 
-	if err == sql.ErrNoRows {
+	if IsNotFound(err) {
 		return 0, nil
 	}
 	if err != nil {
@@ -2000,7 +2007,7 @@ func (d *DiskDB) GetPathScanInfo(root string) (*PathScanInfo, error) {
 		SELECT last_scanned FROM entries WHERE path = ?
 	`, root).Scan(&lastScanned)
 
-	if err == sql.ErrNoRows {
+	if IsNotFound(err) {
 		info.Exists = false
 		return info, nil
 	}

@@ -104,7 +104,7 @@ func (d *DiskDB) GetIndexJob(id int64) (*IndexJob, error) {
 		&job.CreatedAt, &job.UpdatedAt,
 	)
 
-	if err == sql.ErrNoRows {
+	if IsNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -374,7 +374,7 @@ func (d *DiskDB) GetClassifierJob(id int64) (*ClassifierJob, error) {
 		&job.CreatedAt, &job.UpdatedAt,
 	)
 
-	if err == sql.ErrNoRows {
+	if IsNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {

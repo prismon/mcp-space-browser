@@ -12,6 +12,7 @@ import (
 
 	"github.com/prismon/mcp-space-browser/internal/models"
 	"github.com/prismon/mcp-space-browser/pkg/classifier"
+	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/sirupsen/logrus"
 )
 
@@ -451,7 +452,7 @@ func (e *Engine) getEntry(path string) (*models.Entry, error) {
 		&entry.Ctime, &entry.Mtime, &entry.LastScanned,
 	)
 
-	if err == sql.ErrNoRows {
+	if database.IsNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -506,7 +507,7 @@ func (e *Engine) ensureSelectionSet(name string) (int64, error) {
 	if err == nil {
 		return id, nil
 	}
-	if err != sql.ErrNoRows {
+	if !database.IsNotFound(err) {
 		return 0, err
 	}
 

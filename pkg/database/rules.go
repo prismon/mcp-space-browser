@@ -51,7 +51,7 @@ func (d *DiskDB) GetRule(name string) (*models.Rule, error) {
 		&rule.ConditionJSON, &rule.OutcomeJSON, &rule.CreatedAt, &rule.UpdatedAt,
 	)
 
-	if err == sql.ErrNoRows {
+	if IsNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -80,7 +80,7 @@ func (d *DiskDB) GetRuleByID(id int64) (*models.Rule, error) {
 		&rule.ConditionJSON, &rule.OutcomeJSON, &rule.CreatedAt, &rule.UpdatedAt,
 	)
 
-	if err == sql.ErrNoRows {
+	if IsNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -206,7 +206,7 @@ func (d *DiskDB) GetRuleExecution(id int64) (*models.RuleExecution, error) {
 		&errorMessage, &durationMs,
 	)
 
-	if err == sql.ErrNoRows {
+	if IsNotFound(err) {
 		return nil, nil
 	}
 	if err != nil {
