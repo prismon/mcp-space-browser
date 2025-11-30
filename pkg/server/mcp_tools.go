@@ -22,6 +22,14 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// Response size and compression constants
+const (
+	// maxMCPResponseSize is the maximum response size before compression (500KB)
+	maxMCPResponseSize = 512000
+	// summaryTopEntriesCount is the number of top entries to include in compressed summaries
+	summaryTopEntriesCount = 50
+)
+
 // registerMCPTools registers all MCP tools with the server
 func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 	// Shell-style navigation tools
@@ -281,7 +289,7 @@ func compressEntryList(entries []*models.Entry, maxSizeBytes int, contextInfo st
 	}
 
 	// Create summary with top entries
-	topN := 50 // Keep top 50 largest entries
+	topN := summaryTopEntriesCount
 	if len(sortedEntries) < topN {
 		topN = len(sortedEntries)
 	}
@@ -1060,10 +1068,9 @@ func registerSelectionSetGet(s *server.MCPServer, db *database.DiskDB) {
 		}
 
 		// Compress if necessary
-		maxResponseSize := 512000 // 500KB
 		contextInfo := fmt.Sprintf("Selection set: %s", args.Name)
 
-		result, err := compressEntryList(entries, maxResponseSize, contextInfo)
+		result, err := compressEntryList(entries, maxMCPResponseSize, contextInfo)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to process results: %v", err)), nil
 		}
@@ -1227,10 +1234,9 @@ func registerQueryExecute(s *server.MCPServer, db *database.DiskDB) {
 		}
 
 		// Compress if necessary
-		maxResponseSize := 512000 // 500KB
 		contextInfo := fmt.Sprintf("Query: %s", args.Name)
 
-		result, err := compressEntryList(entries, maxResponseSize, contextInfo)
+		result, err := compressEntryList(entries, maxMCPResponseSize, contextInfo)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Failed to process results: %v", err)), nil
 		}

@@ -71,9 +71,15 @@ type inspectResponse struct {
 	NextPageUrl      string            `json:"nextPageUrl,omitempty"`
 }
 
-func initArtifactCache() {
+// initArtifactCache initializes the artifact cache directory and managers.
+// Returns an error if the cache directory cannot be created.
+func initArtifactCache() error {
+	if artifactCacheDir == "" {
+		return fmt.Errorf("artifact cache directory not configured")
+	}
+
 	if err := os.MkdirAll(artifactCacheDir, 0o755); err != nil {
-		panic(fmt.Errorf("failed to create artifact cache: %w", err))
+		return fmt.Errorf("failed to create artifact cache directory %q: %w", artifactCacheDir, err)
 	}
 
 	// Initialize classifier manager if not already done
@@ -87,6 +93,8 @@ func initArtifactCache() {
 		metadataManager = classifier.NewMetadataManager()
 		inspectLog.Debug("Initialized metadata manager")
 	}
+
+	return nil
 }
 
 func handleInspect(c *gin.Context, db *database.DiskDB) {
@@ -103,7 +111,9 @@ func handleInspect(c *gin.Context, db *database.DiskDB) {
 }
 
 func buildInspectResponse(inputPath string, db *database.DiskDB, limit, offset int) (*inspectResponse, error) {
-	initArtifactCache()
+	if err := initArtifactCache(); err != nil {
+		return nil, fmt.Errorf("artifact cache initialization failed: %w", err)
+	}
 	if contentBaseURL == "" {
 		contentBaseURL = "http://localhost:3000"
 	}
