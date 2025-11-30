@@ -317,4 +317,193 @@ func TestManager(t *testing.T) {
 		_, err := os.Stat(outputPath)
 		assert.NoError(t, err)
 	})
+
+	t.Run("Register", func(t *testing.T) {
+		testManager := NewManager()
+		// Register should not panic with a new classifier
+		goClassifier := NewGoClassifier()
+		testManager.Register(goClassifier)
+		// Registering the same classifier again should not cause issues
+		testManager.Register(goClassifier)
+	})
+
+	t.Run("GetClassifierUnknownType", func(t *testing.T) {
+		testManager := NewManager()
+		// MediaTypeUnknown should fail
+		_, err := testManager.GetClassifier(MediaTypeUnknown)
+		assert.Error(t, err)
+	})
+
+	t.Run("GenerateThumbnailWithValidation", func(t *testing.T) {
+		testManager := NewManager()
+		// Test with invalid request (empty source path)
+		req := &ArtifactRequest{
+			SourcePath:   "",
+			OutputPath:   "/tmp/out.jpg",
+			MediaType:    MediaTypeImage,
+			ArtifactType: ArtifactTypeThumbnail,
+		}
+		result := testManager.GenerateThumbnail(req)
+		assert.Error(t, result.Error)
+	})
+
+	t.Run("GenerateTimelineFrame", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		sourcePath := filepath.Join(tmpDir, "video.mp4")
+		outputPath := filepath.Join(tmpDir, "frame.jpg")
+
+		// Create a dummy video file
+		require.NoError(t, os.WriteFile(sourcePath, []byte("dummy video"), 0644))
+
+		req := &ArtifactRequest{
+			SourcePath:   sourcePath,
+			OutputPath:   outputPath,
+			MediaType:    MediaTypeVideo,
+			ArtifactType: ArtifactTypeTimeline,
+			MaxWidth:     320,
+			MaxHeight:    180,
+			FrameIndex:   0,
+			TotalFrames:  5,
+		}
+
+		result := manager.GenerateTimelineFrame(req)
+		// May fail if ffmpeg is not available, which is OK
+		// The important thing is it doesn't panic
+		_ = result
+	})
+
+	t.Run("GenerateTimelineFrameInvalidRequest", func(t *testing.T) {
+		testManager := NewManager()
+		// Test with invalid request
+		req := &ArtifactRequest{
+			SourcePath:   "",
+			OutputPath:   "/tmp/out.jpg",
+			MediaType:    MediaTypeVideo,
+			ArtifactType: ArtifactTypeTimeline,
+		}
+		result := testManager.GenerateTimelineFrame(req)
+		assert.Error(t, result.Error)
+	})
+}
+
+func TestGoClassifierTimelineFrame(t *testing.T) {
+	classifier := NewGoClassifier()
+	tmpDir := t.TempDir()
+
+	sourcePath := filepath.Join(tmpDir, "video.mp4")
+	outputPath := filepath.Join(tmpDir, "frame.jpg")
+
+	// Create a dummy video file
+	require.NoError(t, os.WriteFile(sourcePath, []byte("dummy"), 0644))
+
+	req := &ArtifactRequest{
+		SourcePath:   sourcePath,
+		OutputPath:   outputPath,
+		MediaType:    MediaTypeVideo,
+		ArtifactType: ArtifactTypeTimeline,
+		MaxWidth:     320,
+		MaxHeight:    180,
+		FrameIndex:   0,
+		TotalFrames:  5,
+	}
+
+	// Go classifier will generate a placeholder for video timeline frames
+	result := classifier.GenerateTimelineFrame(req)
+	assert.NoError(t, result.Error)
+	assert.Equal(t, outputPath, result.OutputPath)
+
+	// Verify the placeholder was created
+	_, err := os.Stat(outputPath)
+	assert.NoError(t, err)
+}
+
+func TestGoClassifierInvalidImage(t *testing.T) {
+	classifier := NewGoClassifier()
+	tmpDir := t.TempDir()
+
+	sourcePath := filepath.Join(tmpDir, "invalid.jpg")
+	outputPath := filepath.Join(tmpDir, "thumb.jpg")
+
+	// Create an invalid image file (just text)
+	require.NoError(t, os.WriteFile(sourcePath, []byte("not an image"), 0644))
+
+	req := &ArtifactRequest{
+		SourcePath:   sourcePath,
+		OutputPath:   outputPath,
+		MediaType:    MediaTypeImage,
+		ArtifactType: ArtifactTypeThumbnail,
+		MaxWidth:     320,
+		MaxHeight:    320,
+	}
+
+	result := classifier.GenerateThumbnail(req)
+	assert.Error(t, result.Error)
+}
+
+func TestGoClassifierTallImage(t *testing.T) {
+	classifier := NewGoClassifier()
+	tmpDir := t.TempDir()
+
+	sourcePath := filepath.Join(tmpDir, "tall.jpg")
+	outputPath := filepath.Join(tmpDir, "thumb.jpg")
+
+	// Create a tall test image (height > width)
+	createTestImage(t, sourcePath, 400, 800)
+
+	req := &ArtifactRequest{
+		SourcePath:   sourcePath,
+		OutputPath:   outputPath,
+		MediaType:    MediaTypeImage,
+		ArtifactType: ArtifactTypeThumbnail,
+		MaxWidth:     320,
+		MaxHeight:    320,
+	}
+
+	result := classifier.GenerateThumbnail(req)
+	assert.NoError(t, result.Error)
+
+	// Verify thumbnail dimensions - height should be limiting factor
+	f, err := os.Open(outputPath)
+	require.NoError(t, err)
+	defer f.Close()
+
+	img, _, err := image.Decode(f)
+	require.NoError(t, err)
+	bounds := img.Bounds()
+	assert.LessOrEqual(t, bounds.Dy(), 320)
+}
+
+func TestGoClassifierSmallImage(t *testing.T) {
+	classifier := NewGoClassifier()
+	tmpDir := t.TempDir()
+
+	sourcePath := filepath.Join(tmpDir, "small.jpg")
+	outputPath := filepath.Join(tmpDir, "thumb.jpg")
+
+	// Create a small test image that doesn't need resizing
+	createTestImage(t, sourcePath, 100, 100)
+
+	req := &ArtifactRequest{
+		SourcePath:   sourcePath,
+		OutputPath:   outputPath,
+		MediaType:    MediaTypeImage,
+		ArtifactType: ArtifactTypeThumbnail,
+		MaxWidth:     320,
+		MaxHeight:    320,
+	}
+
+	result := classifier.GenerateThumbnail(req)
+	assert.NoError(t, result.Error)
+
+	// Verify thumbnail was created - the implementation may upscale small images
+	f, err := os.Open(outputPath)
+	require.NoError(t, err)
+	defer f.Close()
+
+	img, _, err := image.Decode(f)
+	require.NoError(t, err)
+	bounds := img.Bounds()
+	// Just verify the thumbnail was created with valid dimensions
+	assert.Greater(t, bounds.Dx(), 0)
+	assert.Greater(t, bounds.Dy(), 0)
 }

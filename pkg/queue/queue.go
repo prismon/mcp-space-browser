@@ -38,6 +38,7 @@ type WorkerPool struct {
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
 	jobsWg         sync.WaitGroup // Tracks outstanding jobs
+	resultsWg      sync.WaitGroup // Tracks result collector goroutine
 	paused         atomic.Bool
 	pauseChan      chan struct{}
 	resumeChan     chan struct{}
@@ -51,6 +52,7 @@ type WorkerPool struct {
 	mu             sync.RWMutex
 	started        bool
 	closed         atomic.Bool
+	cancelled      atomic.Bool
 }
 
 // NewWorkerPool creates a new worker pool with the specified number of workers
@@ -87,6 +89,7 @@ func (wp *WorkerPool) Start() {
 	}
 
 	// Start result collector
+	wp.resultsWg.Add(1)
 	go wp.collectResults()
 }
 
@@ -147,6 +150,7 @@ func (wp *WorkerPool) worker(id int) {
 
 // collectResults collects results from workers and updates stats
 func (wp *WorkerPool) collectResults() {
+	defer wp.resultsWg.Done()
 	for result := range wp.results {
 		wp.jobsProcessed.Add(1)
 
@@ -199,9 +203,14 @@ func (wp *WorkerPool) Pause() {
 
 // Resume resumes all workers
 func (wp *WorkerPool) Resume() {
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
 	if wp.paused.Swap(false) {
-		wp.resumeChan = make(chan struct{}, 1)
+		// Close the existing resumeChan to wake up all waiting workers
 		close(wp.resumeChan)
+		// Create a new channel for the next pause/resume cycle
+		wp.pauseChan = make(chan struct{})
+		wp.resumeChan = make(chan struct{}, 1)
 		log.Info("Worker pool resumed")
 	}
 }
@@ -219,14 +228,27 @@ func (wp *WorkerPool) Stop() {
 	// Close results channel
 	close(wp.results)
 
+	// Wait for result collector to finish processing
+	wp.resultsWg.Wait()
+
 	log.Info("Worker pool stopped")
 }
 
 // Cancel immediately cancels the worker pool
 func (wp *WorkerPool) Cancel() {
+	// Prevent multiple cancellations
+	if wp.cancelled.Swap(true) {
+		return
+	}
+
 	log.Info("Cancelling worker pool")
 	wp.cancel()
 	wp.wg.Wait()
+
+	// Close results channel to stop the collector
+	close(wp.results)
+	wp.resultsWg.Wait()
+
 	log.Info("Worker pool cancelled")
 }
 
@@ -246,6 +268,9 @@ func (wp *WorkerPool) Wait() {
 
 	// Close results channel
 	close(wp.results)
+
+	// Wait for result collector to finish processing
+	wp.resultsWg.Wait()
 }
 
 // Stats returns current statistics

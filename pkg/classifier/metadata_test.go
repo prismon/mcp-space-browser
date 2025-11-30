@@ -336,3 +336,82 @@ func TestMetadataResult_ToJSON(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
+
+func TestTextClassifierEmptyFile(t *testing.T) {
+	classifier := NewTextClassifier()
+	tmpDir := t.TempDir()
+
+	// Create empty file
+	testFile := filepath.Join(tmpDir, "empty.txt")
+	err := os.WriteFile(testFile, []byte{}, 0o644)
+	require.NoError(t, err)
+
+	req := &MetadataRequest{
+		SourcePath:     testFile,
+		FileType:       FileTypeText,
+		MaxContentSize: 0,
+	}
+
+	result := classifier.Extract(req)
+	require.NoError(t, result.Error)
+	assert.Equal(t, int64(0), result.Data["file_size"])
+	assert.Equal(t, 0, result.Data["line_count"])
+	assert.Equal(t, 0, result.Data["word_count"])
+}
+
+func TestTextClassifierSingleLine(t *testing.T) {
+	classifier := NewTextClassifier()
+	tmpDir := t.TempDir()
+
+	// Create single line file without newline
+	testFile := filepath.Join(tmpDir, "single.txt")
+	content := "Single line without newline"
+	err := os.WriteFile(testFile, []byte(content), 0o644)
+	require.NoError(t, err)
+
+	req := &MetadataRequest{
+		SourcePath:     testFile,
+		FileType:       FileTypeText,
+		MaxContentSize: 0,
+	}
+
+	result := classifier.Extract(req)
+	require.NoError(t, result.Error)
+	assert.Equal(t, 1, result.Data["line_count"])
+	assert.Equal(t, 4, result.Data["word_count"]) // "Single" "line" "without" "newline"
+}
+
+func TestTextClassifierMultipleSpaces(t *testing.T) {
+	classifier := NewTextClassifier()
+	tmpDir := t.TempDir()
+
+	// Create file with multiple spaces between words
+	testFile := filepath.Join(tmpDir, "spaces.txt")
+	content := "Word1    Word2\t\tWord3\nWord4"
+	err := os.WriteFile(testFile, []byte(content), 0o644)
+	require.NoError(t, err)
+
+	req := &MetadataRequest{
+		SourcePath:     testFile,
+		FileType:       FileTypeText,
+		MaxContentSize: 0,
+	}
+
+	result := classifier.Extract(req)
+	require.NoError(t, result.Error)
+	assert.Equal(t, 4, result.Data["word_count"])
+}
+
+func TestAudioClassifierNonexistentFile(t *testing.T) {
+	classifier := NewAudioClassifier()
+
+	req := &MetadataRequest{
+		SourcePath: "/nonexistent/audio.mp3",
+		FileType:   FileTypeAudio,
+	}
+
+	result := classifier.Extract(req)
+	assert.Error(t, result.Error)
+	assert.Contains(t, result.Error.Error(), "failed to open file")
+}
+
