@@ -126,6 +126,32 @@ Note: Indexing is performed via Plans. Create a plan with a `filesystem.index` s
 - **Post-Processing Aggregation**: Directory sizes computed after crawling completes
 - **In-Memory Testing**: Tests use temporary directories and `:memory:` SQLite
 
+### Space Usage Tree Calculation (Treemap/Radial)
+
+The system builds an accurate space usage tree suitable for treemap or radial visualizations. The algorithm works in two phases:
+
+**Phase 1: Filesystem Crawl (DFS)**
+- Stack-based depth-first traversal of the filesystem
+- Files get their actual size from filesystem metadata
+- Directories are initially inserted with size=0
+- Each entry records its parent path for hierarchy navigation
+
+**Phase 2: Bottom-Up Aggregation (`ComputeAggregates`)**
+1. Query all directories under the root, ordered by path length descending (deepest first)
+2. For each directory (from deepest to shallowest):
+   - Execute: `SELECT SUM(size) FROM entries WHERE parent = ?`
+   - Update the directory's size to the computed sum
+3. This bottom-up approach ensures child sizes are computed before their parents
+
+**Key Properties:**
+- **Invariant**: A directory's size always equals the sum of its direct children's sizes
+- **Empty directories**: Have size 0 (no children)
+- **Empty files**: Tracked with size 0, count as files
+- **Deep hierarchies**: Sizes propagate correctly through any nesting depth
+- **Wide directories**: Handles hundreds of children efficiently
+
+**Test Coverage:** See `TestIndexSpaceUsageTreeCalculation` and related tests in `pkg/crawler/crawler_test.go` for comprehensive validation of size calculations across various directory structures.
+
 ### Database Schema
 
 **Core Tables:**
