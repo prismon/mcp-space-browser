@@ -162,7 +162,8 @@
   </div>
 
   <div class="nav-tabs">
-    <div class="nav-tab active" data-section="indexer">📥 Indexer</div>
+    <div class="nav-tab active" data-section="projects">📂 Projects</div>
+    <div class="nav-tab" data-section="indexer">📥 Indexer</div>
     <div class="nav-tab" data-section="navigator">📁 Navigator</div>
     <div class="nav-tab" data-section="jobs">🎯 Jobs</div>
     <div class="nav-tab" data-section="selection-sets">📦 Selection Sets</div>
@@ -170,8 +171,30 @@
     <div class="nav-tab" data-section="session">⚙️ Session</div>
   </div>
 
+  <!-- Projects Section -->
+  <div class="demo-section active" id="projects">
+    <div class="section-header">
+      <h2>📂 Projects <span class="badge">6 tools</span></h2>
+      <p>Create, open, and manage projects with isolated databases</p>
+    </div>
+
+    <mcp-projects></mcp-projects>
+
+    <div class="info-box">
+      <h3>MCP Tools Used</h3>
+      <ul>
+        <li><code>project-list</code> - List all available projects</li>
+        <li><code>project-create</code> - Create a new project with its own database</li>
+        <li><code>project-open</code> - Open a project for the current session</li>
+        <li><code>project-close</code> - Close the currently active project</li>
+        <li><code>project-get</code> - Get details about a specific project</li>
+        <li><code>project-delete</code> - Delete a project and its data</li>
+      </ul>
+    </div>
+  </div>
+
   <!-- Indexer Section -->
-  <div class="demo-section active" id="indexer">
+  <div class="demo-section" id="indexer">
     <div class="section-header">
       <h2>📥 Disk Indexer <span class="badge">index, job-progress</span></h2>
       <p>Index filesystem paths and track progress asynchronously</p>
@@ -290,11 +313,12 @@
     <p>
       Part of <a href="https://github.com/prismon/mcp-space-browser" target="_blank">mcp-space-browser</a>
       - A disk space indexing agent with MCP support<br>
-      <strong>Total MCP Tools:</strong> 19 | <strong>Web Components:</strong> 6
+      <strong>Total MCP Tools:</strong> 25 | <strong>Web Components:</strong> 7
     </p>
   </div>
 
   <!-- Load all web components -->
+  <script src="/web/mcp-projects.js"></script>
   <script src="/web/mcp-disk-indexer.js"></script>
   <script src="/web/mcp-disk-navigator.js"></script>
   <script src="/web/mcp-job-manager.js"></script>
