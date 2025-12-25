@@ -32,6 +32,7 @@ const (
 	MetadataCacheDir = "cache/metadata"
 	TempDir          = "temp"
 	LogsDir          = "logs"
+	ProjectsDir      = "projects"
 )
 
 // Files within home
@@ -131,6 +132,7 @@ func (m *Manager) Initialize() error {
 		MetadataCacheDir,
 		TempDir,
 		LogsDir,
+		ProjectsDir,
 	}
 
 	for _, dir := range dirs {
@@ -235,6 +237,31 @@ func (m *Manager) TempPath() string {
 // LogsPath returns the path to logs directory
 func (m *Manager) LogsPath() string {
 	return m.JoinPath(LogsDir)
+}
+
+// ProjectsPath returns the path to the projects directory
+func (m *Manager) ProjectsPath() string {
+	return m.JoinPath(ProjectsDir)
+}
+
+// ProjectPath returns the path to a specific project directory
+func (m *Manager) ProjectPath(name string) string {
+	return m.JoinPath(ProjectsDir, name)
+}
+
+// ProjectDBPath returns the path to a project's database file
+func (m *Manager) ProjectDBPath(name string) string {
+	return m.JoinPath(ProjectsDir, name, DatabaseFile)
+}
+
+// ProjectLogsPath returns the path to a project's logs directory
+func (m *Manager) ProjectLogsPath(name string) string {
+	return m.JoinPath(ProjectsDir, name, LogsDir)
+}
+
+// ProjectConfigPath returns the path to a project's config file
+func (m *Manager) ProjectConfigPath(name string) string {
+	return m.JoinPath(ProjectsDir, name, "project.yaml")
 }
 
 // GetCachePath returns a content-addressed path for a cache file
@@ -383,20 +410,20 @@ Each rule consists of:
 
 ## Important: Selection Set Association
 
-**ALL rule outcomes MUST include a selectionSetName field.**
+**ALL rule outcomes MUST include a resourceSetName field.**
 
 This ensures traceability and accountability:
 - Every action taken by a rule is tracked
-- All processed files are associated with a named selection set
+- All processed files are associated with a named resource set
 - You can review what each rule has done
 - Selection sets can be queried, exported, or further processed
 
 Example outcome:
   type: classifier
-  selectionSetName: my-thumbnails  # REQUIRED
+  resourceSetName: my-thumbnails  # REQUIRED
   classifierOperation: generate_thumbnail
 
-If the selection set doesn't exist, it will be auto-created.
+If the resource set doesn't exist, it will be auto-created.
 
 See individual example files for more details.
 `,
@@ -415,13 +442,13 @@ condition:
 
 outcome:
   type: classifier
-  selectionSetName: large-images-thumbnails
+  resourceSetName: large-images-thumbnails
   classifierOperation: generate_thumbnail
   maxWidth: 320
   maxHeight: 320
 `,
 		"collect-videos.yaml": `name: collect-videos
-description: Add all video files to a selection set
+description: Add all video files to a resource set
 enabled: true
 priority: 5
 
@@ -431,7 +458,7 @@ condition:
 
 outcome:
   type: selection_set
-  selectionSetName: all-videos
+  resourceSetName: all-videos
   operation: add
 `,
 		"nested-conditions.yaml": `name: process-old-large-media
@@ -465,14 +492,14 @@ condition:
 
 outcome:
   type: chained
-  selectionSetName: old-large-media
+  resourceSetName: old-large-media
   stopOnError: false
   outcomes:
     - type: classifier
-      selectionSetName: old-large-media-thumbnails
+      resourceSetName: old-large-media-thumbnails
       classifierOperation: generate_thumbnail
     - type: selection_set
-      selectionSetName: old-large-media
+      resourceSetName: old-large-media
       operation: add
 `,
 	}
