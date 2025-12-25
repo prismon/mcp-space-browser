@@ -9,54 +9,54 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCreateSelectionSet(t *testing.T) {
+func TestCreateResourceSet(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
 	desc := "Test selection set"
-	set := &models.SelectionSet{
+	set := &models.ResourceSet{
 		Name:        "test-set",
 		Description: &desc,
 		CreatedAt:   time.Now().Unix(),
 		UpdatedAt:   time.Now().Unix(),
 	}
 
-	id, err := db.CreateSelectionSet(set)
+	id, err := db.CreateResourceSet(set)
 	assert.NoError(t, err)
 	assert.Greater(t, id, int64(0))
 }
 
-func TestGetSelectionSet(t *testing.T) {
+func TestGetResourceSet(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
 	// Test getting non-existent set
-	set, err := db.GetSelectionSet("nonexistent")
+	set, err := db.GetResourceSet("nonexistent")
 	assert.NoError(t, err)
 	assert.Nil(t, set)
 
 	// Create and retrieve
 	desc := "My set"
-	newSet := &models.SelectionSet{
+	newSet := &models.ResourceSet{
 		Name:        "my-set",
 		Description: &desc,
 		CreatedAt:   time.Now().Unix(),
 		UpdatedAt:   time.Now().Unix(),
 	}
 
-	id, err := db.CreateSelectionSet(newSet)
+	id, err := db.CreateResourceSet(newSet)
 	require.NoError(t, err)
 
-	retrieved, err := db.GetSelectionSet("my-set")
+	retrieved, err := db.GetResourceSet("my-set")
 	assert.NoError(t, err)
 	assert.NotNil(t, retrieved)
 	assert.Equal(t, id, retrieved.ID)
 	assert.Equal(t, "my-set", retrieved.Name)
 }
 
-func TestListSelectionSets(t *testing.T) {
+func TestListResourceSets(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
@@ -64,56 +64,56 @@ func TestListSelectionSets(t *testing.T) {
 	// Create multiple sets
 	for i := 0; i < 3; i++ {
 		name := string(rune('a' + i))
-		set := &models.SelectionSet{
+		set := &models.ResourceSet{
 			Name:      name,
 			CreatedAt: time.Now().Unix(),
 			UpdatedAt: time.Now().Unix(),
 		}
-		_, err := db.CreateSelectionSet(set)
+		_, err := db.CreateResourceSet(set)
 		require.NoError(t, err)
 	}
 
-	sets, err := db.ListSelectionSets()
+	sets, err := db.ListResourceSets()
 	assert.NoError(t, err)
 	assert.Len(t, sets, 3)
 }
 
-func TestDeleteSelectionSet(t *testing.T) {
+func TestDeleteResourceSet(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
-	set := &models.SelectionSet{
+	set := &models.ResourceSet{
 		Name:      "to-delete",
 		CreatedAt: time.Now().Unix(),
 		UpdatedAt: time.Now().Unix(),
 	}
 
-	_, err = db.CreateSelectionSet(set)
+	_, err = db.CreateResourceSet(set)
 	require.NoError(t, err)
 
 	// Delete it
-	err = db.DeleteSelectionSet("to-delete")
+	err = db.DeleteResourceSet("to-delete")
 	assert.NoError(t, err)
 
 	// Verify it's gone
-	retrieved, err := db.GetSelectionSet("to-delete")
+	retrieved, err := db.GetResourceSet("to-delete")
 	assert.NoError(t, err)
 	assert.Nil(t, retrieved)
 }
 
-func TestAddToSelectionSet(t *testing.T) {
+func TestAddToResourceSet(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
 	// Create set
-	set := &models.SelectionSet{
+	set := &models.ResourceSet{
 		Name:      "file-set",
 		CreatedAt: time.Now().Unix(),
 		UpdatedAt: time.Now().Unix(),
 	}
-	_, err = db.CreateSelectionSet(set)
+	_, err = db.CreateResourceSet(set)
 	require.NoError(t, err)
 
 	// Create some entries
@@ -132,27 +132,27 @@ func TestAddToSelectionSet(t *testing.T) {
 
 	// Add entries to set
 	paths := []string{"/test/filea.txt", "/test/fileb.txt"}
-	err = db.AddToSelectionSet("file-set", paths)
+	err = db.AddToResourceSet("file-set", paths)
 	assert.NoError(t, err)
 
 	// Verify entries were added
-	entries, err := db.GetSelectionSetEntries("file-set")
+	entries, err := db.GetResourceSetEntries("file-set")
 	assert.NoError(t, err)
 	assert.Len(t, entries, 2)
 }
 
-func TestRemoveFromSelectionSet(t *testing.T) {
+func TestRemoveFromResourceSet(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
 	// Create set
-	set := &models.SelectionSet{
+	set := &models.ResourceSet{
 		Name:      "removal-set",
 		CreatedAt: time.Now().Unix(),
 		UpdatedAt: time.Now().Unix(),
 	}
-	_, err = db.CreateSelectionSet(set)
+	_, err = db.CreateResourceSet(set)
 	require.NoError(t, err)
 
 	// Create entries
@@ -171,36 +171,36 @@ func TestRemoveFromSelectionSet(t *testing.T) {
 	}
 
 	// Add all to set
-	err = db.AddToSelectionSet("removal-set", paths)
+	err = db.AddToResourceSet("removal-set", paths)
 	require.NoError(t, err)
 
 	// Remove one
-	err = db.RemoveFromSelectionSet("removal-set", []string{"/test/file2.txt"})
+	err = db.RemoveFromResourceSet("removal-set", []string{"/test/file2.txt"})
 	assert.NoError(t, err)
 
 	// Verify only 2 remain
-	entries, err := db.GetSelectionSetEntries("removal-set")
+	entries, err := db.GetResourceSetEntries("removal-set")
 	assert.NoError(t, err)
 	assert.Len(t, entries, 2)
 }
 
-func TestGetSelectionSetEntries(t *testing.T) {
+func TestGetResourceSetEntries(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
 	// Test non-existent set
-	entries, err := db.GetSelectionSetEntries("nonexistent")
+	entries, err := db.GetResourceSetEntries("nonexistent")
 	assert.Error(t, err)
 	assert.Nil(t, entries)
 
 	// Create set and add entries
-	set := &models.SelectionSet{
+	set := &models.ResourceSet{
 		Name:      "entries-set",
 		CreatedAt: time.Now().Unix(),
 		UpdatedAt: time.Now().Unix(),
 	}
-	_, err = db.CreateSelectionSet(set)
+	_, err = db.CreateResourceSet(set)
 	require.NoError(t, err)
 
 	now := time.Now().Unix()
@@ -221,11 +221,11 @@ func TestGetSelectionSetEntries(t *testing.T) {
 		"/entries/fileb.txt",
 		"/entries/filec.txt",
 	}
-	err = db.AddToSelectionSet("entries-set", paths)
+	err = db.AddToResourceSet("entries-set", paths)
 	require.NoError(t, err)
 
 	// Get entries
-	entries, err = db.GetSelectionSetEntries("entries-set")
+	entries, err = db.GetResourceSetEntries("entries-set")
 	assert.NoError(t, err)
 	assert.Len(t, entries, 3)
 }

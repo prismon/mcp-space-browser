@@ -15,21 +15,21 @@ func TestAddResourceSetEdge(t *testing.T) {
 	defer db.Close()
 
 	// Create parent and child sets
-	parent := &models.SelectionSet{
+	parent := &models.ResourceSet{
 		Name:      "parent",
 		CreatedAt: time.Now().Unix(),
 		UpdatedAt: time.Now().Unix(),
 	}
-	child := &models.SelectionSet{
+	child := &models.ResourceSet{
 		Name:      "child",
 		CreatedAt: time.Now().Unix(),
 		UpdatedAt: time.Now().Unix(),
 	}
 
-	_, err = db.CreateSelectionSet(parent)
+	_, err = db.CreateResourceSet(parent)
 	require.NoError(t, err)
 
-	_, err = db.CreateSelectionSet(child)
+	_, err = db.CreateResourceSet(child)
 	require.NoError(t, err)
 
 	// Add edge
@@ -55,12 +55,12 @@ func TestAddResourceSetEdge_CycleDetection(t *testing.T) {
 
 	// Create sets: A -> B -> C
 	for _, name := range []string{"A", "B", "C"} {
-		set := &models.SelectionSet{
+		set := &models.ResourceSet{
 			Name:      name,
 			CreatedAt: time.Now().Unix(),
 			UpdatedAt: time.Now().Unix(),
 		}
-		_, err := db.CreateSelectionSet(set)
+		_, err := db.CreateResourceSet(set)
 		require.NoError(t, err)
 	}
 
@@ -84,12 +84,12 @@ func TestRemoveResourceSetEdge(t *testing.T) {
 
 	// Create and link sets
 	for _, name := range []string{"parent", "child"} {
-		set := &models.SelectionSet{
+		set := &models.ResourceSet{
 			Name:      name,
 			CreatedAt: time.Now().Unix(),
 			UpdatedAt: time.Now().Unix(),
 		}
-		_, err := db.CreateSelectionSet(set)
+		_, err := db.CreateResourceSet(set)
 		require.NoError(t, err)
 	}
 
@@ -119,12 +119,12 @@ func TestGetResourceSetDescendants(t *testing.T) {
 	//   grandchild
 
 	for _, name := range []string{"root", "child1", "child2", "grandchild"} {
-		set := &models.SelectionSet{
+		set := &models.ResourceSet{
 			Name:      name,
 			CreatedAt: time.Now().Unix(),
 			UpdatedAt: time.Now().Unix(),
 		}
-		_, err := db.CreateSelectionSet(set)
+		_, err := db.CreateResourceSet(set)
 		require.NoError(t, err)
 	}
 
@@ -151,12 +151,12 @@ func TestGetResourceSetAncestors(t *testing.T) {
 
 	// Create tree
 	for _, name := range []string{"root", "child", "grandchild"} {
-		set := &models.SelectionSet{
+		set := &models.ResourceSet{
 			Name:      name,
 			CreatedAt: time.Now().Unix(),
 			UpdatedAt: time.Now().Unix(),
 		}
-		_, err := db.CreateSelectionSet(set)
+		_, err := db.CreateResourceSet(set)
 		require.NoError(t, err)
 	}
 
@@ -182,12 +182,12 @@ func TestMultipleParents_DAG(t *testing.T) {
 	//     D
 
 	for _, name := range []string{"A", "B", "C", "D"} {
-		set := &models.SelectionSet{
+		set := &models.ResourceSet{
 			Name:      name,
 			CreatedAt: time.Now().Unix(),
 			UpdatedAt: time.Now().Unix(),
 		}
-		_, err := db.CreateSelectionSet(set)
+		_, err := db.CreateResourceSet(set)
 		require.NoError(t, err)
 	}
 
@@ -214,12 +214,12 @@ func TestGetAllDescendantEntries(t *testing.T) {
 
 	// Create sets
 	for _, name := range []string{"parent", "child"} {
-		set := &models.SelectionSet{
+		set := &models.ResourceSet{
 			Name:      name,
 			CreatedAt: time.Now().Unix(),
 			UpdatedAt: time.Now().Unix(),
 		}
-		_, err := db.CreateSelectionSet(set)
+		_, err := db.CreateResourceSet(set)
 		require.NoError(t, err)
 	}
 
@@ -238,8 +238,8 @@ func TestGetAllDescendantEntries(t *testing.T) {
 	}
 
 	// Add entries to sets
-	db.AddToSelectionSet("parent", []string{"/file1.txt", "/file2.txt"})
-	db.AddToSelectionSet("child", []string{"/child/file3.txt"})
+	db.AddToResourceSet("parent", []string{"/file1.txt", "/file2.txt"})
+	db.AddToResourceSet("child", []string{"/child/file3.txt"})
 
 	// Get all entries from parent and children
 	allEntries, err := db.GetAllDescendantEntries("parent")
@@ -254,12 +254,12 @@ func TestGetResourceSetStats(t *testing.T) {
 
 	// Create sets with edges
 	for _, name := range []string{"root", "child1", "child2"} {
-		set := &models.SelectionSet{
+		set := &models.ResourceSet{
 			Name:      name,
 			CreatedAt: time.Now().Unix(),
 			UpdatedAt: time.Now().Unix(),
 		}
-		_, err := db.CreateSelectionSet(set)
+		_, err := db.CreateResourceSet(set)
 		require.NoError(t, err)
 	}
 
@@ -277,7 +277,7 @@ func TestGetResourceSetStats(t *testing.T) {
 		LastScanned: now,
 	}
 	db.InsertOrUpdate(entry)
-	db.AddToSelectionSet("root", []string{"/test.txt"})
+	db.AddToResourceSet("root", []string{"/test.txt"})
 
 	// Get stats
 	stats, err := db.GetResourceSetStats("root")
@@ -296,12 +296,12 @@ func TestResourceSum(t *testing.T) {
 
 	// Create sets
 	for _, name := range []string{"parent", "child"} {
-		set := &models.SelectionSet{
+		set := &models.ResourceSet{
 			Name:      name,
 			CreatedAt: time.Now().Unix(),
 			UpdatedAt: time.Now().Unix(),
 		}
-		_, err := db.CreateSelectionSet(set)
+		_, err := db.CreateResourceSet(set)
 		require.NoError(t, err)
 	}
 
@@ -312,8 +312,8 @@ func TestResourceSum(t *testing.T) {
 	db.InsertOrUpdate(&models.Entry{Path: "/file1.txt", Size: 100, Kind: "file", Ctime: now, Mtime: now, LastScanned: now})
 	db.InsertOrUpdate(&models.Entry{Path: "/file2.txt", Size: 200, Kind: "file", Ctime: now, Mtime: now, LastScanned: now})
 
-	db.AddToSelectionSet("parent", []string{"/file1.txt"})
-	db.AddToSelectionSet("child", []string{"/file2.txt"})
+	db.AddToResourceSet("parent", []string{"/file1.txt"})
+	db.AddToResourceSet("child", []string{"/file2.txt"})
 
 	// Test size metric without children
 	result, err := db.ResourceSum("parent", "size", false)
@@ -344,12 +344,12 @@ func TestResourceSum_DiamondPattern(t *testing.T) {
 	//     D
 
 	for _, name := range []string{"A", "B", "C", "D"} {
-		set := &models.SelectionSet{
+		set := &models.ResourceSet{
 			Name:      name,
 			CreatedAt: time.Now().Unix(),
 			UpdatedAt: time.Now().Unix(),
 		}
-		_, err := db.CreateSelectionSet(set)
+		_, err := db.CreateResourceSet(set)
 		require.NoError(t, err)
 	}
 
@@ -364,8 +364,8 @@ func TestResourceSum_DiamondPattern(t *testing.T) {
 	db.InsertOrUpdate(&models.Entry{Path: "/only-b.txt", Size: 100, Kind: "file", Ctime: now, Mtime: now, LastScanned: now})
 
 	// Add shared file to both B and C
-	db.AddToSelectionSet("B", []string{"/shared.txt", "/only-b.txt"})
-	db.AddToSelectionSet("C", []string{"/shared.txt"})
+	db.AddToResourceSet("B", []string{"/shared.txt", "/only-b.txt"})
+	db.AddToResourceSet("C", []string{"/shared.txt"})
 
 	// Sum from A with children should count shared.txt only once
 	result, err := db.ResourceSum("A", "size", true)

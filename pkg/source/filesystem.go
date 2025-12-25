@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/prismon/mcp-space-browser/pkg/logger"
@@ -40,10 +41,17 @@ func (fs *FileSystemSource) Name() string {
 }
 
 // Stat returns information about a file or directory
+// Uses Lstat to not follow symlinks - this prevents double-counting when symlinks
+// point to directories that are also indexed directly (e.g., macOS container symlinks)
 func (fs *FileSystemSource) Stat(ctx context.Context, path string) (ItemInfo, error) {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
+	}
+	// Skip symlinks entirely - they should not be indexed as files/directories
+	// because their targets are indexed directly
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("skipping symlink: %s", path)
 	}
 	return &fileSystemItemInfo{
 		path: path,
@@ -207,6 +215,18 @@ func (i *fileSystemItemInfo) Path() string {
 }
 
 func (i *fileSystemItemInfo) Size() int64 {
+	return i.info.Size()
+}
+
+func (i *fileSystemItemInfo) Blocks() int64 {
+	// Get disk usage from st_blocks (each block is 512 bytes)
+	if sys := i.info.Sys(); sys != nil {
+		if stat, ok := sys.(*syscall.Stat_t); ok {
+			// st_blocks is in 512-byte units, convert to bytes
+			return stat.Blocks * 512
+		}
+	}
+	// Fallback to logical size if syscall info unavailable
 	return i.info.Size()
 }
 

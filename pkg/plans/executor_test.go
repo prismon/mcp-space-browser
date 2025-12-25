@@ -28,9 +28,9 @@ func TestExecutePlan_Success(t *testing.T) {
 	tmpDir := t.TempDir()
 	createTestEntries(t, db, tmpDir)
 
-	// Create a selection set for outcomes
-	desc := "Test selection set"
-	_, err = db.CreateSelectionSet(&models.SelectionSet{
+	// Create a resource set for outcomes
+	desc := "Test resource set"
+	_, err = db.CreateResourceSet(&models.ResourceSet{
 		Name:        "test-results",
 		Description: &desc,
 	})
@@ -57,7 +57,7 @@ func TestExecutePlan_Success(t *testing.T) {
 		Outcomes: []models.RuleOutcome{
 			{
 				Type:             "selection_set",
-				SelectionSetName: "test-results",
+				ResourceSetName: "test-results",
 				Operation:        &operation,
 			},
 		},
@@ -100,7 +100,7 @@ func TestExecutePlan_NoConditions(t *testing.T) {
 		Outcomes: []models.RuleOutcome{
 			{
 				Type:             "selection_set",
-				SelectionSetName: "all-files",
+				ResourceSetName: "all-files",
 				Operation:        &operation,
 			},
 		},
@@ -113,7 +113,7 @@ func TestExecutePlan_NoConditions(t *testing.T) {
 	assert.Equal(t, execution.EntriesProcessed, execution.EntriesMatched)
 }
 
-func TestExecutePlan_AutoCreateSelectionSet(t *testing.T) {
+func TestExecutePlan_AutoCreateResourceSet(t *testing.T) {
 	os.Setenv("GO_ENV", "test")
 	defer os.Unsetenv("GO_ENV")
 
@@ -139,7 +139,7 @@ func TestExecutePlan_AutoCreateSelectionSet(t *testing.T) {
 		Outcomes: []models.RuleOutcome{
 			{
 				Type:             "selection_set",
-				SelectionSetName: "auto-created", // Doesn't exist yet
+				ResourceSetName: "auto-created", // Doesn't exist yet
 				Operation:        &operation,
 			},
 		},
@@ -149,8 +149,8 @@ func TestExecutePlan_AutoCreateSelectionSet(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "success", execution.Status)
 
-	// Verify selection set was auto-created
-	set, err := db.GetSelectionSet("auto-created")
+	// Verify resource set was auto-created
+	set, err := db.GetResourceSet("auto-created")
 	require.NoError(t, err)
 	assert.NotNil(t, set)
 }
@@ -180,7 +180,7 @@ func TestExecutePlan_InvalidSource(t *testing.T) {
 		Outcomes: []models.RuleOutcome{
 			{
 				Type:             "selection_set",
-				SelectionSetName: "test",
+				ResourceSetName: "test",
 				Operation:        &operation,
 			},
 		},
@@ -217,7 +217,7 @@ func TestExecutePlan_NonexistentPath(t *testing.T) {
 		Outcomes: []models.RuleOutcome{
 			{
 				Type:             "selection_set",
-				SelectionSetName: "test",
+				ResourceSetName: "test",
 				Operation:        &operation,
 			},
 		},
@@ -261,7 +261,7 @@ func TestExecutePlan_NoMatchingEntries(t *testing.T) {
 		Outcomes: []models.RuleOutcome{
 			{
 				Type:             "selection_set",
-				SelectionSetName: "test",
+				ResourceSetName: "test",
 				Operation:        &operation,
 			},
 		},
@@ -300,7 +300,7 @@ func TestExecutePlan_InvalidOperation(t *testing.T) {
 		Outcomes: []models.RuleOutcome{
 			{
 				Type:             "selection_set",
-				SelectionSetName: "test",
+				ResourceSetName: "test",
 				Operation:        &invalidOp, // Invalid operation
 			},
 		},

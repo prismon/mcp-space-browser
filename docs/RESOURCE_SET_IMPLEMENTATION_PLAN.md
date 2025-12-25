@@ -138,7 +138,7 @@ type ResourceSetEntry struct {
 ```
 
 **Tasks**:
-- [ ] Rename `SelectionSet` → `ResourceSet`
+- [ ] Rename `ResourceSet` → `ResourceSet`
 - [ ] Rename `ResourceSetChild` → `ResourceSetEdge`
 - [ ] Update all references
 
@@ -480,7 +480,7 @@ Remove the `disk-index` tool. Users must now:
 - `pkg/server/mcp_resources.go` - MCP resource template handlers
 
 ### Renamed Files
-- `pkg/database/selection_sets.go` → removed (merged into resource_sets.go)
+- `pkg/database/resource_sets.go` → removed (merged into resource_sets.go)
 - `resource_set_children` table → `resource_set_edges` table
 
 ### Modified Files
@@ -500,14 +500,14 @@ Remove the `disk-index` tool. Users must now:
 | `disk-time-range` | `resource-time-range` | Same functionality |
 | `disk-tree` | `resource-children` | DAG navigation |
 | `navigate` | `resource-children` + `resource-parent` | Bidirectional |
-| `selection-set-*` | `resource-set-*` | Renamed |
+| `resource-set-*` | `resource-set-*` | Renamed |
 | `query-*` | `source-*` | Unified into sources |
 
 ## Breaking Changes
 
 1. **`disk-index` removed**: Must use plan-execute
 2. **DAG structure**: Multiple parents now allowed
-3. **MCP tool names**: All selection-set-* → resource-set-*
+3. **MCP tool names**: All resource-set-* → resource-set-*
 4. **Database schema**: New edges table, renamed tables
 
 ## Success Criteria

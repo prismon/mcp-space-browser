@@ -30,7 +30,7 @@ func TestCreateAndGetRule(t *testing.T) {
 
 	outcome := models.RuleOutcome{
 		Type:             "classifier",
-		SelectionSetName: "test-thumbnails",
+		ResourceSetName: "test-thumbnails",
 		ClassifierOperation: strPtr("generate_thumbnail"),
 	}
 	outcomeJSON, err := json.Marshal(outcome)
@@ -70,7 +70,7 @@ func TestCreateAndGetRule(t *testing.T) {
 	parsedOutcome, err := ParseRuleOutcome(retrieved.OutcomeJSON)
 	require.NoError(t, err)
 	assert.Equal(t, "classifier", parsedOutcome.Type)
-	assert.Equal(t, "test-thumbnails", parsedOutcome.SelectionSetName)
+	assert.Equal(t, "test-thumbnails", parsedOutcome.ResourceSetName)
 }
 
 func TestListRules(t *testing.T) {
@@ -98,7 +98,7 @@ func TestListRules(t *testing.T) {
 
 		outcome := models.RuleOutcome{
 			Type:             "selection_set",
-			SelectionSetName: "test-set",
+			ResourceSetName: "test-set",
 			Operation:        strPtr("add"),
 		}
 		outcomeJSON, _ := json.Marshal(outcome)
@@ -129,7 +129,7 @@ func TestListRules(t *testing.T) {
 	assert.Len(t, enabledRules, 2)
 }
 
-func TestRuleExecutionWithSelectionSet(t *testing.T) {
+func TestRuleExecutionWithResourceSet(t *testing.T) {
 	os.Setenv("GO_ENV", "test")
 	defer os.Unsetenv("GO_ENV")
 
@@ -142,7 +142,7 @@ func TestRuleExecutionWithSelectionSet(t *testing.T) {
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
 		Type:             "selection_set",
-		SelectionSetName: "test-set",
+		ResourceSetName: "test-set",
 		Operation:        strPtr("add"),
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
@@ -158,18 +158,18 @@ func TestRuleExecutionWithSelectionSet(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a selection set
-	selectionSet := &models.SelectionSet{
+	resourceSet := &models.ResourceSet{
 		Name:      "test-set",
 		CreatedAt: time.Now().Unix(),
 		UpdatedAt: time.Now().Unix(),
 	}
-	setID, err := db.CreateSelectionSet(selectionSet)
+	setID, err := db.CreateResourceSet(resourceSet)
 	require.NoError(t, err)
 
 	// Create a rule execution - MUST have selection_set_id
 	execution := &models.RuleExecution{
 		RuleID:           ruleID,
-		SelectionSetID:   setID,
+		ResourceSetID:   setID,
 		EntriesMatched:   10,
 		EntriesProcessed: 10,
 		Status:           "success",
@@ -183,7 +183,7 @@ func TestRuleExecutionWithSelectionSet(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, retrieved)
 	assert.Equal(t, ruleID, retrieved.RuleID)
-	assert.Equal(t, setID, retrieved.SelectionSetID)
+	assert.Equal(t, setID, retrieved.ResourceSetID)
 	assert.Equal(t, 10, retrieved.EntriesMatched)
 	assert.Equal(t, "success", retrieved.Status)
 
@@ -193,12 +193,12 @@ func TestRuleExecutionWithSelectionSet(t *testing.T) {
 	assert.Len(t, executions, 1)
 
 	// List executions for the selection set
-	setExecutions, err := db.ListRuleExecutionsBySelectionSet(setID, 0)
+	setExecutions, err := db.ListRuleExecutionsByResourceSet(setID, 0)
 	require.NoError(t, err)
 	assert.Len(t, setExecutions, 1)
 }
 
-func TestRuleExecutionRequiresSelectionSet(t *testing.T) {
+func TestRuleExecutionRequiresResourceSet(t *testing.T) {
 	os.Setenv("GO_ENV", "test")
 	defer os.Unsetenv("GO_ENV")
 
@@ -211,7 +211,7 @@ func TestRuleExecutionRequiresSelectionSet(t *testing.T) {
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
 		Type:             "selection_set",
-		SelectionSetName: "test-set",
+		ResourceSetName: "test-set",
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -228,7 +228,7 @@ func TestRuleExecutionRequiresSelectionSet(t *testing.T) {
 	// Try to create execution WITHOUT selection_set_id - should fail
 	execution := &models.RuleExecution{
 		RuleID:           ruleID,
-		SelectionSetID:   0, // Missing!
+		ResourceSetID:   0, // Missing!
 		EntriesMatched:   5,
 		EntriesProcessed: 5,
 		Status:           "success",
@@ -251,7 +251,7 @@ func TestRuleOutcomeRecord(t *testing.T) {
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
 		Type:             "classifier",
-		SelectionSetName: "test-thumbnails",
+		ResourceSetName: "test-thumbnails",
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -263,16 +263,16 @@ func TestRuleOutcomeRecord(t *testing.T) {
 	}
 	ruleID, _ := db.CreateRule(rule)
 
-	selectionSet := &models.SelectionSet{
+	resourceSet := &models.ResourceSet{
 		Name:      "test-thumbnails",
 		CreatedAt: time.Now().Unix(),
 		UpdatedAt: time.Now().Unix(),
 	}
-	setID, _ := db.CreateSelectionSet(selectionSet)
+	setID, _ := db.CreateResourceSet(resourceSet)
 
 	execution := &models.RuleExecution{
 		RuleID:         ruleID,
-		SelectionSetID: setID,
+		ResourceSetID: setID,
 		Status:         "success",
 	}
 	executionID, _ := db.CreateRuleExecution(execution)
@@ -288,7 +288,7 @@ func TestRuleOutcomeRecord(t *testing.T) {
 	// Create outcome record - MUST have selection_set_id
 	outcomeRecord := &models.RuleOutcomeRecord{
 		ExecutionID:    executionID,
-		SelectionSetID: setID,
+		ResourceSetID: setID,
 		EntryPath:      "/test/file.jpg",
 		OutcomeType:    "generate_thumbnail",
 		Status:         "success",
@@ -303,15 +303,15 @@ func TestRuleOutcomeRecord(t *testing.T) {
 	assert.Len(t, outcomes, 1)
 	assert.Equal(t, "/test/file.jpg", outcomes[0].EntryPath)
 	assert.Equal(t, "generate_thumbnail", outcomes[0].OutcomeType)
-	assert.Equal(t, setID, outcomes[0].SelectionSetID)
+	assert.Equal(t, setID, outcomes[0].ResourceSetID)
 
 	// List outcomes by selection set
-	setOutcomes, err := db.ListRuleOutcomesBySelectionSet(setID, 0)
+	setOutcomes, err := db.ListRuleOutcomesByResourceSet(setID, 0)
 	require.NoError(t, err)
 	assert.Len(t, setOutcomes, 1)
 }
 
-func TestRuleOutcomeRequiresSelectionSet(t *testing.T) {
+func TestRuleOutcomeRequiresResourceSet(t *testing.T) {
 	os.Setenv("GO_ENV", "test")
 	defer os.Unsetenv("GO_ENV")
 
@@ -322,7 +322,7 @@ func TestRuleOutcomeRequiresSelectionSet(t *testing.T) {
 	// Try to create outcome WITHOUT selection_set_id - should fail
 	outcomeRecord := &models.RuleOutcomeRecord{
 		ExecutionID:    1,
-		SelectionSetID: 0, // Missing!
+		ResourceSetID: 0, // Missing!
 		EntryPath:      "/test/file.jpg",
 		OutcomeType:    "test",
 		Status:         "success",
@@ -343,41 +343,41 @@ func TestValidateRuleOutcome(t *testing.T) {
 			name: "valid selection_set outcome",
 			outcome: &models.RuleOutcome{
 				Type:             "selection_set",
-				SelectionSetName: "test-set",
+				ResourceSetName: "test-set",
 			},
 			shouldErr: false,
 		},
 		{
-			name: "missing selectionSetName",
+			name: "missing resourceSetName",
 			outcome: &models.RuleOutcome{
 				Type: "selection_set",
 			},
 			shouldErr: true,
-			errMsg:    "selectionSetName is required",
+			errMsg:    "resourceSetName is required",
 		},
 		{
 			name: "valid chained outcome",
 			outcome: &models.RuleOutcome{
 				Type:             "chained",
-				SelectionSetName: "parent-set",
+				ResourceSetName: "parent-set",
 				Outcomes: []*models.RuleOutcome{
 					{
 						Type:             "classifier",
-						SelectionSetName: "child-set",
+						ResourceSetName: "child-set",
 					},
 				},
 			},
 			shouldErr: false,
 		},
 		{
-			name: "chained outcome with missing child selectionSetName",
+			name: "chained outcome with missing child resourceSetName",
 			outcome: &models.RuleOutcome{
 				Type:             "chained",
-				SelectionSetName: "parent-set",
+				ResourceSetName: "parent-set",
 				Outcomes: []*models.RuleOutcome{
 					{
 						Type: "classifier",
-						// Missing SelectionSetName!
+						// Missing ResourceSetName!
 					},
 				},
 			},
@@ -401,7 +401,7 @@ func TestValidateRuleOutcome(t *testing.T) {
 	}
 }
 
-func TestEnsureSelectionSetForOutcome(t *testing.T) {
+func TestEnsureResourceSetForOutcome(t *testing.T) {
 	os.Setenv("GO_ENV", "test")
 	defer os.Unsetenv("GO_ENV")
 
@@ -411,23 +411,23 @@ func TestEnsureSelectionSetForOutcome(t *testing.T) {
 
 	outcome := &models.RuleOutcome{
 		Type:             "classifier",
-		SelectionSetName: "auto-created-set",
+		ResourceSetName: "auto-created-set",
 	}
 
 	// Should auto-create the selection set
-	setID, err := db.EnsureSelectionSetForOutcome(outcome, "test-rule")
+	setID, err := db.EnsureResourceSetForOutcome(outcome, "test-rule")
 	require.NoError(t, err)
 	assert.Greater(t, setID, int64(0))
 
 	// Verify it was created
-	set, err := db.GetSelectionSet("auto-created-set")
+	set, err := db.GetResourceSet("auto-created-set")
 	require.NoError(t, err)
 	assert.NotNil(t, set)
 	assert.Equal(t, "auto-created-set", set.Name)
 	assert.Contains(t, *set.Description, "test-rule")
 
 	// Calling again should return the same ID
-	setID2, err := db.EnsureSelectionSetForOutcome(outcome, "test-rule")
+	setID2, err := db.EnsureResourceSetForOutcome(outcome, "test-rule")
 	require.NoError(t, err)
 	assert.Equal(t, setID, setID2)
 }
@@ -445,7 +445,7 @@ func TestGetRuleByID(t *testing.T) {
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
 		Type:             "selection_set",
-		SelectionSetName: "test-set",
+		ResourceSetName: "test-set",
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -485,7 +485,7 @@ func TestUpdateRule(t *testing.T) {
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
 		Type:             "selection_set",
-		SelectionSetName: "test-set",
+		ResourceSetName: "test-set",
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -529,7 +529,7 @@ func TestDeleteRule(t *testing.T) {
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
 		Type:             "selection_set",
-		SelectionSetName: "test-set",
+		ResourceSetName: "test-set",
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -558,7 +558,7 @@ func TestDeleteRule(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestUpdateSelectionSet(t *testing.T) {
+func TestUpdateResourceSet(t *testing.T) {
 	os.Setenv("GO_ENV", "test")
 	defer os.Unsetenv("GO_ENV")
 
@@ -567,19 +567,19 @@ func TestUpdateSelectionSet(t *testing.T) {
 	defer db.Close()
 
 	// Create a selection set
-	set := &models.SelectionSet{
+	set := &models.ResourceSet{
 		Name: "update-test-set",
 	}
-	_, err = db.CreateSelectionSet(set)
+	_, err = db.CreateResourceSet(set)
 	require.NoError(t, err)
 
 	// Update the set by name
 	desc := "Updated description"
-	err = db.UpdateSelectionSet("update-test-set", &desc)
+	err = db.UpdateResourceSet("update-test-set", &desc)
 	assert.NoError(t, err)
 
 	// Verify update
-	retrieved, _ := db.GetSelectionSet("update-test-set")
+	retrieved, _ := db.GetResourceSet("update-test-set")
 	assert.NotNil(t, retrieved.Description)
 	assert.Equal(t, "Updated description", *retrieved.Description)
 }
@@ -611,7 +611,7 @@ func TestListRuleExecutionsWithLimit(t *testing.T) {
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
 		Type:             "selection_set",
-		SelectionSetName: "test-set",
+		ResourceSetName: "test-set",
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -625,14 +625,14 @@ func TestListRuleExecutionsWithLimit(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create selection set
-	set := &models.SelectionSet{Name: "test-set"}
-	setID, _ := db.CreateSelectionSet(set)
+	set := &models.ResourceSet{Name: "test-set"}
+	setID, _ := db.CreateResourceSet(set)
 
 	// Create multiple executions
 	for i := 0; i < 5; i++ {
 		exec := &models.RuleExecution{
 			RuleID:         ruleID,
-			SelectionSetID: setID,
+			ResourceSetID: setID,
 			Status:         "success",
 		}
 		_, err := db.CreateRuleExecution(exec)
@@ -674,7 +674,7 @@ func TestParseRuleOutcomeInvalid(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestUpdateSelectionSetNonexistent(t *testing.T) {
+func TestUpdateResourceSetNonexistent(t *testing.T) {
 	os.Setenv("GO_ENV", "test")
 	defer os.Unsetenv("GO_ENV")
 
@@ -683,7 +683,7 @@ func TestUpdateSelectionSetNonexistent(t *testing.T) {
 	defer db.Close()
 
 	desc := "New desc"
-	err = db.UpdateSelectionSet("nonexistent-set", &desc)
+	err = db.UpdateResourceSet("nonexistent-set", &desc)
 	assert.Error(t, err)
 }
 
@@ -696,8 +696,8 @@ func TestGetResourceSetStatsFromRules(t *testing.T) {
 	defer db.Close()
 
 	// Create a selection set
-	set := &models.SelectionSet{Name: "rule-stats-set"}
-	_, err = db.CreateSelectionSet(set)
+	set := &models.ResourceSet{Name: "rule-stats-set"}
+	_, err = db.CreateResourceSet(set)
 	require.NoError(t, err)
 
 	// Create entries
@@ -714,7 +714,7 @@ func TestGetResourceSetStatsFromRules(t *testing.T) {
 
 	// Add entries to set
 	paths := []string{"/rulestats/filea.txt", "/rulestats/fileb.txt", "/rulestats/filec.txt"}
-	db.AddToSelectionSet("rule-stats-set", paths)
+	db.AddToResourceSet("rule-stats-set", paths)
 
 	// Get stats
 	stats, err := db.GetResourceSetStats("rule-stats-set")
@@ -722,7 +722,7 @@ func TestGetResourceSetStatsFromRules(t *testing.T) {
 	assert.NotNil(t, stats)
 }
 
-func TestListRuleOutcomesBySelectionSetWithLimit(t *testing.T) {
+func TestListRuleOutcomesByResourceSetWithLimit(t *testing.T) {
 	os.Setenv("GO_ENV", "test")
 	defer os.Unsetenv("GO_ENV")
 
@@ -735,7 +735,7 @@ func TestListRuleOutcomesBySelectionSetWithLimit(t *testing.T) {
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
 		Type:             "selection_set",
-		SelectionSetName: "limit-test-set",
+		ResourceSetName: "limit-test-set",
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -748,13 +748,13 @@ func TestListRuleOutcomesBySelectionSetWithLimit(t *testing.T) {
 	ruleID, _ := db.CreateRule(rule)
 
 	// Create selection set
-	set := &models.SelectionSet{Name: "limit-test-set"}
-	setID, _ := db.CreateSelectionSet(set)
+	set := &models.ResourceSet{Name: "limit-test-set"}
+	setID, _ := db.CreateResourceSet(set)
 
 	// Create execution
 	exec := &models.RuleExecution{
 		RuleID:         ruleID,
-		SelectionSetID: setID,
+		ResourceSetID: setID,
 		Status:         "success",
 	}
 	execID, _ := db.CreateRuleExecution(exec)
@@ -770,7 +770,7 @@ func TestListRuleOutcomesBySelectionSetWithLimit(t *testing.T) {
 
 		outcomeRecord := &models.RuleOutcomeRecord{
 			ExecutionID:    execID,
-			SelectionSetID: setID,
+			ResourceSetID: setID,
 			EntryPath:      entry.Path,
 			OutcomeType:    "test",
 			Status:         "success",
@@ -779,12 +779,12 @@ func TestListRuleOutcomesBySelectionSetWithLimit(t *testing.T) {
 	}
 
 	// List with limit
-	outcomes, err := db.ListRuleOutcomesBySelectionSet(setID, 3)
+	outcomes, err := db.ListRuleOutcomesByResourceSet(setID, 3)
 	assert.NoError(t, err)
 	assert.Len(t, outcomes, 3)
 
 	// List all
-	allOutcomes, err := db.ListRuleOutcomesBySelectionSet(setID, 0)
+	allOutcomes, err := db.ListRuleOutcomesByResourceSet(setID, 0)
 	assert.NoError(t, err)
 	assert.Len(t, allOutcomes, 5)
 }

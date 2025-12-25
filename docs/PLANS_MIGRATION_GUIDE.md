@@ -1,10 +1,10 @@
 # Plans Migration Guide
 
-This document shows the transformation from the old bespoke selection-set approach to the new Plans-based architecture.
+This document shows the transformation from the old bespoke resource-set approach to the new Plans-based architecture.
 
 ## Key Design Principles
 
-1. **Selection Sets = Pure Item Storage**
+1. **Resource Sets = Pure Item Storage**
    - Only care about WHAT items are in the set and WHEN they were added
    - Don't care HOW items got selected (no logic, no criteria)
 
@@ -15,11 +15,11 @@ This document shows the transformation from the old bespoke selection-set approa
 
 ## Before vs. After Comparison
 
-### Old Approach: Bespoke Selection Sets
+### Old Approach: Bespoke Resource Sets
 
 ```go
 // Selection sets had embedded criteria
-type SelectionSet struct {
+type ResourceSet struct {
     ID           int64
     Name         string
     Description  *string
@@ -29,13 +29,13 @@ type SelectionSet struct {
     UpdatedAt    int64
 }
 
-// Creating a selection set with embedded criteria
-selectionSet := &SelectionSet{
+// Creating a resource set with embedded criteria
+selectionSet := &ResourceSet{
     Name:         "large-videos",
     CriteriaType: "tool_query",
     CriteriaJSON: `{"tool": "disk-du", "params": {"minSize": 1073741824, "extensions": ["mp4"]}}`,
 }
-db.CreateSelectionSet(selectionSet)
+db.CreateResourceSet(selectionSet)
 
 // Problem: No execution mechanism!
 // The criteria was stored but never evaluated automatically
@@ -48,7 +48,7 @@ db.CreateSelectionSet(selectionSet)
 - ❌ No way to reuse criteria across multiple sets
 - ❌ CriteriaJSON was just documentation, not executable
 
-### New Approach: Plans + Selection Sets
+### New Approach: Plans + Resource Sets
 
 ```go
 // Plans define the logic
@@ -63,9 +63,9 @@ type Plan struct {
 
 // Selection sets are pure storage - they only care about:
 // 1. WHAT items are in the set (paths)
-// 2. WHEN items were added (timestamp in selection_set_entries)
+// 2. WHEN items were added (timestamp in resource_set_entries)
 // They don't care HOW items got selected
-type SelectionSet struct {
+type ResourceSet struct {
     ID          int64
     Name        string
     Description *string
@@ -74,7 +74,7 @@ type SelectionSet struct {
     // REMOVED: CriteriaType, CriteriaJSON (moved to Plans)
 }
 
-// Creating a plan that populates a selection set
+// Creating a plan that populates a resource set
 plan := &Plan{
     Name: "large-videos",
     Mode: "oneshot",
@@ -91,7 +91,7 @@ plan := &Plan{
     Outcomes: []PlanOutcome{
         {
             Type:             "selection_set",
-            SelectionSetName: stringPtr("large-videos"),
+            ResourceSetName: stringPtr("large-videos"),
             Operation:        stringPtr("replace"),
         },
     },
@@ -103,10 +103,10 @@ executor.Execute(plan)
 ```
 
 **Benefits:**
-- ✅ Clear separation: Plans (logic) vs. Selection Sets (storage)
+- ✅ Clear separation: Plans (logic) vs. Resource Sets (storage)
 - ✅ Plans are executable and reusable
 - ✅ Full execution history and audit trail
-- ✅ One plan can target multiple selection sets
+- ✅ One plan can target multiple resource sets
 - ✅ Plans can run multiple times with different results
 
 ---
@@ -130,15 +130,15 @@ executor.Execute(plan)
 
 **Status:** Existing code continues to work unchanged
 
-### Phase 2: Migrate Existing Selection Sets (Optional)
+### Phase 2: Migrate Existing Resource Sets (Optional)
 
-For selection sets with `criteria_type = 'tool_query'`:
+For resource sets with `criteria_type = 'tool_query'`:
 
 ```go
-// Migration script: convert selection sets to plans
-func MigrateSelectionSetToPlan(db *database.DiskDB, setName string) error {
-    // 1. Get existing selection set
-    selSet, err := db.GetSelectionSet(setName)
+// Migration script: convert resource sets to plans
+func MigrateResourceSetToPlan(db *database.DiskDB, setName string) error {
+    // 1. Get existing resource set
+    selSet, err := db.GetResourceSet(setName)
     if err != nil {
         return err
     }
@@ -161,7 +161,7 @@ func MigrateSelectionSetToPlan(db *database.DiskDB, setName string) error {
         Outcomes: []models.PlanOutcome{
             {
                 Type:             "selection_set",
-                SelectionSetName: &setName,
+                ResourceSetName: &setName,
                 Operation:        stringPtr("replace"),
             },
         },
@@ -174,17 +174,17 @@ func MigrateSelectionSetToPlan(db *database.DiskDB, setName string) error {
 
 **Result:** Selection set data preserved, but logic moved to plan
 
-### Phase 3: Simplify Selection Sets Schema
+### Phase 3: Simplify Resource Sets Schema
 
 ```sql
--- Remove criteria fields from selection_sets
-ALTER TABLE selection_sets DROP COLUMN criteria_type;
-ALTER TABLE selection_sets DROP COLUMN criteria_json;
+-- Remove criteria fields from resource_sets
+ALTER TABLE resource_sets DROP COLUMN criteria_type;
+ALTER TABLE resource_sets DROP COLUMN criteria_json;
 ```
 
 Update model:
 ```go
-type SelectionSet struct {
+type ResourceSet struct {
     ID          int64
     Name        string
     Description *string
@@ -195,7 +195,7 @@ type SelectionSet struct {
 ```
 
 **Impact:**
-- Existing selection sets continue to work for manual curation
+- Existing resource sets continue to work for manual curation
 - Automated population now done via Plans
 
 ### Phase 4: Deprecate Rules System
@@ -214,7 +214,7 @@ The existing `rules` tables can be deprecated:
 
 | Feature | Rules | Plans |
 |---------|-------|-------|
-| Scope | Always tied to selection sets | Independent, reusable |
+| Scope | Always tied to resource sets | Independent, reusable |
 | Execution | No built-in executor | Full execution engine |
 | Sources | Implicit (all entries) | Explicit (filesystem, sets, queries) |
 | Audit trail | Basic (rule_executions) | Comprehensive (executions + outcomes) |
@@ -226,11 +226,11 @@ The existing `rules` tables can be deprecated:
 
 ### Example 1: Find Large Files
 
-#### Old Way (Bespoke Selection Set)
+#### Old Way (Bespoke Resource Set)
 
 ```go
-// Step 1: Create selection set with criteria
-selSet := &models.SelectionSet{
+// Step 1: Create resource set with criteria
+selSet := &models.ResourceSet{
     Name:         "large-files",
     Description:  stringPtr("Files larger than 1GB"),
     CriteriaType: "tool_query",
@@ -239,7 +239,7 @@ selSet := &models.SelectionSet{
         "params": {"minSize": 1073741824}
     }`),
 }
-db.CreateSelectionSet(selSet)
+db.CreateResourceSet(selSet)
 
 // Step 2: ???
 // The criteria is stored but there's no execution mechanism!
@@ -272,7 +272,7 @@ plan := &models.Plan{
     Outcomes: []models.PlanOutcome{
         {
             Type:             "selection_set",
-            SelectionSetName: &setName,
+            ResourceSetName: &setName,
             Operation:        &operation,
         },
     },
@@ -328,7 +328,7 @@ plan := &models.Plan{
     Outcomes: []models.PlanOutcome{
         {
             Type:             "selection_set",
-            SelectionSetName: stringPtr("archive-queue"),
+            ResourceSetName: stringPtr("archive-queue"),
             Operation:        stringPtr("add"),
         },
     },
@@ -365,12 +365,12 @@ plan := &models.Plan{
     Outcomes: []models.PlanOutcome{
         {
             Type:             "selection_set",
-            SelectionSetName: stringPtr("processed"),
+            ResourceSetName: stringPtr("processed"),
             Operation:        stringPtr("add"),
         },
         {
             Type:             "selection_set",
-            SelectionSetName: stringPtr("pending"),
+            ResourceSetName: stringPtr("pending"),
             Operation:        stringPtr("remove"),
         },
     },
@@ -384,11 +384,11 @@ plan := &models.Plan{
 ### Old MCP Tools (Keep for Manual Curation)
 
 ```
-selection-set-create    - Create empty set
-selection-set-modify    - Manually add/remove paths
-selection-set-get       - Get entries
-selection-set-list      - List all sets
-selection-set-delete    - Delete set
+resource-set-create    - Create empty set
+resource-set-modify    - Manually add/remove paths
+resource-set-get       - Get entries
+resource-set-list      - List all sets
+resource-set-delete    - Delete set
 ```
 
 **Usage:** Continue to work for manual curation
@@ -397,7 +397,7 @@ selection-set-delete    - Delete set
 
 ```
 plan-create             - Create a new plan
-plan-execute            - Run a plan (populate selection sets)
+plan-execute            - Run a plan (populate resource sets)
 plan-get                - Get plan definition + execution history
 plan-list               - List all plans
 plan-update             - Modify plan definition
@@ -409,11 +409,11 @@ plan-stop               - Stop continuous plan (future)
 
 ```javascript
 // Old way: Manual curation
-await client.callTool("selection-set-create", {
+await client.callTool("resource-set-create", {
     name: "favorites",
     criteriaType: "user_selected"
 });
-await client.callTool("selection-set-modify", {
+await client.callTool("resource-set-modify", {
     name: "favorites",
     operation: "add",
     paths: "/path/to/file1,/path/to/file2"
@@ -449,11 +449,11 @@ await client.callTool("plan-execute", {name: "auto-favorites"});
 ### Old REST API (Keep)
 
 ```
-GET  /api/selection-sets              - List all sets
-GET  /api/selection-sets/:name        - Get set entries
-POST /api/selection-sets              - Create set
-PUT  /api/selection-sets/:name        - Modify set
-DELETE /api/selection-sets/:name      - Delete set
+GET  /api/resource-sets              - List all sets
+GET  /api/resource-sets/:name        - Get set entries
+POST /api/resource-sets              - Create set
+PUT  /api/resource-sets/:name        - Modify set
+DELETE /api/resource-sets/:name      - Delete set
 ```
 
 ### New REST API (Add)
@@ -475,12 +475,12 @@ GET  /api/plans/:name/executions      - Get execution history
 ### Phase 1: Parallel Testing
 
 ```go
-func TestMigration_SelectionSetVsPlan(t *testing.T) {
-    // Create selection set the old way (manual)
-    db.CreateSelectionSet(&models.SelectionSet{
+func TestMigration_ResourceSetVsPlan(t *testing.T) {
+    // Create resource set the old way (manual)
+    db.CreateResourceSet(&models.ResourceSet{
         Name: "manual-test",
     })
-    db.AddToSelectionSet("manual-test", []string{"/file1", "/file2"})
+    db.AddToResourceSet("manual-test", []string{"/file1", "/file2"})
 
     // Create plan that does the same thing
     plan := &models.Plan{
@@ -491,7 +491,7 @@ func TestMigration_SelectionSetVsPlan(t *testing.T) {
         Outcomes: []models.PlanOutcome{
             {
                 Type:             "selection_set",
-                SelectionSetName: stringPtr("auto-test"),
+                ResourceSetName: stringPtr("auto-test"),
                 Operation:        stringPtr("add"),
             },
         },
@@ -500,8 +500,8 @@ func TestMigration_SelectionSetVsPlan(t *testing.T) {
     executor.Execute(plan)
 
     // Both methods should work
-    manualEntries, _ := db.GetSelectionSetEntries("manual-test")
-    autoEntries, _ := db.GetSelectionSetEntries("auto-test")
+    manualEntries, _ := db.GetResourceSetEntries("manual-test")
+    autoEntries, _ := db.GetResourceSetEntries("auto-test")
 
     assert.NotNil(t, manualEntries)
     assert.NotNil(t, autoEntries)
@@ -511,9 +511,9 @@ func TestMigration_SelectionSetVsPlan(t *testing.T) {
 ### Phase 2: Deprecation Warnings
 
 ```go
-func (d *DiskDB) CreateSelectionSet(set *models.SelectionSet) error {
+func (d *DiskDB) CreateResourceSet(set *models.ResourceSet) error {
     if set.CriteriaType == "tool_query" {
-        d.logger.Warn("Creating selection sets with criteria_type='tool_query' is deprecated. Use Plans instead.")
+        d.logger.Warn("Creating resource sets with criteria_type='tool_query' is deprecated. Use Plans instead.")
     }
     // Continue with creation...
 }
@@ -527,7 +527,7 @@ If issues arise during migration:
 
 ### Step 1: Keep Old Code Intact
 
-Plans are additive - they don't modify existing selection set functionality.
+Plans are additive - they don't modify existing resource set functionality.
 
 ### Step 2: Feature Flag
 
@@ -539,7 +539,7 @@ if USE_PLANS {
     executor.Execute(plan)
 } else {
     // Old manual workflow
-    db.AddToSelectionSet(name, paths)
+    db.AddToResourceSet(name, paths)
 }
 ```
 
@@ -575,12 +575,12 @@ DROP TABLE IF EXISTS plans;
 - ✅ Update CLI commands
 
 ### Week 6: Migration
-- ✅ Create migration scripts for existing selection sets
+- ✅ Create migration scripts for existing resource sets
 - ✅ Update documentation
 - ✅ Run migration in staging environment
 
 ### Week 7: Cleanup (Optional)
-- ✅ Remove `criteria_type` and `criteria_json` from selection_sets table
+- ✅ Remove `criteria_type` and `criteria_json` from resource_sets table
 - ✅ Mark rules system as deprecated
 - ✅ Update all references
 
@@ -588,13 +588,13 @@ DROP TABLE IF EXISTS plans;
 
 ## Conclusion
 
-The migration from bespoke selection sets to Plans provides:
+The migration from bespoke resource sets to Plans provides:
 
-1. **Separation of Concerns**: Logic (Plans) vs. Storage (Selection Sets)
+1. **Separation of Concerns**: Logic (Plans) vs. Storage (Resource Sets)
 2. **Executability**: Plans are not just documentation - they DO things
 3. **Reusability**: One plan can run multiple times, target multiple sets
 4. **Auditability**: Full execution history and outcome tracking
 5. **Extensibility**: Easy to add new source types, conditions, and outcomes
-6. **Backward Compatibility**: Existing selection set operations continue to work
+6. **Backward Compatibility**: Existing resource set operations continue to work
 
 The migration is **non-breaking** and can be done incrementally, with the option to rollback at any point.

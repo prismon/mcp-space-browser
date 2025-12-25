@@ -3,6 +3,7 @@ package classifier
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/prismon/mcp-space-browser/internal/models"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
 	"github.com/prismon/mcp-space-browser/pkg/pathutil"
@@ -121,6 +123,39 @@ func (p *Processor) ProcessResource(req *ProcessRequest) (*ProcessResult, error)
 				} else if artifact != nil {
 					result.Artifacts = append(result.Artifacts, *artifact)
 				}
+			}
+		}
+	}
+
+	// Store artifacts in database for discovery via MCP resources
+	if p.config.Database != nil {
+		for _, artifact := range result.Artifacts {
+			// Get file size of cached artifact
+			var fileSize int64
+			if info, err := os.Stat(artifact.CachePath); err == nil {
+				fileSize = info.Size()
+			}
+
+			// Serialize metadata map to JSON
+			var metadataJson string
+			if artifact.Metadata != nil {
+				if jsonBytes, err := json.Marshal(artifact.Metadata); err == nil {
+					metadataJson = string(jsonBytes)
+				}
+			}
+
+			metadata := &models.Metadata{
+				Hash:         artifact.Hash,
+				SourcePath:   localPath,
+				MetadataType: artifact.Type,
+				MimeType:     artifact.MimeType,
+				CachePath:    artifact.CachePath,
+				FileSize:     fileSize,
+				MetadataJson: metadataJson,
+			}
+
+			if err := p.config.Database.CreateOrUpdateMetadata(metadata); err != nil {
+				processorLog.WithError(err).WithField("hash", artifact.Hash).Warn("Failed to store artifact metadata in database")
 			}
 		}
 	}

@@ -373,6 +373,9 @@ func registerResourceTimeRange(s *server.MCPServer, db *database.DiskDB) {
 			entries = entries[:limit]
 		}
 
+		// Enrich entries with thumbnail URLs
+		enrichEntriesWithThumbnails(db, entries)
+
 		response := map[string]interface{}{
 			"resource_set":     args.Name,
 			"field":            args.Field,
@@ -440,6 +443,9 @@ func registerResourceMetricRange(s *server.MCPServer, db *database.DiskDB) {
 			entries = entries[:limit]
 		}
 
+		// Enrich entries with thumbnail URLs
+		enrichEntriesWithThumbnails(db, entries)
+
 		response := map[string]interface{}{
 			"resource_set":     args.Name,
 			"metric":           args.Metric,
@@ -503,6 +509,9 @@ func registerResourceIs(s *server.MCPServer, db *database.DiskDB) {
 		if limit > 0 && len(entries) > limit {
 			entries = entries[:limit]
 		}
+
+		// Enrich entries with thumbnail URLs
+		enrichEntriesWithThumbnails(db, entries)
 
 		response := map[string]interface{}{
 			"resource_set":     args.Name,
@@ -573,6 +582,9 @@ func registerResourceFuzzyMatch(s *server.MCPServer, db *database.DiskDB) {
 		if limit > 0 && len(entries) > limit {
 			entries = entries[:limit]
 		}
+
+		// Enrich entries with thumbnail URLs
+		enrichEntriesWithThumbnails(db, entries)
 
 		response := map[string]interface{}{
 			"resource_set":     args.Name,
@@ -696,6 +708,9 @@ func registerResourceSearch(s *server.MCPServer, db *database.DiskDB) {
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Search failed: %v", err)), nil
 		}
+
+		// Enrich entries with thumbnail URLs
+		enrichEntriesWithThumbnails(db, result.Entries)
 
 		response := map[string]interface{}{
 			"resource_set":     args.Name,

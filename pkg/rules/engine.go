@@ -107,25 +107,25 @@ func (e *Engine) executeRule(ctx context.Context, rule *models.Rule, entry *mode
 		return fmt.Errorf("failed to parse outcome: %w", err)
 	}
 
-	// Validate outcome has selection set name
-	if outcome.SelectionSetName == "" {
-		return fmt.Errorf("rule outcome missing required SelectionSetName")
+	// Validate outcome has resource set name
+	if outcome.ResourceSetName == "" {
+		return fmt.Errorf("rule outcome missing required ResourceSetName")
 	}
 
-	// Ensure selection set exists
-	selectionSetID, err := e.ensureSelectionSet(outcome.SelectionSetName)
+	// Ensure resource set exists
+	resourceSetID, err := e.ensureResourceSet(outcome.ResourceSetName)
 	if err != nil {
-		return fmt.Errorf("failed to ensure selection set: %w", err)
+		return fmt.Errorf("failed to ensure resource set: %w", err)
 	}
 
 	// Create execution record
-	executionID, err := e.createExecution(rule.ID, selectionSetID)
+	executionID, err := e.createExecution(rule.ID, resourceSetID)
 	if err != nil {
 		return fmt.Errorf("failed to create execution record: %w", err)
 	}
 
 	// Apply outcome
-	err = e.applyOutcome(ctx, &outcome, entry, executionID, selectionSetID)
+	err = e.applyOutcome(ctx, &outcome, entry, executionID, resourceSetID)
 
 	// Update execution record
 	duration := time.Since(startTime).Milliseconds()
@@ -286,24 +286,24 @@ func (e *Engine) matchPath(cond *models.RuleCondition, entry *models.Entry) (boo
 }
 
 // applyOutcome applies a rule outcome to an entry
-func (e *Engine) applyOutcome(ctx context.Context, outcome *models.RuleOutcome, entry *models.Entry, executionID, selectionSetID int64) error {
+func (e *Engine) applyOutcome(ctx context.Context, outcome *models.RuleOutcome, entry *models.Entry, executionID, resourceSetID int64) error {
 	switch outcome.Type {
 	case "selection_set":
-		return e.applySelectionSetOutcome(outcome, entry, executionID, selectionSetID)
+		return e.applyResourceSetOutcome(outcome, entry, executionID, resourceSetID)
 
 	case "classifier":
-		return e.applyClassifierOutcome(ctx, outcome, entry, executionID, selectionSetID)
+		return e.applyClassifierOutcome(ctx, outcome, entry, executionID, resourceSetID)
 
 	case "chained":
-		return e.applyChainedOutcome(ctx, outcome, entry, executionID, selectionSetID)
+		return e.applyChainedOutcome(ctx, outcome, entry, executionID, resourceSetID)
 
 	default:
 		return fmt.Errorf("unknown outcome type: %s", outcome.Type)
 	}
 }
 
-// applySelectionSetOutcome applies a selection set outcome
-func (e *Engine) applySelectionSetOutcome(outcome *models.RuleOutcome, entry *models.Entry, executionID, selectionSetID int64) error {
+// applyResourceSetOutcome applies a resource set outcome
+func (e *Engine) applyResourceSetOutcome(outcome *models.RuleOutcome, entry *models.Entry, executionID, resourceSetID int64) error {
 	operation := "add"
 	if outcome.Operation != nil {
 		operation = *outcome.Operation
@@ -312,9 +312,9 @@ func (e *Engine) applySelectionSetOutcome(outcome *models.RuleOutcome, entry *mo
 	var err error
 	switch operation {
 	case "add":
-		err = e.addToSelectionSet(selectionSetID, entry.Path)
+		err = e.addToResourceSet(resourceSetID, entry.Path)
 	case "remove":
-		err = e.removeFromSelectionSet(selectionSetID, entry.Path)
+		err = e.removeFromResourceSet(resourceSetID, entry.Path)
 	default:
 		err = fmt.Errorf("unknown operation: %s", operation)
 	}
@@ -328,13 +328,13 @@ func (e *Engine) applySelectionSetOutcome(outcome *models.RuleOutcome, entry *mo
 		errorMsg = &msg
 	}
 
-	e.recordOutcome(executionID, selectionSetID, entry.Path, outcome.Type, nil, status, errorMsg)
+	e.recordOutcome(executionID, resourceSetID, entry.Path, outcome.Type, nil, status, errorMsg)
 
 	return err
 }
 
 // applyClassifierOutcome applies a classifier outcome
-func (e *Engine) applyClassifierOutcome(ctx context.Context, outcome *models.RuleOutcome, entry *models.Entry, executionID, selectionSetID int64) error {
+func (e *Engine) applyClassifierOutcome(ctx context.Context, outcome *models.RuleOutcome, entry *models.Entry, executionID, resourceSetID int64) error {
 	if e.classifier == nil {
 		return fmt.Errorf("classifier not available")
 	}
@@ -397,18 +397,18 @@ func (e *Engine) applyClassifierOutcome(ctx context.Context, outcome *models.Rul
 		outcomeDataPtr = &outcomeData
 	}
 
-	e.recordOutcome(executionID, selectionSetID, entry.Path, outcome.Type, outcomeDataPtr, status, errorMsg)
+	e.recordOutcome(executionID, resourceSetID, entry.Path, outcome.Type, outcomeDataPtr, status, errorMsg)
 
-	// Also add to selection set for traceability
+	// Also add to resource set for traceability
 	if err == nil {
-		e.addToSelectionSet(selectionSetID, entry.Path)
+		e.addToResourceSet(resourceSetID, entry.Path)
 	}
 
 	return err
 }
 
 // applyChainedOutcome applies a chained outcome
-func (e *Engine) applyChainedOutcome(ctx context.Context, outcome *models.RuleOutcome, entry *models.Entry, executionID, selectionSetID int64) error {
+func (e *Engine) applyChainedOutcome(ctx context.Context, outcome *models.RuleOutcome, entry *models.Entry, executionID, resourceSetID int64) error {
 	stopOnError := false
 	if outcome.StopOnError != nil {
 		stopOnError = *outcome.StopOnError
@@ -416,12 +416,12 @@ func (e *Engine) applyChainedOutcome(ctx context.Context, outcome *models.RuleOu
 
 	var errors []error
 	for _, subOutcome := range outcome.Outcomes {
-		// Use the parent's selection set name if sub-outcome doesn't have one
-		if subOutcome.SelectionSetName == "" {
-			subOutcome.SelectionSetName = outcome.SelectionSetName
+		// Use the parent's resource set name if sub-outcome doesn't have one
+		if subOutcome.ResourceSetName == "" {
+			subOutcome.ResourceSetName = outcome.ResourceSetName
 		}
 
-		err := e.applyOutcome(ctx, subOutcome, entry, executionID, selectionSetID)
+		err := e.applyOutcome(ctx, subOutcome, entry, executionID, resourceSetID)
 		if err != nil {
 			errors = append(errors, err)
 			if stopOnError {
@@ -499,10 +499,10 @@ func (e *Engine) getEnabledRules() ([]*models.Rule, error) {
 	return rules, rows.Err()
 }
 
-func (e *Engine) ensureSelectionSet(name string) (int64, error) {
-	// Check if selection set exists
+func (e *Engine) ensureResourceSet(name string) (int64, error) {
+	// Check if resource set exists
 	var id int64
-	err := e.db.QueryRow(`SELECT id FROM selection_sets WHERE name = ?`, name).Scan(&id)
+	err := e.db.QueryRow(`SELECT id FROM resource_sets WHERE name = ?`, name).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
@@ -510,9 +510,9 @@ func (e *Engine) ensureSelectionSet(name string) (int64, error) {
 		return 0, err
 	}
 
-	// Create selection set
+	// Create resource set
 	result, err := e.db.Exec(`
-		INSERT INTO selection_sets (name, description, criteria_type)
+		INSERT INTO resource_sets (name, description, criteria_type)
 		VALUES (?, ?, ?)
 	`, name, "Auto-created by rule execution", "tool_query")
 	if err != nil {
@@ -522,11 +522,11 @@ func (e *Engine) ensureSelectionSet(name string) (int64, error) {
 	return result.LastInsertId()
 }
 
-func (e *Engine) createExecution(ruleID, selectionSetID int64) (int64, error) {
+func (e *Engine) createExecution(ruleID, resourceSetID int64) (int64, error) {
 	result, err := e.db.Exec(`
 		INSERT INTO rule_executions (rule_id, selection_set_id, entries_matched, entries_processed, status)
 		VALUES (?, ?, 1, 0, 'running')
-	`, ruleID, selectionSetID)
+	`, ruleID, resourceSetID)
 	if err != nil {
 		return 0, err
 	}
@@ -543,25 +543,25 @@ func (e *Engine) updateExecution(executionID int64, status string, durationMs in
 	return err
 }
 
-func (e *Engine) recordOutcome(executionID, selectionSetID int64, entryPath, outcomeType string, outcomeData *string, status string, errorMsg *string) error {
+func (e *Engine) recordOutcome(executionID, resourceSetID int64, entryPath, outcomeType string, outcomeData *string, status string, errorMsg *string) error {
 	_, err := e.db.Exec(`
 		INSERT INTO rule_outcomes (execution_id, selection_set_id, entry_path, outcome_type, outcome_data, status, error_message)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, executionID, selectionSetID, entryPath, outcomeType, outcomeData, status, errorMsg)
+	`, executionID, resourceSetID, entryPath, outcomeType, outcomeData, status, errorMsg)
 	return err
 }
 
-func (e *Engine) addToSelectionSet(setID int64, path string) error {
+func (e *Engine) addToResourceSet(setID int64, path string) error {
 	_, err := e.db.Exec(`
-		INSERT OR IGNORE INTO selection_set_entries (set_id, entry_path)
+		INSERT OR IGNORE INTO resource_set_entries (set_id, entry_path)
 		VALUES (?, ?)
 	`, setID, path)
 	return err
 }
 
-func (e *Engine) removeFromSelectionSet(setID int64, path string) error {
+func (e *Engine) removeFromResourceSet(setID int64, path string) error {
 	_, err := e.db.Exec(`
-		DELETE FROM selection_set_entries
+		DELETE FROM resource_set_entries
 		WHERE set_id = ? AND entry_path = ?
 	`, setID, path)
 	return err

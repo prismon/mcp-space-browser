@@ -24,7 +24,7 @@ func (d *DiskDB) AddResourceSetEdge(parentName, childName string) error {
 	}).Debug("Adding resource set edge")
 
 	// Get parent set
-	parent, err := d.GetSelectionSet(parentName)
+	parent, err := d.GetResourceSet(parentName)
 	if err != nil {
 		return fmt.Errorf("failed to get parent set: %w", err)
 	}
@@ -33,7 +33,7 @@ func (d *DiskDB) AddResourceSetEdge(parentName, childName string) error {
 	}
 
 	// Get child set
-	child, err := d.GetSelectionSet(childName)
+	child, err := d.GetResourceSet(childName)
 	if err != nil {
 		return fmt.Errorf("failed to get child set: %w", err)
 	}
@@ -71,7 +71,7 @@ func (d *DiskDB) RemoveResourceSetEdge(parentName, childName string) error {
 	}).Debug("Removing resource set edge")
 
 	// Get parent set
-	parent, err := d.GetSelectionSet(parentName)
+	parent, err := d.GetResourceSet(parentName)
 	if err != nil {
 		return fmt.Errorf("failed to get parent set: %w", err)
 	}
@@ -80,7 +80,7 @@ func (d *DiskDB) RemoveResourceSetEdge(parentName, childName string) error {
 	}
 
 	// Get child set
-	child, err := d.GetSelectionSet(childName)
+	child, err := d.GetResourceSet(childName)
 	if err != nil {
 		return fmt.Errorf("failed to get child set: %w", err)
 	}
@@ -111,8 +111,8 @@ func (d *DiskDB) RemoveResourceSetEdge(parentName, childName string) error {
 }
 
 // GetResourceSetChildren returns all immediate child resource sets
-func (d *DiskDB) GetResourceSetChildren(name string) ([]*models.SelectionSet, error) {
-	set, err := d.GetSelectionSet(name)
+func (d *DiskDB) GetResourceSetChildren(name string) ([]*models.ResourceSet, error) {
+	set, err := d.GetResourceSet(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get resource set: %w", err)
 	}
@@ -122,7 +122,7 @@ func (d *DiskDB) GetResourceSetChildren(name string) ([]*models.SelectionSet, er
 
 	rows, err := d.db.Query(`
 		SELECT s.id, s.name, s.description, s.created_at, s.updated_at
-		FROM selection_sets s
+		FROM resource_sets s
 		JOIN resource_set_edges e ON s.id = e.child_id
 		WHERE e.parent_id = ?
 		ORDER BY s.name
@@ -132,12 +132,12 @@ func (d *DiskDB) GetResourceSetChildren(name string) ([]*models.SelectionSet, er
 	}
 	defer rows.Close()
 
-	return d.scanSelectionSets(rows)
+	return d.scanResourceSets(rows)
 }
 
 // GetResourceSetParents returns all immediate parent resource sets
-func (d *DiskDB) GetResourceSetParents(name string) ([]*models.SelectionSet, error) {
-	set, err := d.GetSelectionSet(name)
+func (d *DiskDB) GetResourceSetParents(name string) ([]*models.ResourceSet, error) {
+	set, err := d.GetResourceSet(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get resource set: %w", err)
 	}
@@ -147,7 +147,7 @@ func (d *DiskDB) GetResourceSetParents(name string) ([]*models.SelectionSet, err
 
 	rows, err := d.db.Query(`
 		SELECT s.id, s.name, s.description, s.created_at, s.updated_at
-		FROM selection_sets s
+		FROM resource_sets s
 		JOIN resource_set_edges e ON s.id = e.parent_id
 		WHERE e.child_id = ?
 		ORDER BY s.name
@@ -157,12 +157,12 @@ func (d *DiskDB) GetResourceSetParents(name string) ([]*models.SelectionSet, err
 	}
 	defer rows.Close()
 
-	return d.scanSelectionSets(rows)
+	return d.scanResourceSets(rows)
 }
 
 // GetResourceSetDescendants returns all descendant resource sets (recursive children)
-func (d *DiskDB) GetResourceSetDescendants(name string) ([]*models.SelectionSet, error) {
-	set, err := d.GetSelectionSet(name)
+func (d *DiskDB) GetResourceSetDescendants(name string) ([]*models.ResourceSet, error) {
+	set, err := d.GetResourceSet(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get resource set: %w", err)
 	}
@@ -209,15 +209,15 @@ func (d *DiskDB) GetResourceSetDescendants(name string) ([]*models.SelectionSet,
 	}
 
 	if len(descendantIDs) == 0 {
-		return []*models.SelectionSet{}, nil
+		return []*models.ResourceSet{}, nil
 	}
 
-	return d.getSelectionSetsByIDs(descendantIDs)
+	return d.getResourceSetsByIDs(descendantIDs)
 }
 
 // GetResourceSetAncestors returns all ancestor resource sets (recursive parents)
-func (d *DiskDB) GetResourceSetAncestors(name string) ([]*models.SelectionSet, error) {
-	set, err := d.GetSelectionSet(name)
+func (d *DiskDB) GetResourceSetAncestors(name string) ([]*models.ResourceSet, error) {
+	set, err := d.GetResourceSet(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get resource set: %w", err)
 	}
@@ -264,10 +264,10 @@ func (d *DiskDB) GetResourceSetAncestors(name string) ([]*models.SelectionSet, e
 	}
 
 	if len(ancestorIDs) == 0 {
-		return []*models.SelectionSet{}, nil
+		return []*models.ResourceSet{}, nil
 	}
 
-	return d.getSelectionSetsByIDs(ancestorIDs)
+	return d.getResourceSetsByIDs(ancestorIDs)
 }
 
 // isAncestor checks if potentialAncestor is an ancestor of node
@@ -314,7 +314,7 @@ func (d *DiskDB) isAncestor(potentialAncestorID, nodeID int64) bool {
 
 // GetAllDescendantEntries returns all entries from a resource set and all its descendants
 func (d *DiskDB) GetAllDescendantEntries(name string) ([]*models.Entry, error) {
-	set, err := d.GetSelectionSet(name)
+	set, err := d.GetResourceSet(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get resource set: %w", err)
 	}
@@ -342,7 +342,7 @@ func (d *DiskDB) GetAllDescendantEntries(name string) ([]*models.Entry, error) {
 		rows, err := d.db.Query(`
 			SELECT e.id, e.path, e.parent, e.size, e.kind, e.ctime, e.mtime, e.last_scanned
 			FROM entries e
-			JOIN selection_set_entries sse ON e.path = sse.entry_path
+			JOIN resource_set_entries sse ON e.path = sse.entry_path
 			WHERE sse.set_id = ?
 		`, setID)
 		if err != nil {
@@ -378,15 +378,15 @@ func (d *DiskDB) GetAllDescendantEntries(name string) ([]*models.Entry, error) {
 
 // Helper functions
 
-// scanSelectionSets scans rows into SelectionSet slice
-func (d *DiskDB) scanSelectionSets(rows *sql.Rows) ([]*models.SelectionSet, error) {
-	var sets []*models.SelectionSet
+// scanResourceSets scans rows into ResourceSet slice
+func (d *DiskDB) scanResourceSets(rows *sql.Rows) ([]*models.ResourceSet, error) {
+	var sets []*models.ResourceSet
 	for rows.Next() {
-		var set models.SelectionSet
+		var set models.ResourceSet
 		var description sql.NullString
 
 		if err := rows.Scan(&set.ID, &set.Name, &description, &set.CreatedAt, &set.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan selection set: %w", err)
+			return nil, fmt.Errorf("failed to scan resource set: %w", err)
 		}
 
 		if description.Valid {
@@ -403,10 +403,10 @@ func (d *DiskDB) scanSelectionSets(rows *sql.Rows) ([]*models.SelectionSet, erro
 	return sets, nil
 }
 
-// getSelectionSetsByIDs retrieves selection sets by their IDs
-func (d *DiskDB) getSelectionSetsByIDs(ids []int64) ([]*models.SelectionSet, error) {
+// getResourceSetsByIDs retrieves resource sets by their IDs
+func (d *DiskDB) getResourceSetsByIDs(ids []int64) ([]*models.ResourceSet, error) {
 	if len(ids) == 0 {
-		return []*models.SelectionSet{}, nil
+		return []*models.ResourceSet{}, nil
 	}
 
 	// Build placeholder query
@@ -422,23 +422,23 @@ func (d *DiskDB) getSelectionSetsByIDs(ids []int64) ([]*models.SelectionSet, err
 
 	query := fmt.Sprintf(`
 		SELECT id, name, description, created_at, updated_at
-		FROM selection_sets
+		FROM resource_sets
 		WHERE id IN (%s)
 		ORDER BY name
 	`, placeholders)
 
 	rows, err := d.db.Query(query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query selection sets: %w", err)
+		return nil, fmt.Errorf("failed to query resource sets: %w", err)
 	}
 	defer rows.Close()
 
-	return d.scanSelectionSets(rows)
+	return d.scanResourceSets(rows)
 }
 
 // GetResourceSetWithEntryCount returns a resource set with entry count
 type ResourceSetWithStats struct {
-	*models.SelectionSet
+	*models.ResourceSet
 	EntryCount    int   `json:"entry_count"`
 	ChildCount    int   `json:"child_count"`
 	ParentCount   int   `json:"parent_count"`
@@ -447,7 +447,7 @@ type ResourceSetWithStats struct {
 
 // GetResourceSetStats returns a resource set with statistics
 func (d *DiskDB) GetResourceSetStats(name string) (*ResourceSetWithStats, error) {
-	set, err := d.GetSelectionSet(name)
+	set, err := d.GetResourceSet(name)
 	if err != nil {
 		return nil, err
 	}
@@ -455,12 +455,12 @@ func (d *DiskDB) GetResourceSetStats(name string) (*ResourceSetWithStats, error)
 		return nil, fmt.Errorf("resource set '%s' not found", name)
 	}
 
-	stats := &ResourceSetWithStats{SelectionSet: set}
+	stats := &ResourceSetWithStats{ResourceSet: set}
 
 	// Get entry count and total size
 	err = d.db.QueryRow(`
 		SELECT COUNT(*), COALESCE(SUM(e.size), 0)
-		FROM selection_set_entries sse
+		FROM resource_set_entries sse
 		JOIN entries e ON sse.entry_path = e.path
 		WHERE sse.set_id = ?
 	`, set.ID).Scan(&stats.EntryCount, &stats.TotalSize)
@@ -487,20 +487,20 @@ func (d *DiskDB) GetResourceSetStats(name string) (*ResourceSetWithStats, error)
 	return stats, nil
 }
 
-// UpdateSelectionSet updates a selection set's description
-func (d *DiskDB) UpdateSelectionSet(name string, description *string) error {
+// UpdateResourceSet updates a resource set's description
+func (d *DiskDB) UpdateResourceSet(name string, description *string) error {
 	result, err := d.db.Exec(`
-		UPDATE selection_sets
+		UPDATE resource_sets
 		SET description = ?, updated_at = strftime('%s', 'now')
 		WHERE name = ?
 	`, description, name)
 	if err != nil {
-		return fmt.Errorf("failed to update selection set: %w", err)
+		return fmt.Errorf("failed to update resource set: %w", err)
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		return fmt.Errorf("selection set '%s' not found", name)
+		return fmt.Errorf("resource set '%s' not found", name)
 	}
 
 	return nil

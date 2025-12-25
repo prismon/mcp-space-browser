@@ -2,15 +2,15 @@
 
 ## Executive Summary
 
-This document outlines the architectural refactoring to introduce **Plans** as a first-class concept, decoupling eligibility logic from Selection Sets. Plans define what to process, how to process it, and what outcomes to produce, while Selection Sets become pure data containers.
+This document outlines the architectural refactoring to introduce **Plans** as a first-class concept, decoupling eligibility logic from Resource Sets. Plans define what to process, how to process it, and what outcomes to produce, while Resource Sets become pure data containers.
 
 ## Core Principles
 
-1. **Separation of Concerns**: Plans define logic; Selection Sets store results
-2. **Reusability**: Plans can target multiple selection sets and run multiple times
+1. **Separation of Concerns**: Plans define logic; Resource Sets store results
+2. **Reusability**: Plans can target multiple resource sets and run multiple times
 3. **Extensibility**: Plans support future long-running modes with filesystem notifications
-4. **Backward Compatibility**: Selection Sets work standalone without Plans
-5. **Clean Boundaries**: Plan Definition → Plan Executor → Outcomes → Selection Sets
+4. **Backward Compatibility**: Resource Sets work standalone without Plans
+5. **Clean Boundaries**: Plan Definition → Plan Executor → Outcomes → Resource Sets
 
 ---
 
@@ -26,7 +26,7 @@ This document outlines the architectural refactoring to introduce **Plans** as a
 │         │                 │                    │              │
 │         │                 │                    ▼              │
 │         │                 │           ┌─────────────────┐    │
-│         │                 │           │ Selection Sets  │    │
+│         │                 │           │ Resource Sets  │    │
 │         │                 │           │   Add/Remove    │    │
 │         │                 │           └─────────────────┘    │
 │         │                 │                                   │
@@ -41,7 +41,7 @@ This document outlines the architectural refactoring to introduce **Plans** as a
 ┌──────────────────────────────────────────────────────────────┐
 │                    SELECTION SET LAYER                        │
 │  ┌────────────────────────────────────────────────┐          │
-│  │          Selection Sets (Pure Storage)         │          │
+│  │          Resource Sets (Pure Storage)         │          │
 │  │  - No eligibility logic                        │          │
 │  │  - Manual add/remove still supported           │          │
 │  │  - Can be targets of Plan outcomes             │          │
@@ -154,10 +154,10 @@ Plans use the existing `RuleOutcome` type from the rules system:
 
 ```go
 // RuleOutcome represents the outcome of a rule (from internal/models/models.go)
-// IMPORTANT: All outcomes must have a SelectionSetName to ensure traceability
+// IMPORTANT: All outcomes must have a ResourceSetName to ensure traceability
 type RuleOutcome struct {
     Type             string         `json:"type"` // "selection_set", "classifier", "chained"
-    SelectionSetName string         `json:"selectionSetName"` // REQUIRED for all outcome types
+    ResourceSetName string         `json:"selectionSetName"` // REQUIRED for all outcome types
 
     // For selection_set outcome
     Operation *string `json:"operation,omitempty"` // "add", "remove"
@@ -219,12 +219,12 @@ type PlanOutcomeRecord struct {
 }
 ```
 
-### 7. Simplified Selection Set (Pure Item Storage)
+### 7. Simplified Resource Set (Pure Item Storage)
 
 ```go
-// SelectionSet is a pure data container - just stores items
+// ResourceSet is a pure data container - just stores items
 // It doesn't care HOW items got selected, only WHAT items are in it and WHEN they were added
-type SelectionSet struct {
+type ResourceSet struct {
     ID          int64   `db:"id" json:"id"`
     Name        string  `db:"name" json:"name"`
     Description *string `db:"description" json:"description"`
@@ -232,12 +232,12 @@ type SelectionSet struct {
     UpdatedAt   int64   `db:"updated_at" json:"updated_at"`
 
     // REMOVED: All criteria/logic fields (CriteriaType, CriteriaJSON)
-    // Plans handle eligibility logic; selection sets just store results
+    // Plans handle eligibility logic; resource sets just store results
 }
 
-// SelectionSetEntry represents a single item in a selection set
+// ResourceSetEntry represents a single item in a resource set
 // This tracks WHEN each item was added (but not HOW or WHY)
-type SelectionSetEntry struct {
+type ResourceSetEntry struct {
     SetID     int64  `db:"set_id" json:"set_id"`
     EntryPath string `db:"entry_path" json:"entry_path"`
     AddedAt   int64  `db:"added_at" json:"added_at"`     // Timestamp when added
@@ -328,7 +328,7 @@ CREATE INDEX idx_plan_outcomes_entry ON plan_outcome_records(entry_path);
 ```sql
 -- Selection sets table (SIMPLIFIED - pure item storage)
 -- Only cares about WHAT items and WHEN added, not HOW they got there
-CREATE TABLE selection_sets (
+CREATE TABLE resource_sets (
     id INTEGER PRIMARY KEY,
     name TEXT UNIQUE NOT NULL,
     description TEXT,
@@ -337,24 +337,24 @@ CREATE TABLE selection_sets (
     -- REMOVED: criteria_type, criteria_json (logic moved to Plans)
 );
 
--- selection_set_entries: The join table that tracks items and when they were added
+-- resource_set_entries: The join table that tracks items and when they were added
 -- This is the only place that knows "what's in the set" and "when it was added"
-CREATE TABLE selection_set_entries (
+CREATE TABLE resource_set_entries (
     set_id INTEGER NOT NULL,
     entry_path TEXT NOT NULL,
     added_at INTEGER DEFAULT (strftime('%s', 'now')),  -- Tracks WHEN item was added
     PRIMARY KEY (set_id, entry_path),
-    FOREIGN KEY (set_id) REFERENCES selection_sets(id) ON DELETE CASCADE,
+    FOREIGN KEY (set_id) REFERENCES resource_sets(id) ON DELETE CASCADE,
     FOREIGN KEY (entry_path) REFERENCES entries(path) ON DELETE CASCADE
 );
-CREATE INDEX idx_set_entries ON selection_set_entries(set_id);
+CREATE INDEX idx_set_entries ON resource_set_entries(set_id);
 ```
 
-**Migration Note:** To migrate existing selection_sets:
+**Migration Note:** To migrate existing resource_sets:
 ```sql
 -- Drop the criteria columns (one-way migration)
-ALTER TABLE selection_sets DROP COLUMN criteria_type;
-ALTER TABLE selection_sets DROP COLUMN criteria_json;
+ALTER TABLE resource_sets DROP COLUMN criteria_type;
+ALTER TABLE resource_sets DROP COLUMN criteria_json;
 ```
 
 ---
@@ -398,14 +398,14 @@ func (pe *PlanExecutor) Execute(plan *models.Plan) (*models.PlanExecution, error
     // 1. Create execution record
     // 2. Resolve sources (get entry list)
     // 3. Evaluate conditions (filter entries)
-    // 4. Apply outcomes (modify selection sets, trigger classifiers)
+    // 4. Apply outcomes (modify resource sets, trigger classifiers)
     // 5. Record results
 }
 
 // Source resolution
 func (pe *PlanExecutor) resolveSources(sources []PlanSource) ([]string, error)
 func (pe *PlanExecutor) resolveFilesystemSource(src PlanSource) ([]string, error)
-func (pe *PlanExecutor) resolveSelectionSetSource(src PlanSource) ([]string, error)
+func (pe *PlanExecutor) resolveResourceSetSource(src PlanSource) ([]string, error)
 
 // Condition evaluation (reuses RuleCondition)
 func (pe *PlanExecutor) evaluateConditions(entries []*models.Entry, cond *models.RuleCondition) ([]*models.Entry, error)
@@ -413,7 +413,7 @@ func (pe *PlanExecutor) matchCondition(entry *models.Entry, cond *models.RuleCon
 
 // Outcome application (reuses RuleOutcome)
 func (pe *PlanExecutor) applyOutcomes(entries []*models.Entry, outcomes []models.RuleOutcome, execID int64) error
-func (pe *PlanExecutor) applySelectionSetOutcome(entries []*models.Entry, outcome models.RuleOutcome, execID int64) error
+func (pe *PlanExecutor) applyResourceSetOutcome(entries []*models.Entry, outcome models.RuleOutcome, execID int64) error
 ```
 
 ### 3. Condition Evaluator (`pkg/plans/evaluator.go`)
@@ -459,7 +459,7 @@ type OutcomeApplier struct {
 func (oa *OutcomeApplier) Apply(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) error {
     switch outcome.Type {
     case "selection_set":
-        return oa.applySelectionSet(entries, outcome, execID, planID)
+        return oa.applyResourceSet(entries, outcome, execID, planID)
     case "classifier":
         return oa.applyClassifier(entries, outcome, execID, planID)
     case "chained":
@@ -469,17 +469,17 @@ func (oa *OutcomeApplier) Apply(entries []*models.Entry, outcome models.RuleOutc
     }
 }
 
-func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) error {
+func (oa *OutcomeApplier) applyResourceSet(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) error {
     paths := extractPaths(entries)
 
-    // RuleOutcome.SelectionSetName is always required (string, not *string)
-    setName := outcome.SelectionSetName
+    // RuleOutcome.ResourceSetName is always required (string, not *string)
+    setName := outcome.ResourceSetName
 
     switch *outcome.Operation {
     case "add":
-        return oa.db.AddToSelectionSet(setName, paths)
+        return oa.db.AddToResourceSet(setName, paths)
     case "remove":
-        return oa.db.RemoveFromSelectionSet(setName, paths)
+        return oa.db.RemoveFromResourceSet(setName, paths)
     }
 
     // Record outcome for audit trail
@@ -507,7 +507,7 @@ func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome mod
 4. Resolve sources (get entry candidates)
    ├─> For each PlanSource:
    │   ├─> filesystem: db.GetEntriesByPath(paths)
-   │   ├─> selection_set: db.GetSelectionSetEntries(name)
+   │   ├─> selection_set: db.GetResourceSetEntries(name)
    │   └─> query: db.ExecuteQuery(name)
    └─> Combine into []Entry
 
@@ -545,22 +545,22 @@ func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome mod
 
 ## Backward Compatibility
 
-### Selection Sets Continue to Work Standalone
+### Resource Sets Continue to Work Standalone
 
 ```go
 // Direct manipulation (no plan required)
-db.CreateSelectionSet(&models.SelectionSet{
+db.CreateResourceSet(&models.ResourceSet{
     Name: "my-favorites",
     Description: "Manually curated files",
 })
 
-db.AddToSelectionSet("my-favorites", []string{
+db.AddToResourceSet("my-favorites", []string{
     "/path/to/file1.mp4",
     "/path/to/file2.jpg",
 })
 
 // MCP tools continue to work
-// selection-set-create, selection-set-modify, etc.
+// resource-set-create, resource-set-modify, etc.
 ```
 
 ### Migration Path for Existing Code
@@ -570,9 +570,9 @@ db.AddToSelectionSet("my-favorites", []string{
    - Implement Plan models and database methods
    - Build PlanExecutor, ConditionEvaluator, OutcomeApplier
 
-2. **Phase 2: Simplify Selection Sets**
-   - Remove `criteria_type` and `criteria_json` from selection_sets table
-   - Update SelectionSet model (remove fields)
+2. **Phase 2: Simplify Resource Sets**
+   - Remove `criteria_type` and `criteria_json` from resource_sets table
+   - Update ResourceSet model (remove fields)
    - Update tests
 
 3. **Phase 3: Deprecate Rules system**
@@ -727,7 +727,7 @@ db.AddToSelectionSet("my-favorites", []string{
 
 ### Phase 4: Migration & Cleanup
 - [ ] Create migration script (rules → plans)
-- [ ] Remove `criteria_type`/`criteria_json` from selection_sets
+- [ ] Remove `criteria_type`/`criteria_json` from resource_sets
 - [ ] Update existing tests
 - [ ] Mark rules system as deprecated
 
@@ -741,12 +741,12 @@ db.AddToSelectionSet("my-favorites", []string{
 
 ## Design Decisions & Rationale
 
-### Why Plans are Separate from Selection Sets
+### Why Plans are Separate from Resource Sets
 
 **Before**: Selection sets had embedded eligibility logic (`criteria_type`, `criteria_json`), tightly coupling storage and logic.
 
 **After**: Plans are independent entities that can:
-- Target multiple selection sets
+- Target multiple resource sets
 - Be reused and modified without affecting stored data
 - Support complex execution modes (one-shot, continuous)
 - Be version-controlled and shared
@@ -784,13 +784,13 @@ Keeping them separate allows for:
 
 ### For Users
 
-1. **Existing selection sets continue to work** - no changes required
-2. **New workflow**: Instead of creating selection sets with criteria, create a Plan
+1. **Existing resource sets continue to work** - no changes required
+2. **New workflow**: Instead of creating resource sets with criteria, create a Plan
 3. **Run plans** using `plan-execute` MCP tool or `disk-plan-run` CLI command
 
 ### For Developers
 
-1. **Use PlanManager for automated workflows** instead of directly manipulating selection sets
+1. **Use PlanManager for automated workflows** instead of directly manipulating resource sets
 2. **Deprecate RuleCondition/RuleOutcome** in favor of PlanCondition/PlanOutcome
 3. **New imports**:
    ```go
@@ -802,7 +802,7 @@ Keeping them separate allows for:
 ## Conclusion
 
 This architecture provides:
-- ✅ **Clean separation** between logic (Plans) and storage (Selection Sets)
+- ✅ **Clean separation** between logic (Plans) and storage (Resource Sets)
 - ✅ **Backward compatibility** for existing code
 - ✅ **Extensibility** for future features (continuous mode, notifications)
 - ✅ **Testability** through clear component boundaries

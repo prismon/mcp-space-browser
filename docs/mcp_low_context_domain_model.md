@@ -7,7 +7,7 @@ This proposal frames the MCP interaction as a lightweight shell session. Tools b
 - Preserve a conversational, shell-like flow without inflating the model context.
 - Make every payload resumable via stable handles (`jobId`, `indexId`, `nodeId`, `selectionId`, `queryId`).
 - Always provide URLs for deeper inspection so MCP responses stay concise.
-- Keep existing job tracking, progress, and selection-set behaviors intact.
+- Keep existing job tracking, progress, and resource-set behaviors intact.
 
 ## Core Entities
 
@@ -17,8 +17,8 @@ This proposal frames the MCP interaction as a lightweight shell session. Tools b
 | **ListingEntry** | Summarized file/dir returned from `cd`. | `{ nodeId, name, kind, size, counts, modifiedAt, link }` where `counts` includes child counts or aggregate sizes. | `/api/indexes/{indexId}/nodes/{nodeId}` for children and metadata; `link` points at a paginated listing URL. |
 | **NodeDetail** | Rich metadata for a single item. | `{ nodeId, path, kind, size, modifiedAt, permissions?, digest?, symlink?, link }` | `/api/indexes/{indexId}/nodes/{nodeId}/detail` for extended attributes and previews. |
 | **JobHandle** | Long-running work such as indexing. | `{ jobId, kind, status, startedAt, progress?, statusUrl }` | `/api/jobs/{jobId}` to stream updates; completion yields an `indexId`. |
-| **SelectionSet** | Named bag of node IDs tied to an index. | `{ selectionId, name, indexId, counts, totalSize, entriesUrl }` | `/api/selection-sets/{selectionId}/entries?limit=...` for pagination; mutations via PATCH/POST. |
-| **SavedQuery** | Template for deriving selection sets. | `{ queryId, name, filterSummary, lastExecutedAt, runUrl }` | `/api/queries/{queryId}` for the full filter AST; executions materialize selection sets. |
+| **ResourceSet** | Named bag of node IDs tied to an index. | `{ selectionId, name, indexId, counts, totalSize, entriesUrl }` | `/api/resource-sets/{selectionId}/entries?limit=...` for pagination; mutations via PATCH/POST. |
+| **SavedQuery** | Template for deriving resource sets. | `{ queryId, name, filterSummary, lastExecutedAt, runUrl }` | `/api/queries/{queryId}` for the full filter AST; executions materialize resource sets. |
 
 ## Minimal MCP Tool Surface
 
@@ -38,7 +38,7 @@ This proposal frames the MCP interaction as a lightweight shell session. Tools b
    - Input: `nodeId` (or `path` scoped to the current `indexId`).
    - Output: `NodeDetail` plus URLs for download, child listing, and historical reports. No large content is inlined.
 
-5. **selection-set-ops** (create/list/get/delete/add/remove)
+5. **resource-set-ops** (create/list/get/delete/add/remove)
    - Inputs reference `selectionId` and arrays of `nodeId` only.
    - Outputs: counts, total size, `entriesUrl`, and optional `sample` rows (≤10) with `nodeId`, `name`, `size`, and `link` for detail fetches.
 

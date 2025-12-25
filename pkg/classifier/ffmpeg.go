@@ -187,7 +187,9 @@ func validateFilePath(path string) error {
 	}
 
 	// Check for suspicious characters that could be used for command injection
-	if strings.ContainsAny(path, ";|&$`<>(){}[]!*?") {
+	// Note: We allow [] () {} since these are valid in filenames and exec.Command
+	// doesn't use shell expansion, so they're safe. We only block shell operators.
+	if strings.ContainsAny(path, ";|&$`<>!") {
 		return fmt.Errorf("path contains invalid characters")
 	}
 

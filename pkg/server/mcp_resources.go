@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -13,11 +14,55 @@ import (
 	"github.com/prismon/mcp-space-browser/pkg/database"
 )
 
+// populateMetadataURLs adds resource URIs and HTTP URLs to metadata entries
+func populateMetadataURLs(metadata *models.Metadata) {
+	metadata.ResourceUri = fmt.Sprintf("synthesis://metadata/%s", metadata.Hash)
+	// Use contentBaseURL from inspect_artifacts.go (defaults to http://localhost:3000)
+	baseURL := contentBaseURL
+	if baseURL == "" {
+		baseURL = "http://localhost:3000"
+	}
+	metadata.HttpUrl = fmt.Sprintf("%s/api/content?path=%s", baseURL, url.QueryEscape(metadata.CachePath))
+}
+
+// enrichEntriesWithThumbnails adds thumbnail URLs to entries if thumbnails exist
+func enrichEntriesWithThumbnails(db *database.DiskDB, entries []*models.Entry) {
+	if db == nil || len(entries) == 0 {
+		return
+	}
+
+	baseURL := contentBaseURL
+	if baseURL == "" {
+		baseURL = "http://localhost:3000"
+	}
+
+	for _, entry := range entries {
+		// Only look up thumbnails for files
+		if entry.Kind != "file" {
+			continue
+		}
+
+		// Look up thumbnail metadata for this path
+		metadataList, err := db.GetMetadataByPath(entry.Path)
+		if err != nil || len(metadataList) == 0 {
+			continue
+		}
+
+		// Find the thumbnail entry
+		for _, metadata := range metadataList {
+			if metadata.MetadataType == "thumbnail" {
+				entry.ThumbnailUrl = fmt.Sprintf("%s/api/content?path=%s", baseURL, url.QueryEscape(metadata.CachePath))
+				break
+			}
+		}
+	}
+}
+
 // registerMCPResources registers all MCP resources and resource templates with the server
 func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 	// Register static resources
 	registerEntriesResource(s, db)
-	registerSelectionSetsResource(s, db)
+	registerResourceSetsResource(s, db)
 	registerQueriesResource(s, db)
 	registerPlansResource(s, db)
 	registerPlanExecutionsResource(s, db)
@@ -37,8 +82,8 @@ func registerMCPResources(s *server.MCPServer, db *database.DiskDB) {
 
 	// Register resource templates
 	registerEntryTemplate(s, db)
-	registerSelectionSetTemplate(s, db)
-	registerSelectionSetEntriesTemplate(s, db)
+	registerResourceSetTemplate(s, db)
+	registerResourceSetEntriesTemplate(s, db)
 	registerQueryTemplate(s, db)
 	registerQueryExecutionsTemplate(s, db)
 	registerPlanTemplate(s, db)
@@ -89,23 +134,23 @@ func registerEntriesResource(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-func registerSelectionSetsResource(s *server.MCPServer, db *database.DiskDB) {
+func registerResourceSetsResource(s *server.MCPServer, db *database.DiskDB) {
 	resource := mcp.NewResource(
-		"synthesis://selection-sets",
+		"synthesis://resource-sets",
 		"All Selection Sets",
-		mcp.WithResourceDescription("List of all selection sets (named groups of files)"),
+		mcp.WithResourceDescription("List of all resource sets (named groups of files)"),
 		mcp.WithMIMEType("application/json"),
 	)
 
 	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		sets, err := db.ListSelectionSets()
+		sets, err := db.ListResourceSets()
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch selection sets: %w", err)
+			return nil, fmt.Errorf("failed to fetch resource sets: %w", err)
 		}
 
 		data, err := json.MarshalIndent(sets, "", "  ")
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal selection sets: %w", err)
+			return nil, fmt.Errorf("failed to marshal resource sets: %w", err)
 		}
 
 		return []mcp.ResourceContents{
@@ -381,18 +426,18 @@ func registerEntryTemplate(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-func registerSelectionSetTemplate(s *server.MCPServer, db *database.DiskDB) {
+func registerResourceSetTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"synthesis://selection-sets/{name}",
+		"synthesis://resource-sets/{name}",
 		"Selection Set",
-		mcp.WithTemplateDescription("Individual selection set by name"),
+		mcp.WithTemplateDescription("Individual resource set by name"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract name from URI: synthesis://selection-sets/{name}
+		// Extract name from URI: synthesis://resource-sets/{name}
 		uri := request.Params.URI
-		prefix := "synthesis://selection-sets/"
+		prefix := "synthesis://resource-sets/"
 		if !strings.HasPrefix(uri, prefix) {
 			return nil, fmt.Errorf("invalid URI format: %s", uri)
 		}
@@ -405,18 +450,18 @@ func registerSelectionSetTemplate(s *server.MCPServer, db *database.DiskDB) {
 			return nil, fmt.Errorf("name parameter is required")
 		}
 
-		set, err := db.GetSelectionSet(name)
+		set, err := db.GetResourceSet(name)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch selection set: %w", err)
+			return nil, fmt.Errorf("failed to fetch resource set: %w", err)
 		}
 
 		if set == nil {
-			return nil, fmt.Errorf("selection set not found: %s", name)
+			return nil, fmt.Errorf("resource set not found: %s", name)
 		}
 
 		data, err := json.MarshalIndent(set, "", "  ")
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal selection set: %w", err)
+			return nil, fmt.Errorf("failed to marshal resource set: %w", err)
 		}
 
 		return []mcp.ResourceContents{
@@ -429,18 +474,18 @@ func registerSelectionSetTemplate(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-func registerSelectionSetEntriesTemplate(s *server.MCPServer, db *database.DiskDB) {
+func registerResourceSetEntriesTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"synthesis://selection-sets/{name}/entries",
+		"synthesis://resource-sets/{name}/entries",
 		"Selection Set Entries",
-		mcp.WithTemplateDescription("All entries in a selection set"),
+		mcp.WithTemplateDescription("All entries in a resource set"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract name from URI: synthesis://selection-sets/{name}/entries
+		// Extract name from URI: synthesis://resource-sets/{name}/entries
 		uri := request.Params.URI
-		prefix := "synthesis://selection-sets/"
+		prefix := "synthesis://resource-sets/"
 		suffix := "/entries"
 
 		if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, suffix) {
@@ -454,10 +499,13 @@ func registerSelectionSetEntriesTemplate(s *server.MCPServer, db *database.DiskD
 			return nil, fmt.Errorf("name parameter is required")
 		}
 
-		entries, err := db.GetSelectionSetEntries(name)
+		entries, err := db.GetResourceSetEntries(name)
 		if err != nil {
-			return nil, fmt.Errorf("failed to fetch selection set entries: %w", err)
+			return nil, fmt.Errorf("failed to fetch resource set entries: %w", err)
 		}
+
+		// Enrich entries with thumbnail URLs
+		enrichEntriesWithThumbnails(db, entries)
 
 		data, err := json.MarshalIndent(entries, "", "  ")
 		if err != nil {
@@ -825,9 +873,9 @@ func registerMetadataResource(s *server.MCPServer, db *database.DiskDB) {
 			return nil, fmt.Errorf("failed to fetch metadata: %w", err)
 		}
 
-		// Add resource URIs to metadata entries
+		// Add resource URIs and HTTP URLs to metadata entries
 		for _, metadata := range metadataList {
-			metadata.ResourceUri = fmt.Sprintf("synthesis://metadata/%s", metadata.Hash)
+			populateMetadataURLs(metadata)
 		}
 
 		data, err := json.MarshalIndent(map[string]interface{}{
@@ -873,8 +921,8 @@ func registerMetadataByHashTemplate(s *server.MCPServer, db *database.DiskDB) {
 			return nil, fmt.Errorf("metadata not found: %s", hash)
 		}
 
-		// Add resource URI
-		metadata.ResourceUri = fmt.Sprintf("synthesis://metadata/%s", metadata.Hash)
+		// Add resource URI and HTTP URL
+		populateMetadataURLs(metadata)
 
 		data, err := json.MarshalIndent(metadata, "", "  ")
 		if err != nil {
@@ -909,15 +957,19 @@ func registerNodeMetadataTemplate(s *server.MCPServer, db *database.DiskDB) {
 		// Remove prefix and suffix to get path
 		path := strings.TrimPrefix(uri, "synthesis://nodes/")
 		path = strings.TrimSuffix(path, "/metadata")
+		// Add leading slash back for filesystem paths
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
 
 		metadataList, err := db.GetMetadataByPath(path)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch metadata for path: %w", err)
 		}
 
-		// Add resource URIs to metadata entries
+		// Add resource URIs and HTTP URLs to metadata entries
 		for _, metadata := range metadataList {
-			metadata.ResourceUri = fmt.Sprintf("synthesis://metadata/%s", metadata.Hash)
+			populateMetadataURLs(metadata)
 		}
 
 		data, err := json.MarshalIndent(map[string]interface{}{
@@ -956,9 +1008,9 @@ func registerThumbnailsResource(s *server.MCPServer, db *database.DiskDB) {
 			return nil, fmt.Errorf("failed to fetch thumbnails: %w", err)
 		}
 
-		// Add resource URIs to metadata
+		// Add resource URIs and HTTP URLs to metadata
 		for _, metadata := range metadataList {
-			metadata.ResourceUri = fmt.Sprintf("synthesis://metadata/%s", metadata.Hash)
+			populateMetadataURLs(metadata)
 		}
 
 		data, err := json.MarshalIndent(map[string]interface{}{
@@ -994,9 +1046,9 @@ func registerVideoTimelinesResource(s *server.MCPServer, db *database.DiskDB) {
 			return nil, fmt.Errorf("failed to fetch video timelines: %w", err)
 		}
 
-		// Add resource URIs to metadata
+		// Add resource URIs and HTTP URLs to metadata
 		for _, metadata := range metadataList {
-			metadata.ResourceUri = fmt.Sprintf("synthesis://metadata/%s", metadata.Hash)
+			populateMetadataURLs(metadata)
 		}
 
 		data, err := json.MarshalIndent(map[string]interface{}{
@@ -1035,6 +1087,10 @@ func registerNodeThumbnailTemplate(s *server.MCPServer, db *database.DiskDB) {
 		// Remove prefix and suffix to get path
 		path := strings.TrimPrefix(uri, "synthesis://nodes/")
 		path = strings.TrimSuffix(path, "/thumbnail")
+		// Add leading slash back for filesystem paths
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
 
 		metadataList, err := db.GetMetadataByPath(path)
 		if err != nil {
@@ -1045,7 +1101,7 @@ func registerNodeThumbnailTemplate(s *server.MCPServer, db *database.DiskDB) {
 		var thumbnailMetadata *models.Metadata
 		for _, metadata := range metadataList {
 			if metadata.MetadataType == "thumbnail" {
-				metadata.ResourceUri = fmt.Sprintf("synthesis://metadata/%s", metadata.Hash)
+				populateMetadataURLs(metadata)
 				thumbnailMetadata = metadata
 				break
 			}
@@ -1103,7 +1159,7 @@ func registerNodeVideoTimelineTemplate(s *server.MCPServer, db *database.DiskDB)
 		var timelineFrames []*models.Metadata
 		for _, metadata := range metadataList {
 			if metadata.MetadataType == "video-timeline" {
-				metadata.ResourceUri = fmt.Sprintf("synthesis://metadata/%s", metadata.Hash)
+				populateMetadataURLs(metadata)
 				timelineFrames = append(timelineFrames, metadata)
 			}
 		}
@@ -1137,16 +1193,16 @@ func registerNodeVideoTimelineTemplate(s *server.MCPServer, db *database.DiskDB)
 
 func registerResourceSetChildrenTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"synthesis://selection-sets/{name}/children",
+		"synthesis://resource-sets/{name}/children",
 		"Resource Set Children",
 		mcp.WithTemplateDescription("Child resource sets in the DAG (downstream navigation)"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract name from URI: synthesis://selection-sets/{name}/children
+		// Extract name from URI: synthesis://resource-sets/{name}/children
 		uri := request.Params.URI
-		prefix := "synthesis://selection-sets/"
+		prefix := "synthesis://resource-sets/"
 		suffix := "/children"
 
 		if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, suffix) {
@@ -1186,16 +1242,16 @@ func registerResourceSetChildrenTemplate(s *server.MCPServer, db *database.DiskD
 
 func registerResourceSetParentsTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"synthesis://selection-sets/{name}/parents",
+		"synthesis://resource-sets/{name}/parents",
 		"Resource Set Parents",
 		mcp.WithTemplateDescription("Parent resource sets in the DAG (upstream navigation)"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract name from URI: synthesis://selection-sets/{name}/parents
+		// Extract name from URI: synthesis://resource-sets/{name}/parents
 		uri := request.Params.URI
-		prefix := "synthesis://selection-sets/"
+		prefix := "synthesis://resource-sets/"
 		suffix := "/parents"
 
 		if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, suffix) {
@@ -1235,16 +1291,16 @@ func registerResourceSetParentsTemplate(s *server.MCPServer, db *database.DiskDB
 
 func registerResourceSetMetricsTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"synthesis://selection-sets/{name}/metrics/{metric}",
+		"synthesis://resource-sets/{name}/metrics/{metric}",
 		"Resource Set Metric",
 		mcp.WithTemplateDescription("Aggregated metric value for a resource set (size, count, files, directories)"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract name and metric from URI: synthesis://selection-sets/{name}/metrics/{metric}
+		// Extract name and metric from URI: synthesis://resource-sets/{name}/metrics/{metric}
 		uri := request.Params.URI
-		prefix := "synthesis://selection-sets/"
+		prefix := "synthesis://resource-sets/"
 
 		if !strings.HasPrefix(uri, prefix) {
 			return nil, fmt.Errorf("invalid URI format: %s", uri)
@@ -1296,16 +1352,16 @@ func registerResourceSetMetricsTemplate(s *server.MCPServer, db *database.DiskDB
 
 func registerResourceSetStatsTemplate(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
-		"synthesis://selection-sets/{name}/stats",
+		"synthesis://resource-sets/{name}/stats",
 		"Resource Set Statistics",
 		mcp.WithTemplateDescription("Comprehensive statistics for a resource set including entry count, size, and DAG relationships"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
 	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract name from URI: synthesis://selection-sets/{name}/stats
+		// Extract name from URI: synthesis://resource-sets/{name}/stats
 		uri := request.Params.URI
-		prefix := "synthesis://selection-sets/"
+		prefix := "synthesis://resource-sets/"
 		suffix := "/stats"
 
 		if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, suffix) {

@@ -30,7 +30,7 @@ func (d *DiskDB) ResourceSum(name, metric string, includeChildren bool) (*Metric
 		"includeChildren": includeChildren,
 	}).Debug("Computing resource sum")
 
-	set, err := d.GetSelectionSet(name)
+	set, err := d.GetResourceSet(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get resource set: %w", err)
 	}
@@ -111,27 +111,27 @@ func (d *DiskDB) computeMetricForSet(setID int64, metric string) (int64, error) 
 		query = `
 			SELECT COALESCE(SUM(e.size), 0)
 			FROM entries e
-			JOIN selection_set_entries sse ON e.path = sse.entry_path
+			JOIN resource_set_entries sse ON e.path = sse.entry_path
 			WHERE sse.set_id = ?
 		`
 	case "count":
 		query = `
 			SELECT COUNT(*)
-			FROM selection_set_entries
+			FROM resource_set_entries
 			WHERE set_id = ?
 		`
 	case "files":
 		query = `
 			SELECT COUNT(*)
 			FROM entries e
-			JOIN selection_set_entries sse ON e.path = sse.entry_path
+			JOIN resource_set_entries sse ON e.path = sse.entry_path
 			WHERE sse.set_id = ? AND e.kind = 'file'
 		`
 	case "directories":
 		query = `
 			SELECT COUNT(*)
 			FROM entries e
-			JOIN selection_set_entries sse ON e.path = sse.entry_path
+			JOIN resource_set_entries sse ON e.path = sse.entry_path
 			WHERE sse.set_id = ? AND e.kind = 'directory'
 		`
 	default:
@@ -153,7 +153,7 @@ func (d *DiskDB) computeMetricForSetExcluding(setID int64, metric string, exclud
 	// Get all entry paths for this set
 	rows, err := d.db.Query(`
 		SELECT sse.entry_path, e.size, e.kind
-		FROM selection_set_entries sse
+		FROM resource_set_entries sse
 		JOIN entries e ON sse.entry_path = e.path
 		WHERE sse.set_id = ?
 	`, setID)
@@ -202,7 +202,7 @@ func (d *DiskDB) computeMetricForSetExcluding(setID int64, metric string, exclud
 
 // getEntryPathsForSet returns all entry paths in a set
 func (d *DiskDB) getEntryPathsForSet(setID int64) ([]string, error) {
-	rows, err := d.db.Query(`SELECT entry_path FROM selection_set_entries WHERE set_id = ?`, setID)
+	rows, err := d.db.Query(`SELECT entry_path FROM resource_set_entries WHERE set_id = ?`, setID)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +238,7 @@ type ExtMetrics struct {
 
 // GetResourceMetricBreakdown returns detailed metrics breakdown for a resource set
 func (d *DiskDB) GetResourceMetricBreakdown(name string, includeChildren bool) (*ResourceMetricBreakdown, error) {
-	set, err := d.GetSelectionSet(name)
+	set, err := d.GetResourceSet(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get resource set: %w", err)
 	}
@@ -270,7 +270,7 @@ func (d *DiskDB) GetResourceMetricBreakdown(name string, includeChildren bool) (
 		rows, err := d.db.Query(`
 			SELECT e.path, e.size, e.kind
 			FROM entries e
-			JOIN selection_set_entries sse ON e.path = sse.entry_path
+			JOIN resource_set_entries sse ON e.path = sse.entry_path
 			WHERE sse.set_id = ?
 		`, setID)
 		if err != nil {
@@ -354,7 +354,7 @@ type SizeStatistics struct {
 
 // GetResourceSizeDistribution returns size distribution for a resource set
 func (d *DiskDB) GetResourceSizeDistribution(name string, includeChildren bool) (*ResourceSizeDistribution, error) {
-	set, err := d.GetSelectionSet(name)
+	set, err := d.GetResourceSet(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get resource set: %w", err)
 	}
@@ -390,7 +390,7 @@ func (d *DiskDB) GetResourceSizeDistribution(name string, includeChildren bool) 
 		rows, err := d.db.Query(`
 			SELECT e.size
 			FROM entries e
-			JOIN selection_set_entries sse ON e.path = sse.entry_path
+			JOIN resource_set_entries sse ON e.path = sse.entry_path
 			WHERE sse.set_id = ? AND e.kind = 'file'
 		`, set.ID)
 		if err != nil {
@@ -442,7 +442,7 @@ func (d *DiskDB) GetResourceSizeDistribution(name string, includeChildren bool) 
 
 // GetResourceSetEntryCount returns the count of direct entries in a resource set
 func (d *DiskDB) GetResourceSetEntryCount(name string) (int, error) {
-	set, err := d.GetSelectionSet(name)
+	set, err := d.GetResourceSet(name)
 	if err != nil {
 		return 0, err
 	}
@@ -451,7 +451,7 @@ func (d *DiskDB) GetResourceSetEntryCount(name string) (int, error) {
 	}
 
 	var count int
-	err = d.db.QueryRow(`SELECT COUNT(*) FROM selection_set_entries WHERE set_id = ?`, set.ID).Scan(&count)
+	err = d.db.QueryRow(`SELECT COUNT(*) FROM resource_set_entries WHERE set_id = ?`, set.ID).Scan(&count)
 	return count, err
 }
 
@@ -488,7 +488,7 @@ func (d *DiskDB) GetResourceTimeStats(name string, includeChildren bool) (*Resou
 			entries = append(entries, &entryWithPath{path: e.Path, mtime: e.Mtime, ctime: e.Ctime})
 		}
 	} else {
-		set, err := d.GetSelectionSet(name)
+		set, err := d.GetResourceSet(name)
 		if err != nil {
 			return nil, err
 		}
@@ -499,7 +499,7 @@ func (d *DiskDB) GetResourceTimeStats(name string, includeChildren bool) (*Resou
 		rows, err := d.db.Query(`
 			SELECT e.path, e.mtime, e.ctime
 			FROM entries e
-			JOIN selection_set_entries sse ON e.path = sse.entry_path
+			JOIN resource_set_entries sse ON e.path = sse.entry_path
 			WHERE sse.set_id = ?
 		`, set.ID)
 		if err != nil {

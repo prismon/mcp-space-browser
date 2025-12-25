@@ -32,8 +32,13 @@ type ItemInfo interface {
 	// Path returns the full path to the item
 	Path() string
 
-	// Size returns the size in bytes (for files) or 0 (for directories)
+	// Size returns the logical size in bytes (for files) or 0 (for directories)
 	Size() int64
+
+	// Blocks returns the disk usage in bytes (st_blocks * 512)
+	// This represents actual disk space consumed, which can differ from Size()
+	// due to sparse files, block alignment, or filesystem overhead
+	Blocks() int64
 
 	// IsDir reports whether the item is a directory
 	IsDir() bool

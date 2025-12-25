@@ -147,8 +147,8 @@ func (p *Plan) Validate() error {
 
 	// Validate outcomes (use existing RuleOutcome validation)
 	for i, outcome := range p.Outcomes {
-		if outcome.SelectionSetName == "" {
-			return fmt.Errorf("outcome[%d]: selectionSetName is required", i)
+		if outcome.ResourceSetName == "" {
+			return fmt.Errorf("outcome[%d]: resourceSetName is required", i)
 		}
 		if outcome.Type != "selection_set" && outcome.Type != "classifier" && outcome.Type != "chained" {
 			return fmt.Errorf("outcome[%d]: invalid outcome type: %s", i, outcome.Type)

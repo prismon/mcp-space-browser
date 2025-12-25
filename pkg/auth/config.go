@@ -21,10 +21,11 @@ type Config struct {
 
 // ServerConfig holds server settings
 type ServerConfig struct {
-	Port         int    `yaml:"port"`
-	Host         string `yaml:"host"`
-	ExternalHost string `yaml:"external_host"`
-	BaseURL      string `yaml:"base_url"` // Deprecated: use ExternalHost and Port instead
+	Port         int      `yaml:"port"`
+	Host         string   `yaml:"host"`
+	ExternalHost string   `yaml:"external_host"`
+	BaseURL      string   `yaml:"base_url"` // Deprecated: use ExternalHost and Port instead
+	CORSOrigins  []string `yaml:"cors_origins"` // Allowed CORS origins, use ["*"] to allow all
 }
 
 // DatabaseConfig holds database settings
@@ -140,6 +141,17 @@ func applyEnvOverrides(config *Config) {
 	}
 	if baseURL := os.Getenv("SERVER_BASE_URL"); baseURL != "" {
 		config.Server.BaseURL = baseURL
+	}
+	if corsOrigins := os.Getenv("CORS_ORIGINS"); corsOrigins != "" {
+		// Parse comma-separated list of origins
+		origins := strings.Split(corsOrigins, ",")
+		config.Server.CORSOrigins = make([]string, 0, len(origins))
+		for _, origin := range origins {
+			trimmed := strings.TrimSpace(origin)
+			if trimmed != "" {
+				config.Server.CORSOrigins = append(config.Server.CORSOrigins, trimmed)
+			}
+		}
 	}
 
 	// Database overrides

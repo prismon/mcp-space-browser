@@ -728,7 +728,7 @@ func (e *Executor) resolveSource(source models.PlanSource) ([]*models.Entry, err
     case "filesystem":
         return e.resolveFilesystemSource(source)
     case "selection_set":
-        return e.resolveSelectionSetSource(source)
+        return e.resolveResourceSetSource(source)
     case "query":
         return e.resolveQuerySource(source)
     default:
@@ -751,12 +751,12 @@ func (e *Executor) resolveFilesystemSource(source models.PlanSource) ([]*models.
     return allEntries, nil
 }
 
-func (e *Executor) resolveSelectionSetSource(source models.PlanSource) ([]*models.Entry, error) {
+func (e *Executor) resolveResourceSetSource(source models.PlanSource) ([]*models.Entry, error) {
     if source.SourceRef == nil {
         return nil, fmt.Errorf("selection_set source requires source_ref")
     }
 
-    return e.db.GetSelectionSetEntries(*source.SourceRef)
+    return e.db.GetResourceSetEntries(*source.SourceRef)
 }
 
 func (e *Executor) resolveQuerySource(source models.PlanSource) ([]*models.Entry, error) {
@@ -979,7 +979,7 @@ func (oa *OutcomeApplier) ApplyAll(entries []*models.Entry, outcomes []models.Ru
 func (oa *OutcomeApplier) Apply(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) (int, error) {
     switch outcome.Type {
     case "selection_set":
-        return oa.applySelectionSet(entries, outcome, execID, planID)
+        return oa.applyResourceSet(entries, outcome, execID, planID)
     case "classifier":
         return oa.applyClassifier(entries, outcome, execID, planID)
     default:
@@ -987,37 +987,37 @@ func (oa *OutcomeApplier) Apply(entries []*models.Entry, outcome models.RuleOutc
     }
 }
 
-func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) (int, error) {
-    // RuleOutcome.SelectionSetName is always required (string, not *string)
-    setName := outcome.SelectionSetName
+func (oa *OutcomeApplier) applyResourceSet(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) (int, error) {
+    // RuleOutcome.ResourceSetName is always required (string, not *string)
+    setName := outcome.ResourceSetName
     paths := make([]string, len(entries))
     for i, entry := range entries {
         paths[i] = entry.Path
     }
 
-    // Ensure selection set exists
-    _, err := oa.db.GetSelectionSet(setName)
+    // Ensure resource set exists
+    _, err := oa.db.GetResourceSet(setName)
     if err != nil {
         // Create if doesn't exist
-        if err := oa.db.CreateSelectionSet(&models.SelectionSet{
+        if err := oa.db.CreateResourceSet(&models.ResourceSet{
             Name:        setName,
             Description: stringPtr(fmt.Sprintf("Auto-created by plan")),
         }); err != nil {
-            return 0, fmt.Errorf("failed to create selection set: %w", err)
+            return 0, fmt.Errorf("failed to create resource set: %w", err)
         }
-        oa.logger.Infof("Created selection set: %s", setName)
+        oa.logger.Infof("Created resource set: %s", setName)
     }
 
     // Apply operation
     var opErr error
     switch *outcome.Operation {
     case "add":
-        opErr = oa.db.AddToSelectionSet(setName, paths)
+        opErr = oa.db.AddToResourceSet(setName, paths)
     case "remove":
-        opErr = oa.db.RemoveFromSelectionSet(setName, paths)
+        opErr = oa.db.RemoveFromResourceSet(setName, paths)
     case "replace":
         // Clear and re-add
-        existing, err := oa.db.GetSelectionSetEntries(setName)
+        existing, err := oa.db.GetResourceSetEntries(setName)
         if err != nil {
             return 0, fmt.Errorf("failed to get existing entries: %w", err)
         }
@@ -1025,10 +1025,10 @@ func (oa *OutcomeApplier) applySelectionSet(entries []*models.Entry, outcome mod
         for i, e := range existing {
             existingPaths[i] = e.Path
         }
-        if err := oa.db.RemoveFromSelectionSet(setName, existingPaths); err != nil {
+        if err := oa.db.RemoveFromResourceSet(setName, existingPaths); err != nil {
             return 0, fmt.Errorf("failed to clear set: %w", err)
         }
-        opErr = oa.db.AddToSelectionSet(setName, paths)
+        opErr = oa.db.AddToResourceSet(setName, paths)
     default:
         return 0, fmt.Errorf("invalid operation: %s", *outcome.Operation)
     }
@@ -1195,7 +1195,7 @@ func TestExecutePlan_OneShot(t *testing.T) {
         Outcomes: []models.RuleOutcome{
             {
                 Type:             "selection_set",
-                SelectionSetName: &setName,
+                ResourceSetName: &setName,
                 Operation:        &operation,
             },
         },
@@ -1214,8 +1214,8 @@ func TestExecutePlan_OneShot(t *testing.T) {
     assert.Equal(t, 1, exec.EntriesMatched)
     assert.Equal(t, 1, exec.OutcomesApplied)
 
-    // Check selection set
-    entries, err := db.GetSelectionSetEntries(setName)
+    // Check resource set
+    entries, err := db.GetResourceSetEntries(setName)
     require.NoError(t, err)
     assert.Len(t, entries, 1)
     assert.Contains(t, entries[0].Path, "large.mp4")

@@ -14,7 +14,7 @@ func createTestOutcome() models.RuleOutcome {
 	addOp := "add"
 	return models.RuleOutcome{
 		Type:             "selection_set",
-		SelectionSetName: "test-set",
+		ResourceSetName: "test-set",
 		Operation:        &addOp,
 	}
 }

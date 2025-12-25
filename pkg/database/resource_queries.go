@@ -41,7 +41,7 @@ func (d *DiskDB) ResourceTimeRange(name, field string, min, max *time.Time, incl
 			return nil, fmt.Errorf("failed to get entries: %w", err)
 		}
 	} else {
-		entries, err = d.GetSelectionSetEntries(name)
+		entries, err = d.GetResourceSetEntries(name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get entries: %w", err)
 		}
@@ -78,7 +78,7 @@ func (d *DiskDB) ResourceTimeRange(name, field string, min, max *time.Time, incl
 
 // filterByAddedAt filters entries by when they were added to the resource set
 func (d *DiskDB) filterByAddedAt(name string, min, max *time.Time, includeChildren bool) ([]*models.Entry, error) {
-	set, err := d.GetSelectionSet(name)
+	set, err := d.GetResourceSet(name)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +109,7 @@ func (d *DiskDB) filterByAddedAt(name string, min, max *time.Time, includeChildr
 	query := fmt.Sprintf(`
 		SELECT DISTINCT e.id, e.path, e.parent, e.size, e.kind, e.ctime, e.mtime, e.last_scanned
 		FROM entries e
-		JOIN selection_set_entries sse ON e.path = sse.entry_path
+		JOIN resource_set_entries sse ON e.path = sse.entry_path
 		WHERE sse.set_id IN (%s)
 	`, strings.Join(placeholders, ","))
 
@@ -157,7 +157,7 @@ func (d *DiskDB) ResourceMetricRange(name, metric string, min, max *int64, inclu
 			return nil, fmt.Errorf("failed to get entries: %w", err)
 		}
 	} else {
-		entries, err = d.GetSelectionSetEntries(name)
+		entries, err = d.GetResourceSetEntries(name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get entries: %w", err)
 		}
@@ -205,7 +205,7 @@ func (d *DiskDB) ResourceIs(name, field, value string, includeChildren bool) ([]
 			return nil, fmt.Errorf("failed to get entries: %w", err)
 		}
 	} else {
-		entries, err = d.GetSelectionSetEntries(name)
+		entries, err = d.GetResourceSetEntries(name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get entries: %w", err)
 		}
@@ -258,7 +258,7 @@ func (d *DiskDB) ResourceFuzzyMatch(name, field, pattern, matchType string, incl
 			return nil, fmt.Errorf("failed to get entries: %w", err)
 		}
 	} else {
-		entries, err = d.GetSelectionSetEntries(name)
+		entries, err = d.GetResourceSetEntries(name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get entries: %w", err)
 		}
@@ -362,7 +362,7 @@ func (d *DiskDB) ResourceSearch(params ResourceSearchParams) (*ResourceSearchRes
 			return nil, fmt.Errorf("failed to get entries: %w", err)
 		}
 	} else {
-		entries, err = d.GetSelectionSetEntries(params.Name)
+		entries, err = d.GetResourceSetEntries(params.Name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get entries: %w", err)
 		}

@@ -467,6 +467,7 @@ func (j *DirectoryScanJob) Execute(ctx context.Context) error {
 		Path:        j.path,
 		Parent:      parentPtr,
 		Size:        info.Size(),
+		Blocks:      info.Blocks(),
 		Kind:        "file",
 		Ctime:       info.ModTime().Unix(),
 		Mtime:       info.ModTime().Unix(),

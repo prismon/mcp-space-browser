@@ -12,8 +12,8 @@ import (
 // Helper function to set up test data for resource queries
 func setupResourceQueryTestData(t *testing.T, db *DiskDB) {
 	// Create selection set
-	set := &models.SelectionSet{Name: "test-resources"}
-	_, err := db.CreateSelectionSet(set)
+	set := &models.ResourceSet{Name: "test-resources"}
+	_, err := db.CreateResourceSet(set)
 	require.NoError(t, err)
 
 	// Create test entries
@@ -33,7 +33,7 @@ func setupResourceQueryTestData(t *testing.T, db *DiskDB) {
 
 	// Add entries to selection set
 	paths := []string{"/test/file1.txt", "/test/file2.jpg", "/test/file3.mp4", "/test/subdir", "/test/subdir/file4.txt"}
-	err = db.AddToSelectionSet("test-resources", paths)
+	err = db.AddToResourceSet("test-resources", paths)
 	require.NoError(t, err)
 }
 

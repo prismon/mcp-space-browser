@@ -23,11 +23,13 @@ type IndexJob struct {
 
 // IndexJobMetadata contains metadata about an indexing job
 type IndexJobMetadata struct {
-	FilesProcessed       int   `json:"filesProcessed"`
-	DirectoriesProcessed int   `json:"directoriesProcessed"`
-	TotalSize            int64 `json:"totalSize"`
-	ErrorCount           int   `json:"errorCount"`
-	WorkerCount          int   `json:"workerCount"`
+	FilesProcessed       int    `json:"filesProcessed"`
+	DirectoriesProcessed int    `json:"directoriesProcessed"`
+	TotalSize            int64  `json:"totalSize"`
+	ErrorCount           int    `json:"errorCount"`
+	WorkerCount          int    `json:"workerCount"`
+	Skipped              bool   `json:"skipped,omitempty"`
+	SkipReason           string `json:"skipReason,omitempty"`
 }
 
 // InitJobTables creates the jobs table

@@ -4,20 +4,22 @@ import "time"
 
 // Entry represents a filesystem entry (file or directory)
 type Entry struct {
-	ID          int64  `db:"id" json:"id,omitempty"`
-	Path        string `db:"path" json:"path"`
-	Parent      *string `db:"parent" json:"parent"`
-	Size        int64  `db:"size" json:"size"`
-	Kind        string `db:"kind" json:"kind"` // "file" or "directory"
-	Ctime       int64  `db:"ctime" json:"ctime"` // Unix timestamp in seconds
-	Mtime       int64  `db:"mtime" json:"mtime"` // Unix timestamp in seconds
-	LastScanned int64  `db:"last_scanned" json:"last_scanned"`
-	Dirty       int    `db:"dirty" json:"dirty,omitempty"`
+	ID           int64   `db:"id" json:"id,omitempty"`
+	Path         string  `db:"path" json:"path"`
+	Parent       *string `db:"parent" json:"parent"`
+	Size         int64   `db:"size" json:"size"`             // Logical file size in bytes
+	Blocks       int64   `db:"blocks" json:"blocks"`         // Disk usage in bytes (st_blocks * 512)
+	Kind         string  `db:"kind" json:"kind"`             // "file" or "directory"
+	Ctime        int64   `db:"ctime" json:"ctime"`           // Unix timestamp in seconds
+	Mtime        int64   `db:"mtime" json:"mtime"`           // Unix timestamp in seconds
+	LastScanned  int64   `db:"last_scanned" json:"last_scanned"`
+	Dirty        int     `db:"dirty" json:"dirty,omitempty"`
+	ThumbnailUrl string  `db:"-" json:"thumbnail_url,omitempty"` // HTTP URL for thumbnail (computed)
 }
 
-// SelectionSet represents a named group of files
+// ResourceSet represents a named group of files
 // Pure item storage - only cares about WHAT items and WHEN they were added
-type SelectionSet struct {
+type ResourceSet struct {
 	ID          int64   `db:"id" json:"id,omitempty"`
 	Name        string  `db:"name" json:"name"`
 	Description *string `db:"description" json:"description,omitempty"`
@@ -40,7 +42,7 @@ type Query struct {
 	Description        *string `db:"description" json:"description,omitempty"`
 	QueryType          string  `db:"query_type" json:"query_type"` // "file_filter" or "custom_script"
 	QueryJSON          string  `db:"query_json" json:"query_json"`
-	TargetSelectionSet *string `db:"target_selection_set" json:"target_selection_set,omitempty"`
+	TargetResourceSet *string `db:"target_resource_set" json:"target_resource_set,omitempty"`
 	UpdateMode         *string `db:"update_mode" json:"update_mode,omitempty"` // "replace", "append", "merge"
 	CreatedAt          int64   `db:"created_at" json:"created_at"`
 	UpdatedAt          int64   `db:"updated_at" json:"updated_at"`
@@ -140,6 +142,7 @@ type Metadata struct {
 	MetadataJson string `db:"metadata_json" json:"metadata_json,omitempty"` // JSON metadata (frame number, etc.)
 	CreatedAt    int64  `db:"created_at" json:"created_at"`         // Unix timestamp
 	ResourceUri  string `db:"-" json:"resource_uri,omitempty"`      // MCP resource URI (computed)
+	HttpUrl      string `db:"-" json:"http_url,omitempty"`          // HTTP URL for fetching (computed)
 }
 
 // Rule represents a rule definition
@@ -181,10 +184,10 @@ type RuleCondition struct {
 }
 
 // RuleOutcome represents the outcome of a rule
-// IMPORTANT: All outcomes must have a SelectionSetName to ensure traceability
+// IMPORTANT: All outcomes must have a ResourceSetName to ensure traceability
 type RuleOutcome struct {
 	Type             string         `json:"type"` // "selection_set", "classifier", "chained"
-	SelectionSetName string         `json:"selectionSetName"` // REQUIRED for all outcome types
+	ResourceSetName string         `json:"selectionSetName"` // REQUIRED for all outcome types
 
 	// For selection_set outcome
 	Operation *string `json:"operation,omitempty"` // "add", "remove"
@@ -204,7 +207,7 @@ type RuleOutcome struct {
 type RuleExecution struct {
 	ID               int64   `db:"id" json:"id,omitempty"`
 	RuleID           int64   `db:"rule_id" json:"rule_id"`
-	SelectionSetID   int64   `db:"selection_set_id" json:"selection_set_id"`
+	ResourceSetID   int64   `db:"selection_set_id" json:"selection_set_id"`
 	ExecutedAt       int64   `db:"executed_at" json:"executed_at"`
 	EntriesMatched   int     `db:"entries_matched" json:"entries_matched"`
 	EntriesProcessed int     `db:"entries_processed" json:"entries_processed"`
@@ -218,7 +221,7 @@ type RuleExecution struct {
 type RuleOutcomeRecord struct {
 	ID             int64   `db:"id" json:"id,omitempty"`
 	ExecutionID    int64   `db:"execution_id" json:"execution_id"`
-	SelectionSetID int64   `db:"selection_set_id" json:"selection_set_id"` // ALWAYS required
+	ResourceSetID int64   `db:"selection_set_id" json:"selection_set_id"` // ALWAYS required
 	EntryPath      string  `db:"entry_path" json:"entry_path"`
 	OutcomeType    string  `db:"outcome_type" json:"outcome_type"`
 	OutcomeData    *string `db:"outcome_data" json:"outcome_data,omitempty"`

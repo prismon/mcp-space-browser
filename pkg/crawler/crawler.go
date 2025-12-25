@@ -96,6 +96,13 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 		return nil, err
 	}
 
+	// Create progress tracker if we have a job ID - this batches progress updates
+	// to avoid lock contention during indexing
+	var progressTracker *database.ProgressTracker
+	if jobID > 0 && db.WriteQueue() != nil {
+		progressTracker = database.NewProgressTracker(jobID, db.WriteQueue(), nil)
+	}
+
 	// Check if the path was recently scanned (unless Force is set)
 	if !opts.Force && opts.MaxAge > 0 {
 		scanInfo, err := db.GetPathScanInfo(abs)
@@ -114,15 +121,17 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 					"entryCount":  scanInfo.EntryCount,
 				}).Info("Skipping indexing - path was recently scanned")
 
-				// Update job status if provided
-				if jobID > 0 {
-					if err := db.UpdateIndexJobProgress(jobID, 100, &database.IndexJobMetadata{
+				// Update job status if provided (use progress tracker to avoid lock contention)
+				if progressTracker != nil {
+					progressTracker.Update(100, &database.IndexJobMetadata{
 						FilesProcessed:       0,
 						DirectoriesProcessed: 0,
 						TotalSize:            0,
 						ErrorCount:           0,
-					}); err != nil {
-						log.WithError(err).WithField("jobID", jobID).Error("Failed to update job progress")
+					})
+					// Force flush since we're returning immediately
+					if err := progressTracker.FlushSync(5 * time.Second); err != nil {
+						log.WithError(err).WithField("jobID", jobID).Error("Failed to flush job progress")
 					}
 				}
 
@@ -174,20 +183,18 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 		"estimate": totalEstimate,
 	}).Info("Estimation complete")
 
-	// Create progress tracker
+	// Create progress tracker (source package tracker for estimate calculations)
 	tracker := source.NewProgressTracker(totalEstimate)
 	tracker.SetPhase("crawling")
 
 	// Update job progress: estimation complete (5%)
-	if jobID > 0 {
-		if err := db.UpdateIndexJobProgress(jobID, 5, &database.IndexJobMetadata{
+	if progressTracker != nil {
+		progressTracker.Update(5, &database.IndexJobMetadata{
 			FilesProcessed:       0,
 			DirectoriesProcessed: 0,
 			TotalSize:            0,
 			ErrorCount:           0,
-		}); err != nil {
-			log.WithError(err).WithField("jobID", jobID).Error("Failed to update job progress")
-		}
+		})
 	}
 
 	stack := []string{abs}
@@ -259,6 +266,7 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 			Path:        current,
 			Parent:      parentPtr,
 			Size:        info.Size(),
+			Blocks:      info.Blocks(),
 			Kind:        "file",
 			Ctime:       info.ModTime().Unix(), // Go doesn't expose ctime directly
 			Mtime:       info.ModTime().Unix(),
@@ -360,19 +368,18 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 			lastProgressLog = now
 		}
 
-		// Update job progress in database every 5 seconds
-		if jobID > 0 && now.Sub(lastProgressUpdate) > 5*time.Second {
-			// Use progress tracker for accurate percentage
+		// Update job progress - the ProgressTracker batches these updates in memory
+		// and flushes to the database through the WriteQueue to avoid lock contention
+		if progressTracker != nil && now.Sub(lastProgressUpdate) > 5*time.Second {
+			// Use source tracker for accurate percentage
 			progress := tracker.GetPercentComplete()
 
-			if err := db.UpdateIndexJobProgress(jobID, progress, &database.IndexJobMetadata{
+			progressTracker.Update(progress, &database.IndexJobMetadata{
 				FilesProcessed:       stats.FilesProcessed,
 				DirectoriesProcessed: stats.DirectoriesProcessed,
 				TotalSize:            stats.TotalSize,
 				ErrorCount:           stats.Errors,
-			}); err != nil {
-				log.WithError(err).WithField("jobID", jobID).Error("Failed to update job progress")
-			}
+			})
 			lastProgressUpdate = now
 		}
 	}
@@ -411,15 +418,13 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 		"runID": runID,
 	}).Info("Deleting stale entries")
 
-	if jobID > 0 {
-		if err := db.UpdateIndexJobProgress(jobID, 87, &database.IndexJobMetadata{
+	if progressTracker != nil {
+		progressTracker.Update(87, &database.IndexJobMetadata{
 			FilesProcessed:       stats.FilesProcessed,
 			DirectoriesProcessed: stats.DirectoriesProcessed,
 			TotalSize:            stats.TotalSize,
 			ErrorCount:           stats.Errors,
-		}); err != nil {
-			log.WithError(err).WithField("jobID", jobID).Error("Failed to update job progress")
-		}
+		})
 	}
 
 	if err := db.DeleteStale(abs, runID); err != nil {
@@ -430,19 +435,35 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 	tracker.SetPhase("aggregation")
 	log.WithField("root", abs).Info("Computing aggregate sizes")
 
-	if jobID > 0 {
-		if err := db.UpdateIndexJobProgress(jobID, 92, &database.IndexJobMetadata{
+	if progressTracker != nil {
+		progressTracker.Update(92, &database.IndexJobMetadata{
 			FilesProcessed:       stats.FilesProcessed,
 			DirectoriesProcessed: stats.DirectoriesProcessed,
 			TotalSize:            stats.TotalSize,
 			ErrorCount:           stats.Errors,
-		}); err != nil {
-			log.WithError(err).WithField("jobID", jobID).Error("Failed to update job progress")
-		}
+		})
 	}
 
 	if err := db.ComputeAggregates(abs); err != nil {
 		return nil, fmt.Errorf("failed to compute aggregates: %w", err)
+	}
+
+	// Post-index validation: check if any entries were indexed
+	entryCount, err := db.GetEntryCount(abs)
+	if err != nil {
+		log.WithError(err).WithField("root", abs).Warn("Failed to get entry count for validation")
+	} else if entryCount == 0 {
+		log.WithFields(logrus.Fields{
+			"root":               abs,
+			"filesProcessed":     stats.FilesProcessed,
+			"directoriesProcessed": stats.DirectoriesProcessed,
+			"errors":             stats.Errors,
+		}).Warn("Index completed but no entries in database - possible issue with path permissions or empty directory")
+	} else {
+		log.WithFields(logrus.Fields{
+			"root":       abs,
+			"entryCount": entryCount,
+		}).Debug("Post-index validation: entries present")
 	}
 
 	// Complete
@@ -450,14 +471,16 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 	stats.EndTime = time.Now()
 	stats.Duration = stats.EndTime.Sub(stats.StartTime)
 
-	if jobID > 0 {
-		if err := db.UpdateIndexJobProgress(jobID, 100, &database.IndexJobMetadata{
+	if progressTracker != nil {
+		progressTracker.Update(100, &database.IndexJobMetadata{
 			FilesProcessed:       stats.FilesProcessed,
 			DirectoriesProcessed: stats.DirectoriesProcessed,
 			TotalSize:            stats.TotalSize,
 			ErrorCount:           stats.Errors,
-		}); err != nil {
-			log.WithError(err).WithField("jobID", jobID).Error("Failed to update job progress")
+		})
+		// Ensure final progress is flushed to database before returning
+		if err := progressTracker.FlushSync(5 * time.Second); err != nil {
+			log.WithError(err).WithField("jobID", jobID).Error("Failed to flush final job progress")
 		}
 	}
 

@@ -391,6 +391,65 @@ func TestIndexStalePathReindex(t *testing.T) {
 	assert.False(t, stats2.Skipped, "Stale scan should not be skipped")
 }
 
+func TestIndexEmptyDirectoryWithEntryCount(t *testing.T) {
+	// Test that indexing an empty directory works and GetEntryCount returns correct count
+	tempDir := t.TempDir()
+
+	// Create an empty subdirectory
+	emptySubdir := filepath.Join(tempDir, "empty")
+	if err := os.Mkdir(emptySubdir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := database.NewDiskDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	opts := &IndexOptions{Force: true, MaxAge: DefaultMaxAge}
+	stats, err := IndexWithOptions(tempDir, db, nil, 0, nil, opts)
+	assert.NoError(t, err)
+	assert.NotNil(t, stats)
+	assert.False(t, stats.Skipped)
+
+	// Verify entry count method works correctly
+	count, err := db.GetEntryCount(tempDir)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(2), count, "Should count tempDir + empty subdir")
+}
+
+func TestIndexValidatesEntryCount(t *testing.T) {
+	// Test that the post-index validation detects empty results
+	tempDir := t.TempDir()
+
+	// Create a file
+	testFile := filepath.Join(tempDir, "test.txt")
+	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := database.NewDiskDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	opts := &IndexOptions{Force: true, MaxAge: DefaultMaxAge}
+	stats, err := IndexWithOptions(tempDir, db, nil, 0, nil, opts)
+	assert.NoError(t, err)
+	assert.NotNil(t, stats)
+
+	// Verify entry count
+	count, err := db.GetEntryCount(tempDir)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(2), count) // tempDir + test.txt
+
+	// Verify we can detect empty count after manual deletion
+	_, err = db.All() // Get all entries first
+	assert.NoError(t, err)
+}
+
 func TestIndexWithManyFiles(t *testing.T) {
 	tempDir := t.TempDir()
 

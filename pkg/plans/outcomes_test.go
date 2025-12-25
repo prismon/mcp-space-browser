@@ -61,34 +61,34 @@ func TestOutcomeApplier_ApplyAll_ConfigurationError(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown outcome type")
 }
 
-func TestOutcomeApplier_Apply_SelectionSet_MissingName(t *testing.T) {
+func TestOutcomeApplier_Apply_ResourceSet_MissingName(t *testing.T) {
 	oa, db := setupOutcomeTest(t)
 	defer db.Close()
 
 	entries := []*models.Entry{{Path: "/test/file.txt"}}
 	outcome := models.RuleOutcome{
 		Type:             "selection_set",
-		SelectionSetName: "", // Missing name
+		ResourceSetName: "", // Missing name
 	}
 
 	_, err := oa.Apply(entries, outcome, 1, 1)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "selectionSetName is required")
+	assert.Contains(t, err.Error(), "resourceSetName is required")
 }
 
-func TestOutcomeApplier_Apply_SelectionSet_InvalidOperation(t *testing.T) {
+func TestOutcomeApplier_Apply_ResourceSet_InvalidOperation(t *testing.T) {
 	oa, db := setupOutcomeTest(t)
 	defer db.Close()
 
-	// Create a selection set first
-	_, err := db.CreateSelectionSet(&models.SelectionSet{Name: "test-set"})
+	// Create a resource set first
+	_, err := db.CreateResourceSet(&models.ResourceSet{Name: "test-set"})
 	require.NoError(t, err)
 
 	entries := []*models.Entry{{Path: "/test/file.txt"}}
 	invalidOp := "invalid_op"
 	outcome := models.RuleOutcome{
 		Type:             "selection_set",
-		SelectionSetName: "test-set",
+		ResourceSetName: "test-set",
 		Operation:        &invalidOp,
 	}
 
@@ -97,7 +97,7 @@ func TestOutcomeApplier_Apply_SelectionSet_InvalidOperation(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid operation")
 }
 
-func TestOutcomeApplier_Apply_SelectionSet_AddOperation(t *testing.T) {
+func TestOutcomeApplier_Apply_ResourceSet_AddOperation(t *testing.T) {
 	oa, db := setupOutcomeTest(t)
 	defer db.Close()
 
@@ -109,7 +109,7 @@ func TestOutcomeApplier_Apply_SelectionSet_AddOperation(t *testing.T) {
 	addOp := "add"
 	outcome := models.RuleOutcome{
 		Type:             "selection_set",
-		SelectionSetName: "test-add-set",
+		ResourceSetName: "test-add-set",
 		Operation:        &addOp,
 	}
 
@@ -118,30 +118,30 @@ func TestOutcomeApplier_Apply_SelectionSet_AddOperation(t *testing.T) {
 	assert.Equal(t, 1, count)
 
 	// Verify entry was added
-	setEntries, err := db.GetSelectionSetEntries("test-add-set")
+	setEntries, err := db.GetResourceSetEntries("test-add-set")
 	require.NoError(t, err)
 	assert.Len(t, setEntries, 1)
 }
 
-func TestOutcomeApplier_Apply_SelectionSet_RemoveOperation(t *testing.T) {
+func TestOutcomeApplier_Apply_ResourceSet_RemoveOperation(t *testing.T) {
 	oa, db := setupOutcomeTest(t)
 	defer db.Close()
 
-	// Insert test entry and add to selection set first
+	// Insert test entry and add to resource set first
 	err := db.InsertOrUpdate(&models.Entry{Path: "/test/file.txt", Kind: "file", Size: 100})
 	require.NoError(t, err)
 
-	_, err = db.CreateSelectionSet(&models.SelectionSet{Name: "test-remove-set"})
+	_, err = db.CreateResourceSet(&models.ResourceSet{Name: "test-remove-set"})
 	require.NoError(t, err)
 
-	err = db.AddToSelectionSet("test-remove-set", []string{"/test/file.txt"})
+	err = db.AddToResourceSet("test-remove-set", []string{"/test/file.txt"})
 	require.NoError(t, err)
 
 	entries := []*models.Entry{{Path: "/test/file.txt"}}
 	removeOp := "remove"
 	outcome := models.RuleOutcome{
 		Type:             "selection_set",
-		SelectionSetName: "test-remove-set",
+		ResourceSetName: "test-remove-set",
 		Operation:        &removeOp,
 	}
 
@@ -150,7 +150,7 @@ func TestOutcomeApplier_Apply_SelectionSet_RemoveOperation(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
-func TestOutcomeApplier_Apply_SelectionSet_DefaultOperation(t *testing.T) {
+func TestOutcomeApplier_Apply_ResourceSet_DefaultOperation(t *testing.T) {
 	oa, db := setupOutcomeTest(t)
 	defer db.Close()
 
@@ -161,7 +161,7 @@ func TestOutcomeApplier_Apply_SelectionSet_DefaultOperation(t *testing.T) {
 	entries := []*models.Entry{{Path: "/test/file.txt"}}
 	outcome := models.RuleOutcome{
 		Type:             "selection_set",
-		SelectionSetName: "test-default-set",
+		ResourceSetName: "test-default-set",
 		// No operation specified - should default to "add"
 	}
 
@@ -232,12 +232,12 @@ func TestOutcomeApplier_Apply_Chained_Success(t *testing.T) {
 		Outcomes: []*models.RuleOutcome{
 			{
 				Type:             "selection_set",
-				SelectionSetName: "chained-set-1",
+				ResourceSetName: "chained-set-1",
 				Operation:        &addOp,
 			},
 			{
 				Type:             "selection_set",
-				SelectionSetName: "chained-set-2",
+				ResourceSetName: "chained-set-2",
 				Operation:        &addOp,
 			},
 		},
@@ -262,12 +262,12 @@ func TestOutcomeApplier_Apply_Chained_StopOnError(t *testing.T) {
 		Outcomes: []*models.RuleOutcome{
 			{
 				Type:             "selection_set",
-				SelectionSetName: "test-set",
+				ResourceSetName: "test-set",
 				Operation:        &invalidOp, // This will fail
 			},
 			{
 				Type:             "selection_set",
-				SelectionSetName: "test-set-2",
+				ResourceSetName: "test-set-2",
 				Operation:        &addOp, // Should not be reached
 			},
 		},
@@ -295,12 +295,12 @@ func TestOutcomeApplier_Apply_Chained_ContinueOnError(t *testing.T) {
 		Outcomes: []*models.RuleOutcome{
 			{
 				Type:             "selection_set",
-				SelectionSetName: "test-set-1",
+				ResourceSetName: "test-set-1",
 				Operation:        &invalidOp, // This will fail
 			},
 			{
 				Type:             "selection_set",
-				SelectionSetName: "test-set-2",
+				ResourceSetName: "test-set-2",
 				Operation:        &addOp, // Should still be executed
 			},
 		},
@@ -324,12 +324,12 @@ func TestOutcomeApplier_ApplyAll_MultipleOutcomes(t *testing.T) {
 	outcomes := []models.RuleOutcome{
 		{
 			Type:             "selection_set",
-			SelectionSetName: "set-1",
+			ResourceSetName: "set-1",
 			Operation:        &addOp,
 		},
 		{
 			Type:             "selection_set",
-			SelectionSetName: "set-2",
+			ResourceSetName: "set-2",
 			Operation:        &addOp,
 		},
 	}

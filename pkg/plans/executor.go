@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/prismon/mcp-space-browser/internal/models"
+	"github.com/prismon/mcp-space-browser/pkg/classifier"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/sirupsen/logrus"
 )
@@ -25,6 +26,11 @@ func NewExecutor(db *database.DiskDB, logger *logrus.Entry) *Executor {
 		applier:   NewOutcomeApplier(db, logger),
 		logger:    logger.WithField("component", "plan_executor"),
 	}
+}
+
+// SetProcessor sets the classifier processor for thumbnail generation in outcomes
+func (e *Executor) SetProcessor(processor *classifier.Processor) {
+	e.applier.SetProcessor(processor)
 }
 
 // Execute runs a plan and returns the execution record
@@ -161,7 +167,7 @@ func (e *Executor) resolveSource(source models.PlanSource) ([]*models.Entry, err
 	case "filesystem":
 		return e.resolveFilesystemSource(source)
 	case "selection_set":
-		return e.resolveSelectionSetSource(source)
+		return e.resolveResourceSetSource(source)
 	case "query":
 		return e.resolveQuerySource(source)
 	default:
@@ -232,12 +238,12 @@ func (e *Executor) collectEntriesFromTree(node *models.TreeNode, entries *[]*mod
 	}
 }
 
-func (e *Executor) resolveSelectionSetSource(source models.PlanSource) ([]*models.Entry, error) {
+func (e *Executor) resolveResourceSetSource(source models.PlanSource) ([]*models.Entry, error) {
 	if source.SourceRef == nil {
 		return nil, fmt.Errorf("selection_set source requires source_ref")
 	}
 
-	return e.db.GetSelectionSetEntries(*source.SourceRef)
+	return e.db.GetResourceSetEntries(*source.SourceRef)
 }
 
 func (e *Executor) resolveQuerySource(source models.PlanSource) ([]*models.Entry, error) {
