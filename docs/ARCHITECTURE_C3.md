@@ -46,10 +46,19 @@ The System Context diagram shows how mcp-space-browser interacts with external a
 │                    │            │            │                                    │
 │                    ▼            ▼            ▼                                    │
 │           ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                        │
-│           │  SQLite     │ │  Local      │ │  Metadata   │                        │
+│           │  SQLite     │ │  Local      │ │  Artifact   │                        │
 │           │  Database   │ │  Filesystem │ │  Cache      │                        │
-│           │             │ │             │ │             │                        │
+│           │  (disk.db)  │ │             │ │  (./cache)  │                        │
 │           └─────────────┘ └─────────────┘ └─────────────┘                        │
+│                                                                                   │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │                         Web Frontend                                         ││
+│  │  ┌─────────────┐                                                             ││
+│  │  │   Browser   │───────── HTTP ──────────▶ /web/* (Static Assets)           ││
+│  │  │   Client    │───────── HTTP ──────────▶ /api/content (Thumbnails)        ││
+│  │  │             │───────── MCP  ──────────▶ /mcp (JSON-RPC 2.0)              ││
+│  │  └─────────────┘                                                             ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
 │                                                                                   │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -58,16 +67,20 @@ The System Context diagram shows how mcp-space-browser interacts with external a
 
 | Actor | Type | Description |
 |-------|------|-------------|
-| **Human User** | Person | Interacts with system through MCP client tools |
+| **Human User** | Person | Interacts with system through MCP client tools or web frontend |
 | **LLM (Claude/ChatGPT)** | System | AI models that use MCP tools for disk analysis |
 | **MCP Client Application** | System | Any application implementing MCP client protocol |
+| **Browser Client** | System | Web frontend for visual exploration |
 | **SQLite Database** | Data Store | Persistent storage for all system state |
 | **Local Filesystem** | External System | The filesystem being indexed and monitored |
-| **Metadata Cache** | Data Store | Generated thumbnails and extracted metadata |
+| **Artifact Cache** | Data Store | Generated thumbnails and extracted metadata |
 
 ### Key Architectural Decision
 
-> **MCP-Only Interface**: This system is ONLY exposed through the Model Context Protocol (MCP). There are NO REST APIs, gRPC interfaces, or other external access methods. All interaction happens via MCP tools and resource templates over JSON-RPC 2.0.
+> **MCP-Only Interface**: This system is ONLY exposed through the Model Context Protocol (MCP). There are NO REST APIs for data operations. The only HTTP endpoints are:
+> - `POST /mcp` - MCP JSON-RPC 2.0 transport
+> - `GET /api/content` - Serve cached artifacts (thumbnails, metadata files)
+> - `GET /web/*` - Static web frontend assets
 
 ---
 
@@ -80,19 +93,39 @@ The Container diagram shows the major deployable units within mcp-space-browser.
 │                              mcp-space-browser                                    │
 │                                                                                   │
 │  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │                           MCP SERVER LAYER                                   │ │
+│  │                           HTTP SERVER LAYER                                  │ │
 │  │                                                                              │ │
 │  │  ┌──────────────────────────────────────────────────────────────────────┐  │ │
-│  │  │                      MCP Transport (Gin HTTP)                         │  │ │
-│  │  │                      POST /mcp (Streamable HTTP)                      │  │ │
+│  │  │                      Gin HTTP Server                                  │  │ │
+│  │  │  POST /mcp ──────────────────▶ MCP Transport (Streamable HTTP)       │  │ │
+│  │  │  GET /api/content ───────────▶ Artifact Content Server               │  │ │
+│  │  │  GET /api/inspect ───────────▶ File Inspection API                   │  │ │
+│  │  │  GET /web/* ─────────────────▶ Static Web Assets                     │  │ │
 │  │  └──────────────────────────────────────────────────────────────────────┘  │ │
 │  │                                    │                                        │ │
-│  │           ┌────────────────────────┼────────────────────────┐               │ │
-│  │           ▼                        ▼                        ▼               │ │
-│  │  ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐       │ │
-│  │  │  MCP Tools      │     │  MCP Resources  │     │  MCP Templates  │       │ │
-│  │  │  (30+ tools)    │     │  (Static URIs)  │     │  (Dynamic URIs) │       │ │
-│  │  └─────────────────┘     └─────────────────┘     └─────────────────┘       │ │
+│  └────────────────────────────────────┼────────────────────────────────────────┘ │
+│                                       │                                          │
+│  ┌────────────────────────────────────┼────────────────────────────────────────┐ │
+│  │                          MCP TOOLS LAYER (42 tools)                          │ │
+│  │                                                                              │ │
+│  │  ┌────────────────┐ ┌────────────────┐ ┌────────────────┐ ┌──────────────┐  │ │
+│  │  │  Navigation    │ │   Resource     │ │    Source      │ │    Plan      │  │ │
+│  │  │  Tools (4)     │ │   Tools (16)   │ │   Tools (7)    │ │  Tools (6)   │  │ │
+│  │  │                │ │                │ │                │ │              │  │ │
+│  │  │ • index        │ │ • resource-sum │ │ • source-create│ │ • plan-create│  │ │
+│  │  │ • navigate     │ │ • resource-is  │ │ • source-start │ │ • plan-execute│ │ │
+│  │  │ • inspect      │ │ • resource-... │ │ • source-stop  │ │ • plan-list  │  │ │
+│  │  │ • job-progress │ │ • resource-set-│ │ • source-list  │ │ • plan-get   │  │ │
+│  │  └────────────────┘ └────────────────┘ └────────────────┘ └──────────────┘  │ │
+│  │                                                                              │ │
+│  │  ┌────────────────┐ ┌────────────────┐ ┌────────────────┐                   │ │
+│  │  │  Classifier    │ │   File Ops     │ │    Query       │                   │ │
+│  │  │  Tools (3)     │ │   Tools (3)    │ │   Tools (6)    │                   │ │
+│  │  │                │ │                │ │                │                   │ │
+│  │  │ • rerun-class..│ │ • rename-files │ │ • query-create │                   │ │
+│  │  │ • classifier-..│ │ • delete-files │ │ • query-execute│                   │ │
+│  │  │ • list-class.. │ │ • move-files   │ │ • query-...    │                   │ │
+│  │  └────────────────┘ └────────────────┘ └────────────────┘                   │ │
 │  │                                                                              │ │
 │  └────────────────────────────────────────────────────────────────────────────┘ │
 │                                       │                                          │
@@ -108,12 +141,12 @@ The Container diagram shows the major deployable units within mcp-space-browser.
 │  │         │                │                │                │                │ │
 │  │         └────────────────┴────────────────┴────────────────┘                │ │
 │  │                                   │                                          │ │
-│  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐                         │ │
-│  │  │   Crawler    │ │ Queue Mgmt   │ │  Path Utils  │                         │ │
-│  │  │              │ │              │ │              │                         │ │
-│  │  │ Filesystem   │ │ Job Tracking │ │ Validation   │                         │ │
-│  │  │ Traversal    │ │ & Progress   │ │ & Expansion  │                         │ │
-│  │  └──────────────┘ └──────────────┘ └──────────────┘                         │ │
+│  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐       │ │
+│  │  │   Crawler    │ │ Write Queue  │ │   Progress   │ │  Path Utils  │       │ │
+│  │  │              │ │              │ │   Tracker    │ │              │       │ │
+│  │  │ Filesystem   │ │ Async DB     │ │ Job Status   │ │ Validation   │       │ │
+│  │  │ Traversal    │ │ Writes       │ │ Updates      │ │ & Expansion  │       │ │
+│  │  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘       │ │
 │  │                                                                              │ │
 │  └────────────────────────────────────────────────────────────────────────────┘ │
 │                                       │                                          │
@@ -128,21 +161,30 @@ The Container diagram shows the major deployable units within mcp-space-browser.
 │  │  │  │  CRUD      │ │   CRUD     │ │   CRUD     │ │   CRUD     │         │  │ │
 │  │  │  └────────────┘ └────────────┘ └────────────┘ └────────────┘         │  │ │
 │  │  │                                                                        │  │ │
-│  │  │  ┌────────────┐ ┌────────────┐ ┌────────────┐                         │  │ │
-│  │  │  │  Sources   │ │   Jobs     │ │  Metadata  │                         │  │ │
-│  │  │  │  CRUD      │ │   CRUD     │ │   CRUD     │                         │  │ │
-│  │  │  └────────────┘ └────────────┘ └────────────┘                         │  │ │
+│  │  │  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐         │  │ │
+│  │  │  │  Sources   │ │   Jobs     │ │  Metadata  │ │  Queries   │         │  │ │
+│  │  │  │  CRUD      │ │   CRUD     │ │   CRUD     │ │   CRUD     │         │  │ │
+│  │  │  └────────────┘ └────────────┘ └────────────┘ └────────────┘         │  │ │
 │  │  │                                                                        │  │ │
 │  │  └──────────────────────────────────────────────────────────────────────┘  │ │
 │  │                                                                              │ │
 │  └────────────────────────────────────────────────────────────────────────────┘ │
 │                                       │                                          │
-│                                       ▼                                          │
-│                         ┌──────────────────────────┐                            │
-│                         │      SQLite Database      │                            │
-│                         │     (~/.mcp-space-browser │                            │
-│                         │        /disk.db)          │                            │
-│                         └──────────────────────────┘                            │
+│                          ┌────────────┴────────────┐                            │
+│                          │                         │                            │
+│                          ▼                         ▼                            │
+│             ┌──────────────────────┐  ┌──────────────────────┐                 │
+│             │   SQLite Database    │  │   Artifact Cache     │                 │
+│             │      (disk.db)       │  │     (./cache/)       │                 │
+│             │                      │  │                      │                 │
+│             │ • entries            │  │ • Thumbnails         │                 │
+│             │ • resource_sets      │  │ • Video posters      │                 │
+│             │ • plans              │  │ • Timeline frames    │                 │
+│             │ • sources            │  │ • Extracted metadata │                 │
+│             │ • metadata           │  │                      │                 │
+│             │ • jobs               │  │ Content-addressed    │                 │
+│             │ • queries            │  │ storage (SHA256)     │                 │
+│             └──────────────────────┘  └──────────────────────┘                 │
 │                                                                                   │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -151,16 +193,19 @@ The Container diagram shows the major deployable units within mcp-space-browser.
 
 | Container | Technology | Responsibility |
 |-----------|------------|----------------|
-| **MCP Transport** | Gin HTTP, mcp-go | JSON-RPC 2.0 transport, stateless sessions |
-| **MCP Tools** | Go handlers | 30+ tools for resource manipulation |
-| **MCP Resources** | Go handlers | Static and template-based resource URIs |
+| **HTTP Server** | Gin HTTP | Routes requests to MCP transport or content server |
+| **MCP Transport** | mcp-go | JSON-RPC 2.0 transport, stateless sessions |
+| **MCP Tools** | Go handlers | 42 tools for resource manipulation |
+| **Content Server** | Gin handler | Serves cached thumbnails and metadata files |
 | **Plans** | Go package | Orchestration of indexing and processing |
 | **Sources** | Go package | Data ingestion (filesystem, watch, query) |
 | **Rules** | Go package | Condition evaluation and outcome application |
-| **Classifier** | Go package | Media analysis and metadata extraction |
+| **Classifier** | Go package | Media analysis, thumbnail generation, FFmpeg |
 | **Crawler** | Go package | DFS filesystem traversal with parallel workers |
-| **Queue Management** | Go package | Async job tracking with progress |
+| **Write Queue** | Go package | Async database writes for performance |
+| **Progress Tracker** | Go package | Real-time job status updates |
 | **Database** | Go + SQLite | All persistence operations |
+| **Artifact Cache** | Filesystem | Content-addressed storage for generated files |
 
 ---
 
@@ -194,20 +239,90 @@ The Container diagram shows the major deployable units within mcp-space-browser.
 │          │                                     │ (Parallel)  │               │
 │          │                                     └──────┬──────┘               │
 │          │                                            │                       │
-│          │ 5. Evaluate conditions                     │ 6. Store entries      │
+│          │                                            │ 5. Write Queue        │
+│          │                                            ▼                       │
+│          │                                     ┌─────────────┐               │
+│          │                                     │ Write Queue │               │
+│          │                                     │  (Async)    │               │
+│          │                                     └──────┬──────┘               │
+│          │                                            │                       │
+│          │ 6. Evaluate conditions                     │ 7. Batch insert       │
 │          ▼                                            ▼                       │
 │   ┌─────────────┐                              ┌─────────────┐               │
 │   │ Condition   │                              │  Database   │               │
 │   │ Evaluator   │                              │  (entries)  │               │
 │   └──────┬──────┘                              └─────────────┘               │
 │          │                                                                     │
-│          │ 7. Apply outcomes                                                   │
+│          │ 8. Apply outcomes                                                   │
 │          ▼                                                                     │
-│   ┌─────────────┐      8. Update sets          ┌─────────────┐               │
-│   │  Outcome    │─────────────────────────────▶│  Database   │               │
-│   │  Applier    │                              │(resource_   │               │
-│   └─────────────┘                              │ sets)       │               │
-│                                                 └─────────────┘               │
+│   ┌─────────────┐      9. Generate artifacts   ┌─────────────┐               │
+│   │  Outcome    │─────────────────────────────▶│ Classifier  │               │
+│   │  Applier    │                              │  (FFmpeg)   │               │
+│   └─────────────┘                              └──────┬──────┘               │
+│                                                       │                       │
+│                                                       │ 10. Store in cache    │
+│                                                       ▼                       │
+│                                                ┌─────────────┐               │
+│                                                │  Artifact   │               │
+│                                                │   Cache     │               │
+│                                                └─────────────┘               │
+│                                                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Data Flow: File Inspection with Thumbnails
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      INSPECT DATA FLOW                                        │
+│                                                                               │
+│   Web Frontend / MCP Client                                                   │
+│       │                                                                       │
+│       │ 1. inspect(path="/path/to/video.mp4")                                 │
+│       ▼                                                                       │
+│   ┌─────────────┐                                                             │
+│   │ MCP Server  │                                                             │
+│   └──────┬──────┘                                                             │
+│          │                                                                     │
+│          │ 2. Get entry metadata                                               │
+│          ▼                                                                     │
+│   ┌─────────────┐                                                             │
+│   │  Database   │                                                             │
+│   │  (entries)  │                                                             │
+│   └──────┬──────┘                                                             │
+│          │                                                                     │
+│          │ 3. Generate artifacts if needed                                     │
+│          ▼                                                                     │
+│   ┌─────────────┐      4. Extract frames       ┌─────────────┐               │
+│   │ Classifier  │─────────────────────────────▶│   FFmpeg    │               │
+│   │  Manager    │                              │             │               │
+│   └──────┬──────┘                              └──────┬──────┘               │
+│          │                                            │                       │
+│          │                              5. Write files│                       │
+│          │                                            ▼                       │
+│          │                                     ┌─────────────┐               │
+│          │                                     │  Artifact   │               │
+│          │                                     │   Cache     │               │
+│          │                                     │ (./cache/)  │               │
+│          │                                     └─────────────┘               │
+│          │                                                                     │
+│          │ 6. Store metadata                                                   │
+│          ▼                                                                     │
+│   ┌─────────────┐                                                             │
+│   │  Database   │                                                             │
+│   │ (metadata)  │                                                             │
+│   └──────┬──────┘                                                             │
+│          │                                                                     │
+│          │ 7. Return response with HTTP URLs                                   │
+│          ▼                                                                     │
+│   {                                                                            │
+│     "path": "/path/to/video.mp4",                                             │
+│     "thumbnailUri": "http://host/api/content?path=cache/ab/cd/...",           │
+│     "metadata": [                                                              │
+│       {"type": "thumbnail", "url": "http://..."},                             │
+│       {"type": "video-timeline", "url": "http://...", "metadata": {"frame":0}}│
+│     ]                                                                          │
+│   }                                                                            │
 │                                                                               │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -272,14 +387,19 @@ Each module exposes a clean interface hiding implementation details:
 
 ```go
 // pkg/plans - Black Box Interface
-type PlanManager interface {
-    CreatePlan(plan *models.Plan) error
-    GetPlan(name string) (*models.Plan, error)
-    ListPlans() ([]*models.Plan, error)
-    UpdatePlan(plan *models.Plan) error
-    DeletePlan(name string) error
-    ExecutePlan(name string) (*models.PlanExecution, error)
-    StopPlan(name string) error
+type Executor interface {
+    ExecutePlan(ctx context.Context, plan *models.Plan) (*ExecutionResult, error)
+}
+
+type ExecutionResult struct {
+    ExecutionID      int64
+    PlanName         string
+    Status           string
+    EntriesProcessed int
+    EntriesMatched   int
+    OutcomesApplied  int
+    Duration         time.Duration
+    Error            error
 }
 ```
 
@@ -287,12 +407,33 @@ type PlanManager interface {
 
 ```go
 // pkg/sources - Black Box Interface
-type SourceManager interface {
-    CreateSource(src *models.Source) error
-    StartSource(name string) error
-    StopSource(name string) error
-    ExecuteSource(name string) error
-    GetSourceStatus(name string) (*SourceStatus, error)
+type Manager interface {
+    CreateSource(ctx context.Context, src *models.Source) error
+    StartSource(ctx context.Context, name string) error
+    StopSource(ctx context.Context, name string) error
+    GetStatus(ctx context.Context, name string) (*SourceStatus, error)
+    RestoreActiveSources(ctx context.Context) error
+    StopAll(ctx context.Context) error
+}
+```
+
+### Classifier Module Interface
+
+```go
+// pkg/classifier - Black Box Interface
+type Classifier interface {
+    DetectMediaType(path string) MediaType
+    CanProcess(path string) bool
+}
+
+type Manager interface {
+    GenerateThumbnail(req *ArtifactRequest) *ArtifactResult
+    GenerateTimelineFrame(req *ArtifactRequest) *ArtifactResult
+}
+
+type MetadataManager interface {
+    CanExtractMetadata(path string) bool
+    ExtractMetadata(path string, maxSize int64) *MetadataResult
 }
 ```
 
@@ -302,9 +443,10 @@ type SourceManager interface {
 // pkg/database - Black Box Interface
 type DiskDB interface {
     // Entries
-    GetEntry(path string) (*models.Entry, error)
-    UpsertEntry(entry *models.Entry) error
-    DeleteEntry(path string) error
+    Get(path string) (*models.Entry, error)
+    Upsert(entry *models.Entry) error
+    Delete(path string) error
+    GetChildren(path string) ([]*models.Entry, error)
 
     // ResourceSets
     CreateResourceSet(set *models.ResourceSet) error
@@ -312,7 +454,13 @@ type DiskDB interface {
     AddToResourceSet(name string, paths []string) error
     RemoveFromResourceSet(name string, paths []string) error
 
-    // Plans, Sources, Rules...
+    // Metadata
+    CreateOrUpdateMetadata(metadata *models.Metadata) error
+    GetMetadata(hash string) (*models.Metadata, error)
+    GetMetadataByPath(path string) ([]*models.Metadata, error)
+    GetMetadataByCachePath(cachePath string) (*models.Metadata, error)
+
+    // Plans, Sources, Rules, Jobs, Queries...
     // (similar CRUD patterns)
 }
 ```
@@ -335,15 +483,24 @@ type DiskDB interface {
 │   │   │   • Embeds SQLite driver                                        │ │ │
 │   │   │   • Listens on configurable port (default: 3000)                │ │ │
 │   │   │   • MCP endpoint: POST /mcp                                      │ │ │
+│   │   │   • Content endpoint: GET /api/content                           │ │ │
+│   │   │   • Web frontend: GET /web/*                                     │ │ │
 │   │   │                                                                   │ │ │
 │   │   └─────────────────────────────────────────────────────────────────┘ │ │
 │   │                                    │                                    │ │
 │   │   ┌─────────────────────────────────┼─────────────────────────────────┐│ │
 │   │   │                                ▼                                   ││ │
-│   │   │   ~/.mcp-space-browser/                                           ││ │
-│   │   │   ├── config.yaml          # Configuration                        ││ │
-│   │   │   ├── disk.db              # SQLite database                      ││ │
-│   │   │   └── cache/               # Metadata cache (thumbnails, etc.)    ││ │
+│   │   │   Working Directory (configurable)                                ││ │
+│   │   │   ├── config.yaml           # Configuration                       ││ │
+│   │   │   ├── disk.db               # SQLite database                     ││ │
+│   │   │   └── cache/                # Artifact cache                      ││ │
+│   │   │       ├── ab/               # First 2 chars of SHA256             ││ │
+│   │   │       │   └── cd/           # Next 2 chars                        ││ │
+│   │   │       │       └── abcd.../  # Full hash directory                 ││ │
+│   │   │       │           ├── thumb.jpg                                   ││ │
+│   │   │       │           ├── poster.jpg                                  ││ │
+│   │   │       │           └── timeline_00.jpg                             ││ │
+│   │   │       └── ...                                                     ││ │
 │   │   │                                                                    ││ │
 │   │   └────────────────────────────────────────────────────────────────────┘│ │
 │   │                                                                         │ │
@@ -360,8 +517,8 @@ type DiskDB interface {
 | **Dependencies** | None (SQLite embedded via CGO) |
 | **Configuration** | YAML file + environment variables + CLI flags |
 | **Data Storage** | SQLite database file (portable) |
-| **Cache** | Local filesystem directory for generated metadata |
-| **Networking** | Single HTTP port for MCP transport |
+| **Cache** | Content-addressed filesystem directory (SHA256 hashes) |
+| **Networking** | Single HTTP port for all endpoints |
 
 ---
 
@@ -370,9 +527,10 @@ type DiskDB interface {
 | Layer | Technology | Purpose |
 |-------|------------|---------|
 | **Transport** | Gin HTTP | HTTP server and routing |
-| **Protocol** | mcp-go | MCP JSON-RPC 2.0 implementation |
+| **Protocol** | mcp-go v0.43.0 | MCP JSON-RPC 2.0 implementation |
 | **Database** | go-sqlite3 | Embedded SQLite with CGO |
 | **Monitoring** | fsnotify | Filesystem event watching |
+| **Media** | FFmpeg (external) | Thumbnail and timeline generation |
 | **Logging** | logrus | Structured logging with colors |
 | **CLI** | cobra | Command-line interface |
 | **Testing** | testify | Test assertions and mocks |
@@ -391,6 +549,11 @@ type DiskDB interface {
 - Errors propagate up through clean interfaces
 - Database errors include context
 - MCP tools return structured error responses
+
+### Caching
+- Content-addressed artifact storage using SHA256 hashes
+- Path normalization handles both absolute and relative paths
+- Lazy generation on first access via inspect tool
 
 ### Testing
 - Unit tests with in-memory SQLite (`:memory:`)

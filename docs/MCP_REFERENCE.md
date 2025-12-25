@@ -19,6 +19,41 @@ Protocol: JSON-RPC 2.0 with MCP extensions
 Transport: Streamable HTTP
 ```
 
+### CORS Support
+
+The MCP server supports Cross-Origin Resource Sharing (CORS) to enable browser-based clients to connect directly without a proxy. This is essential for web-based MCP clients and browser extensions.
+
+**Default Configuration:** By default, all origins are allowed with credentials support enabled.
+
+**Configuration Options:**
+
+| Setting | Environment Variable | YAML Key | Default | Description |
+|---------|---------------------|----------|---------|-------------|
+| CORS Origins | `CORS_ORIGINS` | `server.cors_origins` | `["*"]` | Comma-separated list of allowed origins |
+
+**Example Configuration (YAML):**
+```yaml
+server:
+  port: 3000
+  host: "0.0.0.0"
+  cors_origins:
+    - "http://localhost:5173"
+    - "https://app.example.com"
+```
+
+**Example Configuration (Environment Variable):**
+```bash
+CORS_ORIGINS="http://localhost:5173,https://app.example.com"
+```
+
+**CORS Headers Set:**
+- `Access-Control-Allow-Origin`: Echoes the request origin (or `*` for wildcard)
+- `Access-Control-Allow-Methods`: `GET, POST, PUT, PATCH, DELETE, OPTIONS`
+- `Access-Control-Allow-Headers`: `Origin, Content-Type, Accept, Authorization, Mcp-Session-Id, X-Requested-With`
+- `Access-Control-Expose-Headers`: `Content-Length, Content-Type, Mcp-Session-Id`
+- `Access-Control-Allow-Credentials`: `true` (when credentials are enabled)
+- `Access-Control-Max-Age`: `86400` (24 hours)
+
 ### Clients
 
 MCP tools are designed to be usable by:
@@ -122,6 +157,257 @@ Cancel a running or pending indexing job.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | jobId | string | Yes | - | Job identifier to cancel |
+
+---
+
+### Navigation Tools
+
+#### navigate
+
+Shell-like directory navigation for exploring indexed filesystem entries. Provides a familiar interface similar to `ls` and `cd` commands.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| path | string | Yes | - | Directory path to navigate to |
+| limit | integer | No | 100 | Maximum entries to return |
+| offset | integer | No | 0 | Pagination offset |
+| sort | string | No | name | Sort by: name, size, mtime |
+| desc | boolean | No | false | Sort descending |
+
+**Example:**
+```json
+{"tool": "navigate", "params": {"path": "/home/user/Photos", "sort": "size", "desc": true}}
+```
+
+**Response:**
+```json
+{
+  "path": "/home/user/Photos",
+  "entries": [
+    {
+      "name": "vacation",
+      "path": "/home/user/Photos/vacation",
+      "size": 1073741824,
+      "kind": "directory",
+      "mtime": "2024-06-15T10:30:00Z"
+    },
+    {
+      "name": "photo.jpg",
+      "path": "/home/user/Photos/photo.jpg",
+      "size": 5242880,
+      "kind": "file",
+      "mtime": "2024-06-15T09:00:00Z",
+      "thumbnailUrl": "http://localhost:3000/api/content?path=cache/ab/cd/..."
+    }
+  ],
+  "total": 156,
+  "hasMore": true
+}
+```
+
+---
+
+#### inspect
+
+Get detailed information about a file or directory, including generated artifacts like thumbnails and video timeline frames.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| path | string | Yes | - | Path to inspect |
+
+**Example:**
+```json
+{"tool": "inspect", "params": {"path": "/home/user/Videos/movie.mp4"}}
+```
+
+**Response:**
+```json
+{
+  "path": "/home/user/Videos/movie.mp4",
+  "kind": "file",
+  "size": 1073741824,
+  "modifiedAt": "2024-06-15T10:30:00Z",
+  "createdAt": "2024-06-01T08:00:00Z",
+  "resourceUri": "synthesis://nodes/home/user/Videos/movie.mp4",
+  "thumbnailUri": "http://localhost:3000/api/content?path=cache/ab/cd/.../thumb.jpg",
+  "timelineUri": "http://localhost:3000/api/content?path=cache/ab/cd/.../timeline_00.jpg",
+  "metadataUri": "synthesis://nodes/home/user/Videos/movie.mp4/metadata",
+  "metadataCount": 6,
+  "metadata": [
+    {"type": "thumbnail", "mimeType": "image/jpeg", "url": "http://..."},
+    {"type": "video-timeline", "mimeType": "image/jpeg", "url": "http://...", "metadata": {"frame": 0}},
+    {"type": "video-timeline", "mimeType": "image/jpeg", "url": "http://...", "metadata": {"frame": 1}}
+  ]
+}
+```
+
+---
+
+### File Operation Tools
+
+#### rename-files
+
+Rename one or more files or directories.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| renames | object[] | Yes | - | Array of {from, to} rename operations |
+| dryRun | boolean | No | false | Preview changes without applying |
+
+**Example:**
+```json
+{"tool": "rename-files", "params": {
+  "renames": [
+    {"from": "/home/user/old_name.txt", "to": "/home/user/new_name.txt"}
+  ]
+}}
+```
+
+---
+
+#### delete-files
+
+Delete one or more files or directories.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| paths | string[] | Yes | - | Paths to delete |
+| dryRun | boolean | No | false | Preview changes without applying |
+| force | boolean | No | false | Force deletion of non-empty directories |
+
+**Example:**
+```json
+{"tool": "delete-files", "params": {
+  "paths": ["/home/user/temp.txt", "/home/user/old_folder"],
+  "force": true
+}}
+```
+
+---
+
+#### move-files
+
+Move files or directories to a new location.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| moves | object[] | Yes | - | Array of {from, to} move operations |
+| dryRun | boolean | No | false | Preview changes without applying |
+
+**Example:**
+```json
+{"tool": "move-files", "params": {
+  "moves": [
+    {"from": "/home/user/Downloads/file.pdf", "to": "/home/user/Documents/file.pdf"}
+  ]
+}}
+```
+
+---
+
+### Database Tools
+
+#### db-diagnose
+
+Run diagnostics on the database to check integrity and statistics.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| (none) | - | - | - | - |
+
+**Response:**
+```json
+{
+  "database_path": "/path/to/disk.db",
+  "database_size": 52428800,
+  "integrity_check": "ok",
+  "entry_count": 12345,
+  "resource_set_count": 15,
+  "orphaned_entries": 0,
+  "stale_entries": 23
+}
+```
+
+---
+
+### Query Management Tools
+
+#### query-create
+
+Create a saved query for reuse.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| name | string | Yes | - | Unique query name |
+| description | string | No | - | Optional description |
+| query | object | Yes | - | Query definition |
+
+**Example:**
+```json
+{"tool": "query-create", "params": {
+  "name": "large-videos",
+  "description": "Videos larger than 1GB",
+  "query": {
+    "kind": "file",
+    "extension": ".mp4",
+    "min_size": 1073741824
+  }
+}}
+```
+
+---
+
+#### query-execute
+
+Execute a saved query.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| name | string | Yes | - | Query name to execute |
+| limit | integer | No | 100 | Maximum results |
+| offset | integer | No | 0 | Pagination offset |
+
+---
+
+#### query-list
+
+List all saved queries.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| (none) | - | - | - | - |
+
+---
+
+#### query-get
+
+Get a saved query definition.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| name | string | Yes | - | Query name |
+
+---
+
+#### query-update
+
+Update a saved query.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| name | string | Yes | - | Query name |
+| description | string | No | - | New description |
+| query | object | No | - | New query definition |
+
+---
+
+#### query-delete
+
+Delete a saved query.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| name | string | Yes | - | Query name to delete |
 
 ---
 
@@ -486,35 +772,42 @@ Remove a parent-child edge from the DAG.
 
 #### source-create
 
-Create a new data source.
+Create a new filesystem source for monitoring or indexing.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | name | string | Yes | - | Unique source name |
-| type | string | Yes | - | Source type (see below) |
-| target_set | string | Yes | - | Target resource-set name |
-| config | object | Yes | - | Type-specific configuration |
-| update_mode | string | No | append | replace, append, merge |
+| type | string | Yes | - | Source type: `live` or `manual` |
+| path | string | Yes | - | Root path to watch/index |
+| enabled | boolean | No | true | Whether source should start automatically |
+| watch_recursive | boolean | No | true | For live sources: watch subdirectories |
+| debounce_ms | integer | No | 500 | For live sources: debounce delay in ms |
 
 **Source Types:**
 
-| Type | Description | Config Fields |
-|------|-------------|---------------|
-| filesystem.index | One-time scan | path, recursive, max_depth, follow_symlinks |
-| filesystem.watch | Real-time monitoring | path, recursive, debounce_ms |
-| query | Execute saved query | query_name |
-| resource-set | Copy from set | source_set_name |
+| Type | Description |
+|------|-------------|
+| live | Real-time monitoring using fsnotify - detects file changes immediately |
+| manual | One-time scan triggered explicitly via source-start |
 
-**Example:**
+**Example (live monitoring):**
 ```json
 {"tool": "source-create", "params": {
-  "name": "photos-index",
-  "type": "filesystem.index",
-  "target_set": "photos",
-  "config": {
-    "path": "/home/user/Photos",
-    "recursive": true
-  }
+  "name": "photos-watch",
+  "type": "live",
+  "path": "/home/user/Photos",
+  "watch_recursive": true,
+  "debounce_ms": 500
+}}
+```
+
+**Example (manual indexing):**
+```json
+{"tool": "source-create", "params": {
+  "name": "archive-scan",
+  "type": "manual",
+  "path": "/mnt/archive",
+  "enabled": false
 }}
 ```
 
@@ -533,16 +826,6 @@ Start a source (for continuous sources like filesystem.watch).
 #### source-stop
 
 Stop a running source.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| name | string | Yes | - | Source name |
-
----
-
-#### source-execute
-
-Execute a source once (for one-shot sources).
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
@@ -573,6 +856,29 @@ Delete a source.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | name | string | Yes | - | Source name |
+
+---
+
+#### source-stats
+
+Get statistics for a source including scan history and performance metrics.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| name | string | Yes | - | Source name |
+
+**Response:**
+```json
+{
+  "name": "photos-watch",
+  "type": "live",
+  "status": "running",
+  "entries_indexed": 1234,
+  "last_scan_at": "2024-06-15T10:00:00Z",
+  "total_scans": 15,
+  "average_scan_duration_ms": 2500
+}
+```
 
 ---
 
@@ -713,6 +1019,34 @@ Check classifier job progress.
 
 ---
 
+#### list-classifier-jobs
+
+List all classifier jobs with optional filtering.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| status | string | No | - | Filter by status (pending, running, completed, failed) |
+| limit | integer | No | 50 | Maximum jobs to return |
+
+**Response:**
+```json
+{
+  "jobs": [
+    {
+      "id": 1,
+      "source_path": "/home/user/video.mp4",
+      "status": "completed",
+      "progress": 100,
+      "created_at": "2024-06-15T10:00:00Z",
+      "completed_at": "2024-06-15T10:01:00Z"
+    }
+  ],
+  "total": 15
+}
+```
+
+---
+
 ### Session Tools
 
 #### session-info
@@ -733,6 +1067,27 @@ Get session and database information.
 
 ---
 
+#### session-set-preferences
+
+Set user preferences for the current session.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| preferences | object | Yes | - | Key-value pairs of preferences |
+
+**Example:**
+```json
+{"tool": "session-set-preferences", "params": {
+  "preferences": {
+    "default_sort": "size",
+    "show_hidden": false,
+    "thumbnail_size": "medium"
+  }
+}}
+```
+
+---
+
 ## MCP Resource Templates
 
 Resources provide declarative, URI-based access to data.
@@ -741,19 +1096,19 @@ Resources provide declarative, URI-based access to data.
 
 | URI Pattern | Description | MIME Type |
 |-------------|-------------|-----------|
-| `synthesis://selection-sets/{name}` | Resource-set metadata | application/json |
-| `synthesis://selection-sets/{name}/entries` | File entries in set | application/json |
-| `synthesis://selection-sets/{name}/children` | Child resource-sets (DAG downstream) | application/json |
-| `synthesis://selection-sets/{name}/parents` | Parent resource-sets (DAG upstream) | application/json |
-| `synthesis://selection-sets/{name}/stats` | Comprehensive statistics | application/json |
-| `synthesis://selection-sets/{name}/metrics/{metric}` | Aggregated metric (size, count, files, directories) | application/json |
+| `synthesis://resource-sets/{name}` | Resource-set metadata | application/json |
+| `synthesis://resource-sets/{name}/entries` | File entries in set | application/json |
+| `synthesis://resource-sets/{name}/children` | Child resource-sets (DAG downstream) | application/json |
+| `synthesis://resource-sets/{name}/parents` | Parent resource-sets (DAG upstream) | application/json |
+| `synthesis://resource-sets/{name}/stats` | Comprehensive statistics | application/json |
+| `synthesis://resource-sets/{name}/metrics/{metric}` | Aggregated metric (size, count, files, directories) | application/json |
 
 ### Static Resources
 
 | URI | Description |
 |-----|-------------|
 | `synthesis://nodes` | All filesystem entries |
-| `synthesis://selection-sets` | All selection sets |
+| `synthesis://resource-sets` | All resource sets |
 | `synthesis://jobs` | All indexing jobs |
 | `synthesis://jobs/pending` | Pending jobs |
 | `synthesis://jobs/running` | Running jobs |
@@ -769,8 +1124,8 @@ Resources provide declarative, URI-based access to data.
 | URI Pattern | Description |
 |-------------|-------------|
 | `synthesis://nodes/{path}` | Single filesystem entry |
-| `synthesis://selection-sets/{name}` | Selection set by name |
-| `synthesis://selection-sets/{name}/entries` | Entries in selection set |
+| `synthesis://resource-sets/{name}` | Selection set by name |
+| `synthesis://resource-sets/{name}/entries` | Entries in resource set |
 | `synthesis://jobs/{id}` | Job by ID |
 | `synthesis://plans/{name}` | Plan by name |
 | `synthesis://plans/{name}/executions` | Plan execution history |
