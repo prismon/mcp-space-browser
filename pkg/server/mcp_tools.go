@@ -15,6 +15,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prismon/mcp-space-browser/internal/models"
+	"github.com/prismon/mcp-space-browser/pkg/classifier"
 	"github.com/prismon/mcp-space-browser/pkg/crawler"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/pathutil"
@@ -30,8 +31,47 @@ const (
 	summaryTopEntriesCount = 50
 )
 
+// normalizeCachePath converts absolute cache paths to relative paths for URL generation.
+// This handles legacy database entries that have absolute paths stored.
+func normalizeCachePath(cachePath string) string {
+	if cachePath == "" {
+		return cachePath
+	}
+
+	// If it's already a relative path, use as-is
+	if !filepath.IsAbs(cachePath) {
+		return cachePath
+	}
+
+	// Get absolute cache directory for comparison
+	if artifactCacheDir == "" {
+		return cachePath
+	}
+
+	absCacheDir, err := filepath.Abs(artifactCacheDir)
+	if err != nil {
+		return cachePath
+	}
+
+	// If the absolute path starts with the cache directory, extract the relative portion
+	cleanPath := filepath.Clean(cachePath)
+	cleanCacheDir := filepath.Clean(absCacheDir)
+
+	if strings.HasPrefix(cleanPath, cleanCacheDir) {
+		// Get relative path within the cache directory
+		relPath, err := filepath.Rel(cleanCacheDir, cleanPath)
+		if err != nil {
+			return cachePath
+		}
+		// Return path relative to current directory using configured cache dir
+		return filepath.Join(artifactCacheDir, relPath)
+	}
+
+	return cachePath
+}
+
 // registerMCPTools registers all MCP tools with the server
-func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
+func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string, processor *classifier.Processor) {
 	// Shell-style navigation tools
 	registerIndexTool(s, db)
 	registerNavigateTool(s, db)
@@ -39,13 +79,14 @@ func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 	registerJobProgressTool(s, db)
 	registerListJobsTool(s, db)
 	registerCancelJobTool(s, db)
+	registerDbDiagnoseTool(s, db)
 
-	// Selection set tools
-	registerSelectionSetCreate(s, db)
-	registerSelectionSetList(s, db)
-	registerSelectionSetGet(s, db)
-	registerSelectionSetModify(s, db)
-	registerSelectionSetDelete(s, db)
+	// Resource set tools
+	registerResourceSetCreate(s, db)
+	registerResourceSetList(s, db)
+	registerResourceSetGet(s, db)
+	registerResourceSetModify(s, db)
+	registerResourceSetDelete(s, db)
 
 	// Query tools
 	registerQueryCreate(s, db)
@@ -57,7 +98,7 @@ func registerMCPTools(s *server.MCPServer, db *database.DiskDB, dbPath string) {
 
 	// Plan tools
 	registerPlanCreate(s, db)
-	registerPlanExecute(s, db)
+	registerPlanExecute(s, db, processor)
 	registerPlanList(s, db)
 	registerPlanGet(s, db)
 	registerPlanUpdate(s, db)
@@ -441,7 +482,17 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 					}
 					log.WithError(err).WithField("jobID", jobID).Error("Indexing failed")
 				} else if stats.Skipped {
-					// Indexing was skipped due to recent scan
+					// Indexing was skipped due to recent scan - store skip info in metadata
+					if err := db.UpdateIndexJobProgress(jobID, 100, &database.IndexJobMetadata{
+						FilesProcessed:       0,
+						DirectoriesProcessed: 0,
+						TotalSize:            0,
+						ErrorCount:           0,
+						Skipped:              true,
+						SkipReason:           stats.SkipReason,
+					}); err != nil {
+						log.WithError(err).WithField("jobID", jobID).Error("Failed to update job metadata for skip")
+					}
 					if err := db.UpdateIndexJobStatus(jobID, "completed", nil); err != nil {
 						log.WithError(err).WithField("jobID", jobID).Error("Failed to mark job as completed")
 					}
@@ -598,6 +649,12 @@ func registerNavigateTool(s *server.MCPServer, db *database.DiskDB) {
 			end = len(children)
 		}
 
+		// Build base URL for HTTP content serving
+		baseURL := contentBaseURL
+		if baseURL == "" {
+			baseURL = "http://localhost:3000"
+		}
+
 		slice := children[offset:end]
 		listings := make([]map[string]any, 0, len(slice))
 		for _, child := range slice {
@@ -610,9 +667,24 @@ func registerNavigateTool(s *server.MCPServer, db *database.DiskDB) {
 				"link":       fmt.Sprintf("synthesis://nodes/%s", child.Path),
 			}
 
-			// Check if this child has metadata/artifacts
-			if hasMetadata := checkIfHasMetadata(child.Path, child.Kind, child.Mtime); hasMetadata {
-				listing["metadataUri"] = fmt.Sprintf("synthesis://nodes/%s/metadata", child.Path)
+			// For files, look up thumbnail if available
+			if child.Kind == "file" {
+				metadataList, err := db.GetMetadataByPath(child.Path)
+				if err == nil && len(metadataList) > 0 {
+					listing["metadataUri"] = fmt.Sprintf("synthesis://nodes/%s/metadata", child.Path)
+					for _, metadata := range metadataList {
+						if metadata.MetadataType == "thumbnail" && metadata.CachePath != "" {
+							normalizedPath := normalizeCachePath(metadata.CachePath)
+							listing["thumbnailUrl"] = fmt.Sprintf("%s/api/content?path=%s", baseURL, normalizedPath)
+							break
+						}
+					}
+				}
+			} else {
+				// Check if this child has metadata/artifacts (for directories)
+				if hasMetadata := checkIfHasMetadata(child.Path, child.Kind, child.Mtime); hasMetadata {
+					listing["metadataUri"] = fmt.Sprintf("synthesis://nodes/%s/metadata", child.Path)
+				}
 			}
 
 			listings = append(listings, listing)
@@ -662,55 +734,59 @@ func registerInspectTool(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		// Expand path
-		expandedPath, err := pathutil.ExpandPath(args.Path)
+		// Use buildInspectResponse to ensure artifacts are generated if needed
+		// This calls the same logic as the REST endpoint to ensure consistency
+		inspectResp, err := buildInspectResponse(args.Path, db, 20, 0)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Invalid path: %v", err)), nil
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		// Get entry from database
-		entry, err := db.Get(expandedPath)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to load entry: %v", err)), nil
-		}
-		if entry == nil {
-			return mcp.NewToolResultError("Entry not indexed"), nil
+		// Build response with normalized paths for HTTP URLs
+		baseURL := contentBaseURL
+		if baseURL == "" {
+			baseURL = "http://localhost:3000"
 		}
 
-		// Build response with MCP resources
+		// Use TrimPrefix to avoid double slashes (path starts with /)
+		uriPath := strings.TrimPrefix(inspectResp.Path, "/")
 		response := map[string]interface{}{
-			"path":       entry.Path,
-			"kind":       entry.Kind,
-			"size":       entry.Size,
-			"modifiedAt": time.Unix(entry.Mtime, 0).Format(time.RFC3339),
-			"createdAt":  time.Unix(entry.Ctime, 0).Format(time.RFC3339),
-			"resourceUri": fmt.Sprintf("synthesis://nodes/%s", entry.Path),
+			"path":        inspectResp.Path,
+			"kind":        inspectResp.Kind,
+			"size":        inspectResp.Size,
+			"modifiedAt":  inspectResp.ModifiedAt,
+			"createdAt":   inspectResp.CreatedAt,
+			"resourceUri": fmt.Sprintf("synthesis://nodes/%s", uriPath),
 		}
 
-		// Check if there's metadata available
-		metadataList, err := db.GetMetadataByPath(expandedPath)
-		if err == nil && len(metadataList) > 0 {
-			response["metadataUri"] = fmt.Sprintf("synthesis://nodes/%s/metadata", entry.Path)
-			response["metadataCount"] = len(metadataList)
+		// Build metadata from the generated artifacts
+		if len(inspectResp.Artifacts) > 0 {
+			response["metadataUri"] = fmt.Sprintf("synthesis://nodes/%s/metadata", uriPath)
+			response["metadataCount"] = inspectResp.ArtifactsCount
 
-			// Check for specific metadata types
-			hasThumbnail := false
-			hasTimeline := false
-			for _, metadata := range metadataList {
-				if metadata.MetadataType == "thumbnail" {
-					hasThumbnail = true
+			metadataItems := make([]map[string]interface{}, 0, len(inspectResp.Artifacts))
+			for _, artifact := range inspectResp.Artifacts {
+				item := map[string]interface{}{
+					"type":     artifact.Type,
+					"mimeType": artifact.MimeType,
+					"url":      artifact.Url,
 				}
-				if metadata.MetadataType == "video-timeline" {
-					hasTimeline = true
+				if artifact.Metadata != nil {
+					item["metadata"] = artifact.Metadata
 				}
-			}
 
-			if hasThumbnail {
-				response["thumbnailUri"] = fmt.Sprintf("synthesis://nodes/%s/thumbnail", entry.Path)
+				// Set specific URI fields based on artifact type
+				if artifact.Type == "thumbnail" {
+					response["thumbnailUri"] = artifact.Url
+				}
+				if artifact.Type == "video-timeline" {
+					if _, ok := response["timelineUri"]; !ok {
+						response["timelineUri"] = artifact.Url
+					}
+				}
+
+				metadataItems = append(metadataItems, item)
 			}
-			if hasTimeline {
-				response["timelineUri"] = fmt.Sprintf("synthesis://nodes/%s/timeline", entry.Path)
-			}
+			response["metadata"] = metadataItems
 		}
 
 		payload, err := json.Marshal(response)
@@ -759,6 +835,26 @@ func registerJobProgressTool(s *server.MCPServer, db *database.DiskDB) {
 			"path":      job.RootPath,
 			"progress":  job.Progress,
 			"statusUrl": fmt.Sprintf("synthesis://jobs/%d", job.ID),
+		}
+
+		// Include metadata if available (contains skip info, file counts, etc.)
+		if job.Metadata != nil {
+			var metadata database.IndexJobMetadata
+			if err := json.Unmarshal([]byte(*job.Metadata), &metadata); err == nil {
+				response["filesProcessed"] = metadata.FilesProcessed
+				response["directoriesProcessed"] = metadata.DirectoriesProcessed
+				response["totalSize"] = metadata.TotalSize
+				response["errorCount"] = metadata.ErrorCount
+				if metadata.Skipped {
+					response["skipped"] = true
+					response["skipReason"] = metadata.SkipReason
+				}
+			}
+		}
+
+		// Include error if present
+		if job.Error != nil {
+			response["error"] = *job.Error
 		}
 
 		payload, err := json.Marshal(response)
@@ -984,17 +1080,137 @@ func registerCancelJobTool(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-// Selection Set Tools
+func registerDbDiagnoseTool(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("db-diagnose",
+		mcp.WithDescription("Run database diagnostics to check for integrity issues. Reports entry counts, orphaned entries, and aggregation problems."),
+		mcp.WithString("root",
+			mcp.Description("Optional: limit diagnostics to entries under this root path"),
+		),
+	)
 
-func registerSelectionSetCreate(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("selection-set-create",
-		mcp.WithDescription("Create a new selection set (pure item storage)"),
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Root *string `json:"root,omitempty"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		diagnostics := map[string]any{}
+		issues := []string{}
+
+		// 1. Get total entry count
+		var totalEntries int64
+		var err error
+		if args.Root != nil && *args.Root != "" {
+			totalEntries, err = db.GetEntryCount(*args.Root)
+		} else {
+			err = db.QueryRow(`SELECT COUNT(*) FROM entries`).Scan(&totalEntries)
+		}
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to count entries: %v", err)), nil
+		}
+		diagnostics["totalEntries"] = totalEntries
+
+		if totalEntries == 0 {
+			issues = append(issues, "No entries in database - index has not been run or database is empty")
+		}
+
+		// 2. Count files vs directories
+		var fileCount, dirCount int64
+		if args.Root != nil && *args.Root != "" {
+			root := *args.Root
+			db.QueryRow(`SELECT COUNT(*) FROM entries WHERE kind = 'file' AND (path = ? OR path LIKE ?)`, root, root+"/%").Scan(&fileCount)
+			db.QueryRow(`SELECT COUNT(*) FROM entries WHERE kind = 'directory' AND (path = ? OR path LIKE ?)`, root, root+"/%").Scan(&dirCount)
+		} else {
+			db.QueryRow(`SELECT COUNT(*) FROM entries WHERE kind = 'file'`).Scan(&fileCount)
+			db.QueryRow(`SELECT COUNT(*) FROM entries WHERE kind = 'directory'`).Scan(&dirCount)
+		}
+		diagnostics["fileCount"] = fileCount
+		diagnostics["directoryCount"] = dirCount
+
+		// 3. Check for orphaned entries (parent path doesn't exist)
+		var orphanCount int64
+		db.QueryRow(`
+			SELECT COUNT(*) FROM entries e1
+			WHERE e1.parent IS NOT NULL
+			AND e1.parent != ''
+			AND NOT EXISTS (SELECT 1 FROM entries e2 WHERE e2.path = e1.parent)
+		`).Scan(&orphanCount)
+		diagnostics["orphanedEntries"] = orphanCount
+		if orphanCount > 0 {
+			issues = append(issues, fmt.Sprintf("%d orphaned entries found (parent path missing)", orphanCount))
+		}
+
+		// 4. Check for directories with potential aggregation issues
+		// (directories with size=0 but have children with non-zero size)
+		var badAggregateCount int64
+		db.QueryRow(`
+			SELECT COUNT(*) FROM entries e1
+			WHERE e1.kind = 'directory'
+			AND e1.size = 0
+			AND EXISTS (
+				SELECT 1 FROM entries e2
+				WHERE e2.parent = e1.path
+				AND e2.size > 0
+			)
+		`).Scan(&badAggregateCount)
+		diagnostics["directoriesWithMissingAggregates"] = badAggregateCount
+		if badAggregateCount > 0 {
+			issues = append(issues, fmt.Sprintf("%d directories have size=0 but contain files with non-zero size", badAggregateCount))
+		}
+
+		// 5. Get total size
+		var totalSize int64
+		if args.Root != nil && *args.Root != "" {
+			root := *args.Root
+			db.QueryRow(`SELECT COALESCE(SUM(size), 0) FROM entries WHERE kind = 'file' AND (path = ? OR path LIKE ?)`, root, root+"/%").Scan(&totalSize)
+		} else {
+			db.QueryRow(`SELECT COALESCE(SUM(size), 0) FROM entries WHERE kind = 'file'`).Scan(&totalSize)
+		}
+		diagnostics["totalFileSize"] = totalSize
+
+		// 6. Count resource sets
+		var resourceSetCount int64
+		db.QueryRow(`SELECT COUNT(*) FROM resource_sets`).Scan(&resourceSetCount)
+		diagnostics["resourceSetCount"] = resourceSetCount
+
+		// 7. Check for recent index jobs
+		var recentJobCount int64
+		oneDayAgo := time.Now().Unix() - 86400
+		db.QueryRow(`SELECT COUNT(*) FROM index_jobs WHERE created_at > ?`, oneDayAgo).Scan(&recentJobCount)
+		diagnostics["recentIndexJobs24h"] = recentJobCount
+
+		// Add issues summary
+		diagnostics["issues"] = issues
+		diagnostics["healthy"] = len(issues) == 0
+
+		log.WithFields(logrus.Fields{
+			"totalEntries": totalEntries,
+			"issues":       len(issues),
+		}).Info("Database diagnostics completed")
+
+		payload, err := json.Marshal(diagnostics)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal response: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+// Resource Set Tools
+
+func registerResourceSetCreate(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("resource-set-create",
+		mcp.WithDescription("Create a new resource set (pure item storage)"),
 		mcp.WithString("name",
 			mcp.Required(),
-			mcp.Description("Name of the selection set"),
+			mcp.Description("Name of the resource set"),
 		),
 		mcp.WithString("description",
-			mcp.Description("Description of the selection set"),
+			mcp.Description("Description of the resource set"),
 		),
 	)
 
@@ -1008,31 +1224,31 @@ func registerSelectionSetCreate(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		set := &models.SelectionSet{
+		set := &models.ResourceSet{
 			Name:        args.Name,
 			Description: args.Description,
 			CreatedAt:   time.Now().Unix(),
 			UpdatedAt:   time.Now().Unix(),
 		}
 
-		id, err := db.CreateSelectionSet(set)
+		id, err := db.CreateResourceSet(set)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to create selection set: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to create resource set: %v", err)), nil
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("Created selection set '%s' with ID %d", args.Name, id)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("Created resource set '%s' with ID %d", args.Name, id)), nil
 	})
 }
 
-func registerSelectionSetList(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("selection-set-list",
-		mcp.WithDescription("List all selection sets"),
+func registerResourceSetList(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("resource-set-list",
+		mcp.WithDescription("List all resource sets"),
 	)
 
 	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		sets, err := db.ListSelectionSets()
+		sets, err := db.ListResourceSets()
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to list selection sets: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to list resource sets: %v", err)), nil
 		}
 
 		result, err := json.Marshal(sets)
@@ -1044,12 +1260,12 @@ func registerSelectionSetList(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-func registerSelectionSetGet(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("selection-set-get",
-		mcp.WithDescription("Get entries in a selection set"),
+func registerResourceSetGet(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("resource-set-get",
+		mcp.WithDescription("Get entries in a resource set"),
 		mcp.WithString("name",
 			mcp.Required(),
-			mcp.Description("Name of the selection set"),
+			mcp.Description("Name of the resource set"),
 		),
 	)
 
@@ -1062,9 +1278,9 @@ func registerSelectionSetGet(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		entries, err := db.GetSelectionSetEntries(args.Name)
+		entries, err := db.GetResourceSetEntries(args.Name)
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to get selection set entries: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to get resource set entries: %v", err)), nil
 		}
 
 		// Compress if necessary
@@ -1079,12 +1295,12 @@ func registerSelectionSetGet(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-func registerSelectionSetModify(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("selection-set-modify",
-		mcp.WithDescription("Add or remove entries from a selection set"),
+func registerResourceSetModify(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("resource-set-modify",
+		mcp.WithDescription("Add or remove entries from a resource set"),
 		mcp.WithString("name",
 			mcp.Required(),
-			mcp.Description("Name of the selection set"),
+			mcp.Description("Name of the resource set"),
 		),
 		mcp.WithString("operation",
 			mcp.Required(),
@@ -1117,27 +1333,27 @@ func registerSelectionSetModify(s *server.MCPServer, db *database.DiskDB) {
 
 		var err error
 		if args.Operation == "add" {
-			err = db.AddToSelectionSet(args.Name, paths)
+			err = db.AddToResourceSet(args.Name, paths)
 		} else if args.Operation == "remove" {
-			err = db.RemoveFromSelectionSet(args.Name, paths)
+			err = db.RemoveFromResourceSet(args.Name, paths)
 		} else {
 			return mcp.NewToolResultError("Invalid operation. Use 'add' or 'remove'"), nil
 		}
 
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to modify selection set: %v", err)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to modify resource set: %v", err)), nil
 		}
 
 		return mcp.NewToolResultText(fmt.Sprintf("Successfully %sed %d entries", args.Operation, len(paths))), nil
 	})
 }
 
-func registerSelectionSetDelete(s *server.MCPServer, db *database.DiskDB) {
-	tool := mcp.NewTool("selection-set-delete",
-		mcp.WithDescription("Delete a selection set"),
+func registerResourceSetDelete(s *server.MCPServer, db *database.DiskDB) {
+	tool := mcp.NewTool("resource-set-delete",
+		mcp.WithDescription("Delete a resource set"),
 		mcp.WithString("name",
 			mcp.Required(),
-			mcp.Description("Name of the selection set"),
+			mcp.Description("Name of the resource set"),
 		),
 	)
 
@@ -1150,11 +1366,11 @@ func registerSelectionSetDelete(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
 		}
 
-		if err := db.DeleteSelectionSet(args.Name); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Failed to delete selection set: %v", err)), nil
+		if err := db.DeleteResourceSet(args.Name); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to delete resource set: %v", err)), nil
 		}
 
-		return mcp.NewToolResultText(fmt.Sprintf("Deleted selection set '%s'", args.Name)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("Deleted resource set '%s'", args.Name)), nil
 	})
 }
 
@@ -2066,7 +2282,7 @@ func registerPlanCreate(s *server.MCPServer, db *database.DiskDB) {
 	})
 }
 
-func registerPlanExecute(s *server.MCPServer, db *database.DiskDB) {
+func registerPlanExecute(s *server.MCPServer, db *database.DiskDB, processor *classifier.Processor) {
 	tool := mcp.NewTool("plan-execute",
 		mcp.WithDescription("Execute a plan to process files according to its rules"),
 		mcp.WithString("name",
@@ -2090,9 +2306,10 @@ func registerPlanExecute(s *server.MCPServer, db *database.DiskDB) {
 			return mcp.NewToolResultError(fmt.Sprintf("Plan not found: %v", err)), nil
 		}
 
-		// Execute plan
+		// Execute plan with classifier processor for thumbnail generation
 		logger := logrus.New().WithField("tool", "plan-execute")
 		executor := plans.NewExecutor(db, logger)
+		executor.SetProcessor(processor)
 		execution, err := executor.Execute(plan)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Plan execution failed: %v", err)), nil

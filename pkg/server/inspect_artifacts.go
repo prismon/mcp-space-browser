@@ -319,19 +319,76 @@ func serveContent(c *gin.Context, db *database.DiskDB) {
 		return
 	}
 
-	// Security: Ensure the file exists in the database OR is an artifact
+	// Get absolute cache directory for comparison
+	var absCacheDir string
+	if artifactCacheDir != "" {
+		absCacheDir, _ = filepath.Abs(artifactCacheDir)
+	}
+
+	// Security: Ensure the file exists in the database OR is a valid artifact
 	entry, _ := db.Get(targetPath)
 	if entry == nil {
-		// Check if it's an artifact (in our cache directory)
-		if !strings.HasPrefix(filepath.Clean(targetPath), filepath.Clean(artifactCacheDir)) {
+		// Check if it's a valid artifact by:
+		// 1. Checking if path is in the configured artifact cache directory
+		// 2. Checking if the path exists in the metadata table as a cache_path
+		// 3. Checking if it looks like a cache path (starts with "cache/")
+		isValidArtifact := false
+
+		// Check configured cache dir (convert to absolute for comparison)
+		if absCacheDir != "" && strings.HasPrefix(filepath.Clean(targetPath), filepath.Clean(absCacheDir)) {
+			isValidArtifact = true
+			inspectLog.Debug("Valid artifact via cache dir check")
+		}
+
+		// Check if path is in metadata table (validates it's a known artifact)
+		if !isValidArtifact && db != nil {
+			metadata, err := db.GetMetadataByCachePath(path)
+			inspectLog.WithField("path", path).WithField("found", metadata != nil).WithField("err", err).Debug("Checking metadata table")
+			if metadata != nil {
+				isValidArtifact = true
+				inspectLog.Debug("Valid artifact via metadata table")
+			}
+		}
+
+		// Allow paths that look like cache paths (relative cache directory)
+		if !isValidArtifact && strings.HasPrefix(path, "cache/") {
+			isValidArtifact = true
+			inspectLog.Debug("Valid artifact via cache/ prefix")
+		}
+
+		if !isValidArtifact {
+			inspectLog.WithField("path", path).WithField("targetPath", targetPath).Warn("Path not accessible")
 			c.String(http.StatusForbidden, "path not accessible")
 			return
 		}
-		// Ensure artifact exists
+
+		// Try to find the artifact on disk - handle both absolute and relative paths
+		// The database may have absolute paths stored while the file is at a relative path (or vice versa)
+		actualPath := targetPath
 		if _, err := os.Stat(targetPath); err != nil {
-			c.String(http.StatusNotFound, "not found")
-			return
+			// If targetPath is absolute and within cache dir, try the relative version
+			if absCacheDir != "" && strings.HasPrefix(filepath.Clean(targetPath), filepath.Clean(absCacheDir)) {
+				// Extract relative path from absolute
+				relPath, relErr := filepath.Rel(absCacheDir, targetPath)
+				if relErr == nil {
+					// Try relative to current working directory
+					tryPath := filepath.Join(artifactCacheDir, relPath)
+					if _, statErr := os.Stat(tryPath); statErr == nil {
+						actualPath = tryPath
+						inspectLog.WithField("originalPath", targetPath).WithField("actualPath", actualPath).Debug("Found artifact at relative path")
+					}
+				}
+			}
+
+			// If still not found, check if it's a direct absolute path that exists
+			if actualPath == targetPath {
+				inspectLog.WithField("targetPath", targetPath).WithError(err).Warn("Artifact not found on disk")
+				c.String(http.StatusNotFound, "not found")
+				return
+			}
 		}
+
+		targetPath = actualPath
 	}
 
 	// Serve the file
