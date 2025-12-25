@@ -1313,6 +1313,8 @@ func (d *DiskDB) GetEntriesByTimeRange(startDate, endDate string, root *string) 
 	if err != nil {
 		return nil, fmt.Errorf("invalid end date: %w", err)
 	}
+	// Set endTime to end of day (23:59:59) to include all entries on that date
+	endTime = endTime.Add(24*time.Hour - time.Second)
 
 	query += " AND mtime >= ? AND mtime <= ?"
 	args = append(args, startTime.Unix(), endTime.Unix())

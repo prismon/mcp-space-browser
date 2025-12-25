@@ -969,18 +969,18 @@ func TestGetTreeSorting(t *testing.T) {
 	assert.NotNil(t, tree3)
 }
 
-func TestAddRemoveSelectionSet(t *testing.T) {
+func TestAddRemoveResourceSet(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
 	// Create a selection set
 	desc := "Test selection"
-	set := &models.SelectionSet{
+	set := &models.ResourceSet{
 		Name:        "test-set",
 		Description: &desc,
 	}
-	_, err = db.CreateSelectionSet(set)
+	_, err = db.CreateResourceSet(set)
 	assert.NoError(t, err)
 
 	// Create some entries
@@ -998,29 +998,29 @@ func TestAddRemoveSelectionSet(t *testing.T) {
 	db.InsertOrUpdate(entry2)
 
 	// Add entries to selection set
-	err = db.AddToSelectionSet("test-set", []string{"/test1.txt", "/test2.txt"})
+	err = db.AddToResourceSet("test-set", []string{"/test1.txt", "/test2.txt"})
 	assert.NoError(t, err)
 
 	// Get selection set entries
-	entries, err := db.GetSelectionSetEntries("test-set")
+	entries, err := db.GetResourceSetEntries("test-set")
 	assert.NoError(t, err)
 	assert.Len(t, entries, 2)
 
 	// Remove one entry
-	err = db.RemoveFromSelectionSet("test-set", []string{"/test1.txt"})
+	err = db.RemoveFromResourceSet("test-set", []string{"/test1.txt"})
 	assert.NoError(t, err)
 
 	// Verify removal
-	entries, err = db.GetSelectionSetEntries("test-set")
+	entries, err = db.GetResourceSetEntries("test-set")
 	assert.NoError(t, err)
 	assert.Len(t, entries, 1)
 
 	// Test adding to non-existent set
-	err = db.AddToSelectionSet("nonexistent", []string{"/test1.txt"})
+	err = db.AddToResourceSet("nonexistent", []string{"/test1.txt"})
 	assert.Error(t, err)
 
 	// Test removing from non-existent set
-	err = db.RemoveFromSelectionSet("nonexistent", []string{"/test1.txt"})
+	err = db.RemoveFromResourceSet("nonexistent", []string{"/test1.txt"})
 	assert.Error(t, err)
 }
 
@@ -1356,46 +1356,46 @@ func TestTransactionRollback(t *testing.T) {
 	assert.Equal(t, "/initial.txt", entries[0].Path)
 }
 
-func TestSelectionSetOperations(t *testing.T) {
+func TestResourceSetOperations(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
-	t.Run("CreateSelectionSet", func(t *testing.T) {
+	t.Run("CreateResourceSet", func(t *testing.T) {
 		desc := "Test description"
-		set := &models.SelectionSet{
+		set := &models.ResourceSet{
 			Name:        "my-set",
 			Description: &desc,
 		}
-		id, err := db.CreateSelectionSet(set)
+		id, err := db.CreateResourceSet(set)
 		assert.NoError(t, err)
 		assert.Greater(t, id, int64(0))
 	})
 
-	t.Run("GetSelectionSet", func(t *testing.T) {
-		set, err := db.GetSelectionSet("my-set")
+	t.Run("GetResourceSet", func(t *testing.T) {
+		set, err := db.GetResourceSet("my-set")
 		assert.NoError(t, err)
 		assert.NotNil(t, set)
 		assert.Equal(t, "my-set", set.Name)
 	})
 
-	t.Run("GetNonexistentSelectionSet", func(t *testing.T) {
-		set, err := db.GetSelectionSet("nonexistent")
+	t.Run("GetNonexistentResourceSet", func(t *testing.T) {
+		set, err := db.GetResourceSet("nonexistent")
 		assert.NoError(t, err)
 		assert.Nil(t, set)
 	})
 
-	t.Run("ListSelectionSets", func(t *testing.T) {
-		sets, err := db.ListSelectionSets()
+	t.Run("ListResourceSets", func(t *testing.T) {
+		sets, err := db.ListResourceSets()
 		assert.NoError(t, err)
 		assert.GreaterOrEqual(t, len(sets), 1)
 	})
 
-	t.Run("DeleteSelectionSet", func(t *testing.T) {
-		err := db.DeleteSelectionSet("my-set")
+	t.Run("DeleteResourceSet", func(t *testing.T) {
+		err := db.DeleteResourceSet("my-set")
 		assert.NoError(t, err)
 
-		set, err := db.GetSelectionSet("my-set")
+		set, err := db.GetResourceSet("my-set")
 		assert.NoError(t, err)
 		assert.Nil(t, set)
 	})
@@ -1592,7 +1592,7 @@ func TestListMetadataNilFilter(t *testing.T) {
 	assert.GreaterOrEqual(t, len(metas), 1)
 }
 
-func TestSelectionSetWithMultipleEntries(t *testing.T) {
+func TestResourceSetWithMultipleEntries(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
@@ -1601,11 +1601,11 @@ func TestSelectionSetWithMultipleEntries(t *testing.T) {
 
 	// Create selection set
 	desc := "Test"
-	set := &models.SelectionSet{
+	set := &models.ResourceSet{
 		Name:        "multi-set",
 		Description: &desc,
 	}
-	_, err = db.CreateSelectionSet(set)
+	_, err = db.CreateResourceSet(set)
 	require.NoError(t, err)
 
 	// Create many entries
@@ -1621,20 +1621,20 @@ func TestSelectionSetWithMultipleEntries(t *testing.T) {
 	}
 
 	// Add all to selection set
-	err = db.AddToSelectionSet("multi-set", paths)
+	err = db.AddToResourceSet("multi-set", paths)
 	assert.NoError(t, err)
 
 	// Verify count
-	entries, err := db.GetSelectionSetEntries("multi-set")
+	entries, err := db.GetResourceSetEntries("multi-set")
 	assert.NoError(t, err)
 	assert.Len(t, entries, 10)
 
 	// Remove half
-	err = db.RemoveFromSelectionSet("multi-set", paths[:5])
+	err = db.RemoveFromResourceSet("multi-set", paths[:5])
 	assert.NoError(t, err)
 
 	// Verify count
-	entries, err = db.GetSelectionSetEntries("multi-set")
+	entries, err = db.GetResourceSetEntries("multi-set")
 	assert.NoError(t, err)
 	assert.Len(t, entries, 5)
 }
@@ -1683,7 +1683,7 @@ func TestDeleteStaleRecursive(t *testing.T) {
 	assert.NotNil(t, newEntry)
 }
 
-func TestAddToSelectionSetWithMultiplePaths(t *testing.T) {
+func TestAddToResourceSetWithMultiplePaths(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
@@ -1701,21 +1701,21 @@ func TestAddToSelectionSetWithMultiplePaths(t *testing.T) {
 
 	// Create a selection set
 	desc := "Test batch adding"
-	_, err = db.CreateSelectionSet(&models.SelectionSet{Name: "batch-test", Description: &desc})
+	_, err = db.CreateResourceSet(&models.ResourceSet{Name: "batch-test", Description: &desc})
 	require.NoError(t, err)
 
 	// Add multiple paths at once
 	paths := []string{"/test/filea.txt", "/test/fileb.txt", "/test/filec.txt"}
-	err = db.AddToSelectionSet("batch-test", paths)
+	err = db.AddToResourceSet("batch-test", paths)
 	assert.NoError(t, err)
 
 	// Verify entries were added
-	entries, err := db.GetSelectionSetEntries("batch-test")
+	entries, err := db.GetResourceSetEntries("batch-test")
 	assert.NoError(t, err)
 	assert.Equal(t, 3, len(entries))
 }
 
-func TestRemoveFromSelectionSetWithMultiplePaths(t *testing.T) {
+func TestRemoveFromResourceSetWithMultiplePaths(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
@@ -1732,40 +1732,40 @@ func TestRemoveFromSelectionSetWithMultiplePaths(t *testing.T) {
 	}
 
 	// Create a selection set and add entries
-	_, err = db.CreateSelectionSet(&models.SelectionSet{Name: "remove-test"})
+	_, err = db.CreateResourceSet(&models.ResourceSet{Name: "remove-test"})
 	require.NoError(t, err)
 
 	allPaths := []string{"/test/filea.txt", "/test/fileb.txt", "/test/filec.txt", "/test/filed.txt"}
-	err = db.AddToSelectionSet("remove-test", allPaths)
+	err = db.AddToResourceSet("remove-test", allPaths)
 	require.NoError(t, err)
 
 	// Remove some entries
 	removePaths := []string{"/test/filea.txt", "/test/filec.txt"}
-	err = db.RemoveFromSelectionSet("remove-test", removePaths)
+	err = db.RemoveFromResourceSet("remove-test", removePaths)
 	assert.NoError(t, err)
 
 	// Verify only two remain
-	entries, err := db.GetSelectionSetEntries("remove-test")
+	entries, err := db.GetResourceSetEntries("remove-test")
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(entries))
 }
 
-func TestAddToSelectionSetNonexistentSet(t *testing.T) {
+func TestAddToResourceSetNonexistentSet(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
-	err = db.AddToSelectionSet("nonexistent", []string{"/test/file.txt"})
+	err = db.AddToResourceSet("nonexistent", []string{"/test/file.txt"})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
 
-func TestRemoveFromSelectionSetNonexistentSet(t *testing.T) {
+func TestRemoveFromResourceSetNonexistentSet(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
-	err = db.RemoveFromSelectionSet("nonexistent", []string{"/test/file.txt"})
+	err = db.RemoveFromResourceSet("nonexistent", []string{"/test/file.txt"})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
@@ -2145,28 +2145,28 @@ func TestAllWithManyEntries(t *testing.T) {
 	assert.Equal(t, 30, len(entries))
 }
 
-func TestGetSelectionSetEntriesEmpty(t *testing.T) {
+func TestGetResourceSetEntriesEmpty(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
 	// Create empty selection set
-	_, err = db.CreateSelectionSet(&models.SelectionSet{Name: "empty-set"})
+	_, err = db.CreateResourceSet(&models.ResourceSet{Name: "empty-set"})
 	require.NoError(t, err)
 
 	// Get entries from empty set
-	entries, err := db.GetSelectionSetEntries("empty-set")
+	entries, err := db.GetResourceSetEntries("empty-set")
 	assert.NoError(t, err)
 	assert.Empty(t, entries)
 }
 
-func TestGetSelectionSetEntriesNonexistent(t *testing.T) {
+func TestGetResourceSetEntriesNonexistent(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
 	// Get entries from non-existent set
-	entries, err := db.GetSelectionSetEntries("nonexistent")
+	entries, err := db.GetResourceSetEntries("nonexistent")
 	assert.Error(t, err)
 	assert.Nil(t, entries)
 }
@@ -2245,9 +2245,9 @@ func TestAddResourceSetEdgeWithVerification(t *testing.T) {
 	defer db.Close()
 
 	// Create parent and child sets
-	_, err = db.CreateSelectionSet(&models.SelectionSet{Name: "rsparent"})
+	_, err = db.CreateResourceSet(&models.ResourceSet{Name: "rsparent"})
 	require.NoError(t, err)
-	_, err = db.CreateSelectionSet(&models.SelectionSet{Name: "rschild"})
+	_, err = db.CreateResourceSet(&models.ResourceSet{Name: "rschild"})
 	require.NoError(t, err)
 
 	// Add edge
@@ -2273,11 +2273,11 @@ func TestResourceSetDAGMultipleParents(t *testing.T) {
 	defer db.Close()
 
 	// Create hierarchy: parent1 -> child, parent2 -> child (DAG with multiple parents)
-	_, err = db.CreateSelectionSet(&models.SelectionSet{Name: "dagparent1"})
+	_, err = db.CreateResourceSet(&models.ResourceSet{Name: "dagparent1"})
 	require.NoError(t, err)
-	_, err = db.CreateSelectionSet(&models.SelectionSet{Name: "dagparent2"})
+	_, err = db.CreateResourceSet(&models.ResourceSet{Name: "dagparent2"})
 	require.NoError(t, err)
-	_, err = db.CreateSelectionSet(&models.SelectionSet{Name: "dagchild"})
+	_, err = db.CreateResourceSet(&models.ResourceSet{Name: "dagchild"})
 	require.NoError(t, err)
 
 	err = db.AddResourceSetEdge("dagparent1", "dagchild")
@@ -2313,8 +2313,8 @@ func TestGetEntriesByTimeRangeWithRoot(t *testing.T) {
 	minDate := time.Now().Add(-24 * time.Hour).Format("2006-01-02")
 	maxDate := time.Now().Add(24 * time.Hour).Format("2006-01-02")
 	results, err := db.GetEntriesByTimeRange(minDate, maxDate, &root)
-	assert.NoError(t, err)
-	assert.Equal(t, 1, len(results))
+	require.NoError(t, err)
+	require.Equal(t, 1, len(results), "Expected 1 result but got %d", len(results))
 	assert.Contains(t, results[0].Path, "/root1")
 }
 
