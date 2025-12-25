@@ -540,19 +540,10 @@ func runServer(cmd *cobra.Command, args []string) {
 		"externalHost": effectiveExternalHost,
 		"config_file":  configPath,
 		"auth_enabled": config.Auth.Enabled,
-	}).Info("Starting MCP server")
+	}).Info("Starting MCP server with multi-project support")
 
-	// Open database
-	db, err := database.NewDiskDB(config.Database.Path)
-	if err != nil {
-		log.WithError(err).Error("Failed to open database")
-		fmt.Fprintf(os.Stderr, "Error: Failed to open database: %v\n", err)
-		os.Exit(1)
-	}
-	defer db.Close()
-
-
-	if err := server.Start(config, db, config.Database.Path); err != nil {
+	// Start MCP server (creates ServerContext internally with project/session management)
+	if err := server.Start(config); err != nil {
 		log.WithError(err).Error("Server failed")
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

@@ -25,12 +25,16 @@ func init() {
 }
 
 // DiskDB represents the database connection and operations
+// DiskDB implements the Backend interface for SQLite databases
 type DiskDB struct {
 	db         *sql.DB
 	insertStmt *sql.Stmt
-	indexMu    sync.Mutex // Protects concurrent indexing operations
-	tx         *sql.Tx    // Current transaction (if any)
-	txStmt     *sql.Stmt  // Insert statement for current transaction
+	indexMu    sync.Mutex  // Protects concurrent indexing operations
+	tx         *sql.Tx     // Current transaction (if any)
+	txStmt     *sql.Stmt   // Insert statement for current transaction
+	writeQueue *WriteQueue // Serializes write operations to avoid lock contention
+	path       string      // Database file path for ConnectionInfo
+	isOpen     bool        // Tracks if database is open
 }
 
 // NewDiskDB creates a new database instance
@@ -42,36 +46,51 @@ func NewDiskDB(path string) (*DiskDB, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	diskDB := &DiskDB{db: db}
+	// Create and start the write queue
+	writeQueue := NewWriteQueue(db, nil)
+	writeQueue.Start()
+
+	diskDB := &DiskDB{
+		db:         db,
+		writeQueue: writeQueue,
+		path:       path,
+		isOpen:     true,
+	}
 
 	// Enable WAL mode for better concurrency
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		writeQueue.Stop()
 		db.Close()
 		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
 	}
 
 	// Set busy timeout to 5 seconds
 	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		writeQueue.Stop()
 		db.Close()
 		return nil, fmt.Errorf("failed to set busy timeout: %w", err)
 	}
 
 	if err := diskDB.init(); err != nil {
+		writeQueue.Stop()
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
 	if err := diskDB.InitJobTables(); err != nil {
+		writeQueue.Stop()
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize job tables: %w", err)
 	}
 
 	if err := diskDB.InitClassifierJobTables(); err != nil {
+		writeQueue.Stop()
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize classifier job tables: %w", err)
 	}
 
 	if err := diskDB.prepareStatements(); err != nil {
+		writeQueue.Stop()
 		db.Close()
 		return nil, fmt.Errorf("failed to prepare statements: %w", err)
 	}
@@ -81,15 +100,59 @@ func NewDiskDB(path string) (*DiskDB, error) {
 
 // Close closes the database connection
 func (d *DiskDB) Close() error {
+	// Stop the write queue first to ensure all pending writes complete
+	if d.writeQueue != nil {
+		d.writeQueue.Stop()
+	}
 	if d.insertStmt != nil {
 		d.insertStmt.Close()
 	}
+	d.isOpen = false
 	return d.db.Close()
+}
+
+// WriteQueue returns the write queue for serializing write operations
+func (d *DiskDB) WriteQueue() *WriteQueue {
+	return d.writeQueue
 }
 
 // DB returns the underlying sql.DB instance
 func (d *DiskDB) DB() *sql.DB {
 	return d.db
+}
+
+// Open implements the Backend interface. For DiskDB, the database is already
+// opened in NewDiskDB, so this is a no-op.
+func (d *DiskDB) Open() error {
+	// Already opened in constructor
+	return nil
+}
+
+// IsOpen returns true if the database connection is open
+func (d *DiskDB) IsOpen() bool {
+	return d.isOpen
+}
+
+// InitSchema implements the Backend interface. For DiskDB, schema initialization
+// is done in NewDiskDB, so this is a no-op.
+func (d *DiskDB) InitSchema() error {
+	// Schema already initialized in constructor via init()
+	return nil
+}
+
+// Type returns the database backend type
+func (d *DiskDB) Type() string {
+	return "sqlite3"
+}
+
+// ConnectionInfo returns connection information for logging/debugging
+func (d *DiskDB) ConnectionInfo() string {
+	return fmt.Sprintf("sqlite3://%s", d.path)
+}
+
+// QueryRow executes a query that returns at most one row
+func (d *DiskDB) QueryRow(query string, args ...any) *sql.Row {
+	return d.db.QueryRow(query, args...)
 }
 
 // init creates all necessary tables and indexes
@@ -102,6 +165,7 @@ func (d *DiskDB) init() error {
 		path TEXT UNIQUE NOT NULL,
 		parent TEXT,
 		size INTEGER,
+		blocks INTEGER DEFAULT 0,
 		kind TEXT CHECK(kind IN ('file', 'directory')),
 		ctime INTEGER,
 		mtime INTEGER,
@@ -111,6 +175,9 @@ func (d *DiskDB) init() error {
 		return err
 	}
 
+	// Migration: Add blocks column if it doesn't exist (for existing databases)
+	d.db.Exec("ALTER TABLE entries ADD COLUMN blocks INTEGER DEFAULT 0")
+
 	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_parent ON entries(parent)"); err != nil {
 		return err
 	}
@@ -119,8 +186,8 @@ func (d *DiskDB) init() error {
 		return err
 	}
 
-	// Create selection_sets table (simplified - pure item storage)
-	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS selection_sets (
+	// Create resource_sets table (simplified - pure item storage)
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS resource_sets (
 		id INTEGER PRIMARY KEY,
 		name TEXT UNIQUE NOT NULL,
 		description TEXT,
@@ -130,19 +197,19 @@ func (d *DiskDB) init() error {
 		return err
 	}
 
-	// Create selection_set_entries table
-	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS selection_set_entries (
+	// Create resource_set_entries table
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS resource_set_entries (
 		set_id INTEGER NOT NULL,
 		entry_path TEXT NOT NULL,
 		added_at INTEGER DEFAULT (strftime('%s', 'now')),
 		PRIMARY KEY (set_id, entry_path),
-		FOREIGN KEY (set_id) REFERENCES selection_sets(id) ON DELETE CASCADE,
+		FOREIGN KEY (set_id) REFERENCES resource_sets(id) ON DELETE CASCADE,
 		FOREIGN KEY (entry_path) REFERENCES entries(path) ON DELETE CASCADE
 	)`); err != nil {
 		return err
 	}
 
-	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_set_entries ON selection_set_entries(set_id)"); err != nil {
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_set_entries ON resource_set_entries(set_id)"); err != nil {
 		return err
 	}
 
@@ -152,8 +219,8 @@ func (d *DiskDB) init() error {
 		child_id INTEGER NOT NULL,
 		added_at INTEGER DEFAULT (strftime('%s', 'now')),
 		PRIMARY KEY (parent_id, child_id),
-		FOREIGN KEY (parent_id) REFERENCES selection_sets(id) ON DELETE CASCADE,
-		FOREIGN KEY (child_id) REFERENCES selection_sets(id) ON DELETE CASCADE,
+		FOREIGN KEY (parent_id) REFERENCES resource_sets(id) ON DELETE CASCADE,
+		FOREIGN KEY (child_id) REFERENCES resource_sets(id) ON DELETE CASCADE,
 		CHECK (parent_id != child_id)
 	)`); err != nil {
 		return err
@@ -174,7 +241,7 @@ func (d *DiskDB) init() error {
 		description TEXT,
 		query_type TEXT CHECK(query_type IN ('file_filter', 'custom_script')),
 		query_json TEXT NOT NULL,
-		target_selection_set TEXT,
+		target_resource_set TEXT,
 		update_mode TEXT CHECK(update_mode IN ('replace', 'append', 'merge')) DEFAULT 'replace',
 		created_at INTEGER DEFAULT (strftime('%s', 'now')),
 		updated_at INTEGER DEFAULT (strftime('%s', 'now')),
@@ -281,7 +348,7 @@ func (d *DiskDB) init() error {
 		error_message TEXT,
 		duration_ms INTEGER,
 		FOREIGN KEY (rule_id) REFERENCES rules(id) ON DELETE CASCADE,
-		FOREIGN KEY (selection_set_id) REFERENCES selection_sets(id) ON DELETE CASCADE
+		FOREIGN KEY (selection_set_id) REFERENCES resource_sets(id) ON DELETE CASCADE
 	)`); err != nil {
 		return err
 	}
@@ -306,7 +373,7 @@ func (d *DiskDB) init() error {
 		error_message TEXT,
 		created_at INTEGER DEFAULT (strftime('%s', 'now')),
 		FOREIGN KEY (execution_id) REFERENCES rule_executions(id) ON DELETE CASCADE,
-		FOREIGN KEY (selection_set_id) REFERENCES selection_sets(id) ON DELETE CASCADE,
+		FOREIGN KEY (selection_set_id) REFERENCES resource_sets(id) ON DELETE CASCADE,
 		FOREIGN KEY (entry_path) REFERENCES entries(path) ON DELETE CASCADE
 	)`); err != nil {
 		return err
@@ -410,11 +477,12 @@ func (d *DiskDB) prepareStatements() error {
 	var err error
 	d.insertStmt, err = d.db.Prepare(`
 		INSERT INTO entries
-			(path, parent, size, kind, ctime, mtime, last_scanned, dirty)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+			(path, parent, size, blocks, kind, ctime, mtime, last_scanned, dirty)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
 		ON CONFLICT(path) DO UPDATE SET
 			parent=excluded.parent,
 			size=excluded.size,
+			blocks=excluded.blocks,
 			kind=excluded.kind,
 			ctime=excluded.ctime,
 			mtime=excluded.mtime,
@@ -430,9 +498,10 @@ func (d *DiskDB) prepareStatements() error {
 func (d *DiskDB) InsertOrUpdate(entry *models.Entry) error {
 	if logger.IsLevelEnabled(logrus.TraceLevel) {
 		log.WithFields(logrus.Fields{
-			"path": entry.Path,
-			"kind": entry.Kind,
-			"size": entry.Size,
+			"path":   entry.Path,
+			"kind":   entry.Kind,
+			"size":   entry.Size,
+			"blocks": entry.Blocks,
 		}).Trace("Inserting/updating entry")
 	}
 
@@ -446,6 +515,7 @@ func (d *DiskDB) InsertOrUpdate(entry *models.Entry) error {
 		entry.Path,
 		entry.Parent,
 		entry.Size,
+		entry.Blocks,
 		entry.Kind,
 		entry.Ctime,
 		entry.Mtime,
@@ -463,8 +533,8 @@ func (d *DiskDB) Get(path string) (*models.Entry, error) {
 	var entry models.Entry
 	var parent sql.NullString
 
-	err := d.db.QueryRow(`SELECT id, path, parent, size, kind, ctime, mtime, last_scanned FROM entries WHERE path = ?`, path).
-		Scan(&entry.ID, &entry.Path, &parent, &entry.Size, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned)
+	err := d.db.QueryRow(`SELECT id, path, parent, size, blocks, kind, ctime, mtime, last_scanned FROM entries WHERE path = ?`, path).
+		Scan(&entry.ID, &entry.Path, &parent, &entry.Size, &entry.Blocks, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -487,13 +557,23 @@ func (d *DiskDB) Get(path string) (*models.Entry, error) {
 	return &entry, nil
 }
 
+// GetEntryCount returns the count of entries under a root path (inclusive)
+func (d *DiskDB) GetEntryCount(root string) (int64, error) {
+	var count int64
+	err := d.db.QueryRow(`SELECT COUNT(*) FROM entries WHERE path = ? OR path LIKE ?`, root, root+"/%").Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // Children retrieves all children of a parent path
 func (d *DiskDB) Children(parent string) ([]*models.Entry, error) {
 	if logger.IsLevelEnabled(logrus.TraceLevel) {
 		log.WithField("parent", parent).Trace("Fetching children")
 	}
 
-	rows, err := d.db.Query(`SELECT id, path, parent, size, kind, ctime, mtime, last_scanned FROM entries WHERE parent = ?`, parent)
+	rows, err := d.db.Query(`SELECT id, path, parent, size, blocks, kind, ctime, mtime, last_scanned FROM entries WHERE parent = ?`, parent)
 	if err != nil {
 		return nil, err
 	}
@@ -504,7 +584,7 @@ func (d *DiskDB) Children(parent string) ([]*models.Entry, error) {
 		var entry models.Entry
 		var parentNull sql.NullString
 
-		if err := rows.Scan(&entry.ID, &entry.Path, &parentNull, &entry.Size, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.Path, &parentNull, &entry.Size, &entry.Blocks, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned); err != nil {
 			return nil, err
 		}
 
@@ -551,9 +631,9 @@ func (d *DiskDB) DeleteStale(root string, runID int64) error {
 	return nil
 }
 
-// ComputeAggregates computes aggregate sizes for directories
+// ComputeAggregates computes aggregate sizes and blocks for directories
 func (d *DiskDB) ComputeAggregates(root string) error {
-	log.WithField("root", root).Debug("Computing aggregate sizes")
+	log.WithField("root", root).Debug("Computing aggregate sizes and blocks")
 
 	// Get all directories ordered by depth (deepest first)
 	rows, err := d.db.Query(
@@ -578,14 +658,14 @@ func (d *DiskDB) ComputeAggregates(root string) error {
 
 	log.WithField("directoryCount", len(dirs)).Debug("Processing directories for aggregation")
 
-	// Prepare statements
-	updateStmt, err := d.db.Prepare(`UPDATE entries SET size = ? WHERE path = ?`)
+	// Prepare statements - now updates both size and blocks
+	updateStmt, err := d.db.Prepare(`UPDATE entries SET size = ?, blocks = ? WHERE path = ?`)
 	if err != nil {
 		return err
 	}
 	defer updateStmt.Close()
 
-	sumStmt, err := d.db.Prepare(`SELECT COALESCE(SUM(size), 0) as total FROM entries WHERE parent = ?`)
+	sumStmt, err := d.db.Prepare(`SELECT COALESCE(SUM(size), 0) as total_size, COALESCE(SUM(blocks), 0) as total_blocks FROM entries WHERE parent = ?`)
 	if err != nil {
 		return err
 	}
@@ -601,22 +681,23 @@ func (d *DiskDB) ComputeAggregates(root string) error {
 	txSumStmt := tx.Stmt(sumStmt)
 
 	for _, dir := range dirs {
-		var total int64
-		if err := txSumStmt.QueryRow(dir).Scan(&total); err != nil {
+		var totalSize, totalBlocks int64
+		if err := txSumStmt.QueryRow(dir).Scan(&totalSize, &totalBlocks); err != nil {
 			tx.Rollback()
 			return err
 		}
 
-		if _, err := txUpdateStmt.Exec(total, dir); err != nil {
+		if _, err := txUpdateStmt.Exec(totalSize, totalBlocks, dir); err != nil {
 			tx.Rollback()
 			return err
 		}
 
 		if logger.IsLevelEnabled(logrus.TraceLevel) {
 			log.WithFields(logrus.Fields{
-				"path":          dir,
-				"aggregateSize": total,
-			}).Trace("Updated directory size")
+				"path":            dir,
+				"aggregateSize":   totalSize,
+				"aggregateBlocks": totalBlocks,
+			}).Trace("Updated directory size and blocks")
 		}
 	}
 
@@ -625,7 +706,7 @@ func (d *DiskDB) ComputeAggregates(root string) error {
 	}
 
 	log.WithFields(logrus.Fields{
-		"root":                root,
+		"root":                 root,
 		"directoriesProcessed": len(dirs),
 	}).Info("Aggregate computation complete")
 
@@ -650,11 +731,12 @@ func (d *DiskDB) BeginTransaction() error {
 	// Create a prepared statement bound to this transaction
 	stmt, err := tx.Prepare(`
 		INSERT INTO entries
-			(path, parent, size, kind, ctime, mtime, last_scanned, dirty)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+			(path, parent, size, blocks, kind, ctime, mtime, last_scanned, dirty)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
 		ON CONFLICT(path) DO UPDATE SET
 			parent=excluded.parent,
 			size=excluded.size,
+			blocks=excluded.blocks,
 			kind=excluded.kind,
 			ctime=excluded.ctime,
 			mtime=excluded.mtime,
@@ -722,7 +804,7 @@ func (d *DiskDB) UnlockIndexing() {
 
 // All retrieves all entries
 func (d *DiskDB) All() ([]*models.Entry, error) {
-	rows, err := d.db.Query(`SELECT id, path, parent, size, kind, ctime, mtime, last_scanned FROM entries`)
+	rows, err := d.db.Query(`SELECT id, path, parent, size, blocks, kind, ctime, mtime, last_scanned FROM entries`)
 	if err != nil {
 		return nil, err
 	}
@@ -733,7 +815,7 @@ func (d *DiskDB) All() ([]*models.Entry, error) {
 		var entry models.Entry
 		var parent sql.NullString
 
-		if err := rows.Scan(&entry.ID, &entry.Path, &parent, &entry.Size, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.Path, &parent, &entry.Size, &entry.Blocks, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned); err != nil {
 			return nil, err
 		}
 
@@ -1080,7 +1162,7 @@ func (d *DiskDB) GetDiskUsageSummary(root string) (*models.DiskUsageSummary, err
 
 // ExecuteFileFilter executes a file filter and returns matching entries
 func (d *DiskDB) ExecuteFileFilter(filter *models.FileFilter) ([]*models.Entry, error) {
-	query := "SELECT id, path, parent, size, kind, ctime, mtime, last_scanned FROM entries WHERE 1=1"
+	query := "SELECT id, path, parent, size, blocks, kind, ctime, mtime, last_scanned FROM entries WHERE 1=1"
 	args := []interface{}{}
 
 	// Build the WHERE clause
@@ -1193,7 +1275,7 @@ func (d *DiskDB) ExecuteFileFilter(filter *models.FileFilter) ([]*models.Entry, 
 		var entry models.Entry
 		var parent sql.NullString
 
-		if err := rows.Scan(&entry.ID, &entry.Path, &parent, &entry.Size, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.Path, &parent, &entry.Size, &entry.Blocks, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned); err != nil {
 			return nil, err
 		}
 
@@ -1214,7 +1296,7 @@ func (d *DiskDB) ExecuteFileFilter(filter *models.FileFilter) ([]*models.Entry, 
 
 // GetEntriesByTimeRange retrieves entries modified within a time range
 func (d *DiskDB) GetEntriesByTimeRange(startDate, endDate string, root *string) ([]*models.Entry, error) {
-	query := "SELECT id, path, parent, size, kind, ctime, mtime, last_scanned FROM entries WHERE 1=1"
+	query := "SELECT id, path, parent, size, blocks, kind, ctime, mtime, last_scanned FROM entries WHERE 1=1"
 	args := []interface{}{}
 
 	if root != nil {
@@ -1248,7 +1330,7 @@ func (d *DiskDB) GetEntriesByTimeRange(startDate, endDate string, root *string) 
 		var entry models.Entry
 		var parent sql.NullString
 
-		if err := rows.Scan(&entry.ID, &entry.Path, &parent, &entry.Size, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.Path, &parent, &entry.Size, &entry.Blocks, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned); err != nil {
 			return nil, err
 		}
 
@@ -1264,14 +1346,14 @@ func (d *DiskDB) GetEntriesByTimeRange(startDate, endDate string, root *string) 
 
 // Selection Set Operations
 
-// CreateSelectionSet creates a new selection set
-func (d *DiskDB) CreateSelectionSet(set *models.SelectionSet) (int64, error) {
+// CreateResourceSet creates a new resource set
+func (d *DiskDB) CreateResourceSet(set *models.ResourceSet) (int64, error) {
 	log.WithFields(logrus.Fields{
 		"name": set.Name,
-	}).Info("Creating selection set")
+	}).Info("Creating resource set")
 
 	result, err := d.db.Exec(`
-		INSERT INTO selection_sets (name, description)
+		INSERT INTO resource_sets (name, description)
 		VALUES (?, ?)
 	`, set.Name, set.Description)
 
@@ -1282,12 +1364,12 @@ func (d *DiskDB) CreateSelectionSet(set *models.SelectionSet) (int64, error) {
 	return result.LastInsertId()
 }
 
-// GetSelectionSet retrieves a selection set by name
-func (d *DiskDB) GetSelectionSet(name string) (*models.SelectionSet, error) {
-	var set models.SelectionSet
+// GetResourceSet retrieves a resource set by name
+func (d *DiskDB) GetResourceSet(name string) (*models.ResourceSet, error) {
+	var set models.ResourceSet
 	var description sql.NullString
 
-	err := d.db.QueryRow(`SELECT id, name, description, created_at, updated_at FROM selection_sets WHERE name = ?`, name).
+	err := d.db.QueryRow(`SELECT id, name, description, created_at, updated_at FROM resource_sets WHERE name = ?`, name).
 		Scan(&set.ID, &set.Name, &description, &set.CreatedAt, &set.UpdatedAt)
 
 	if err == sql.ErrNoRows {
@@ -1304,17 +1386,17 @@ func (d *DiskDB) GetSelectionSet(name string) (*models.SelectionSet, error) {
 	return &set, nil
 }
 
-// ListSelectionSets retrieves all selection sets
-func (d *DiskDB) ListSelectionSets() ([]*models.SelectionSet, error) {
-	rows, err := d.db.Query(`SELECT id, name, description, created_at, updated_at FROM selection_sets ORDER BY created_at DESC`)
+// ListResourceSets retrieves all resource sets
+func (d *DiskDB) ListResourceSets() ([]*models.ResourceSet, error) {
+	rows, err := d.db.Query(`SELECT id, name, description, created_at, updated_at FROM resource_sets ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var sets []*models.SelectionSet
+	var sets []*models.ResourceSet
 	for rows.Next() {
-		var set models.SelectionSet
+		var set models.ResourceSet
 		var description sql.NullString
 
 		if err := rows.Scan(&set.ID, &set.Name, &description, &set.CreatedAt, &set.UpdatedAt); err != nil {
@@ -1331,21 +1413,21 @@ func (d *DiskDB) ListSelectionSets() ([]*models.SelectionSet, error) {
 	return sets, rows.Err()
 }
 
-// DeleteSelectionSet deletes a selection set
-func (d *DiskDB) DeleteSelectionSet(name string) error {
-	log.WithField("name", name).Info("Deleting selection set")
-	_, err := d.db.Exec(`DELETE FROM selection_sets WHERE name = ?`, name)
+// DeleteResourceSet deletes a resource set
+func (d *DiskDB) DeleteResourceSet(name string) error {
+	log.WithField("name", name).Info("Deleting resource set")
+	_, err := d.db.Exec(`DELETE FROM resource_sets WHERE name = ?`, name)
 	return err
 }
 
-// AddToSelectionSet adds entries to a selection set
-func (d *DiskDB) AddToSelectionSet(setName string, paths []string) error {
-	set, err := d.GetSelectionSet(setName)
+// AddToResourceSet adds entries to a resource set
+func (d *DiskDB) AddToResourceSet(setName string, paths []string) error {
+	set, err := d.GetResourceSet(setName)
 	if err != nil {
 		return err
 	}
 	if set == nil {
-		return fmt.Errorf("selection set '%s' not found", setName)
+		return fmt.Errorf("resource set '%s' not found", setName)
 	}
 
 	tx, err := d.db.Begin()
@@ -1353,7 +1435,7 @@ func (d *DiskDB) AddToSelectionSet(setName string, paths []string) error {
 		return err
 	}
 
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO selection_set_entries (set_id, entry_path) VALUES (?, ?)`)
+	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO resource_set_entries (set_id, entry_path) VALUES (?, ?)`)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -1368,7 +1450,7 @@ func (d *DiskDB) AddToSelectionSet(setName string, paths []string) error {
 	}
 
 	// Update the set's updated_at timestamp
-	if _, err := tx.Exec(`UPDATE selection_sets SET updated_at = strftime('%s', 'now') WHERE id = ?`, set.ID); err != nil {
+	if _, err := tx.Exec(`UPDATE resource_sets SET updated_at = strftime('%s', 'now') WHERE id = ?`, set.ID); err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -1380,19 +1462,19 @@ func (d *DiskDB) AddToSelectionSet(setName string, paths []string) error {
 	log.WithFields(logrus.Fields{
 		"setName": setName,
 		"count":   len(paths),
-	}).Info("Added entries to selection set")
+	}).Info("Added entries to resource set")
 
 	return nil
 }
 
-// RemoveFromSelectionSet removes entries from a selection set
-func (d *DiskDB) RemoveFromSelectionSet(setName string, paths []string) error {
-	set, err := d.GetSelectionSet(setName)
+// RemoveFromResourceSet removes entries from a resource set
+func (d *DiskDB) RemoveFromResourceSet(setName string, paths []string) error {
+	set, err := d.GetResourceSet(setName)
 	if err != nil {
 		return err
 	}
 	if set == nil {
-		return fmt.Errorf("selection set '%s' not found", setName)
+		return fmt.Errorf("resource set '%s' not found", setName)
 	}
 
 	tx, err := d.db.Begin()
@@ -1400,7 +1482,7 @@ func (d *DiskDB) RemoveFromSelectionSet(setName string, paths []string) error {
 		return err
 	}
 
-	stmt, err := tx.Prepare(`DELETE FROM selection_set_entries WHERE set_id = ? AND entry_path = ?`)
+	stmt, err := tx.Prepare(`DELETE FROM resource_set_entries WHERE set_id = ? AND entry_path = ?`)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -1415,7 +1497,7 @@ func (d *DiskDB) RemoveFromSelectionSet(setName string, paths []string) error {
 	}
 
 	// Update the set's updated_at timestamp
-	if _, err := tx.Exec(`UPDATE selection_sets SET updated_at = strftime('%s', 'now') WHERE id = ?`, set.ID); err != nil {
+	if _, err := tx.Exec(`UPDATE resource_sets SET updated_at = strftime('%s', 'now') WHERE id = ?`, set.ID); err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -1427,25 +1509,25 @@ func (d *DiskDB) RemoveFromSelectionSet(setName string, paths []string) error {
 	log.WithFields(logrus.Fields{
 		"setName": setName,
 		"count":   len(paths),
-	}).Info("Removed entries from selection set")
+	}).Info("Removed entries from resource set")
 
 	return nil
 }
 
-// GetSelectionSetEntries retrieves all entries in a selection set
-func (d *DiskDB) GetSelectionSetEntries(setName string) ([]*models.Entry, error) {
-	set, err := d.GetSelectionSet(setName)
+// GetResourceSetEntries retrieves all entries in a resource set
+func (d *DiskDB) GetResourceSetEntries(setName string) ([]*models.Entry, error) {
+	set, err := d.GetResourceSet(setName)
 	if err != nil {
 		return nil, err
 	}
 	if set == nil {
-		return nil, fmt.Errorf("selection set '%s' not found", setName)
+		return nil, fmt.Errorf("resource set '%s' not found", setName)
 	}
 
 	rows, err := d.db.Query(`
-		SELECT e.id, e.path, e.parent, e.size, e.kind, e.ctime, e.mtime, e.last_scanned
+		SELECT e.id, e.path, e.parent, e.size, e.blocks, e.kind, e.ctime, e.mtime, e.last_scanned
 		FROM entries e
-		JOIN selection_set_entries sse ON e.path = sse.entry_path
+		JOIN resource_set_entries sse ON e.path = sse.entry_path
 		WHERE sse.set_id = ?
 		ORDER BY e.path
 	`, set.ID)
@@ -1460,7 +1542,7 @@ func (d *DiskDB) GetSelectionSetEntries(setName string) ([]*models.Entry, error)
 		var entry models.Entry
 		var parent sql.NullString
 
-		if err := rows.Scan(&entry.ID, &entry.Path, &parent, &entry.Size, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.Path, &parent, &entry.Size, &entry.Blocks, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned); err != nil {
 			return nil, err
 		}
 
@@ -1481,9 +1563,9 @@ func (d *DiskDB) CreateQuery(query *models.Query) (int64, error) {
 	log.WithField("name", query.Name).Info("Creating query")
 
 	result, err := d.db.Exec(`
-		INSERT INTO queries (name, description, query_type, query_json, target_selection_set, update_mode)
+		INSERT INTO queries (name, description, query_type, query_json, target_resource_set, update_mode)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, query.Name, query.Description, query.QueryType, query.QueryJSON, query.TargetSelectionSet, query.UpdateMode)
+	`, query.Name, query.Description, query.QueryType, query.QueryJSON, query.TargetResourceSet, query.UpdateMode)
 
 	if err != nil {
 		return 0, err
@@ -1499,7 +1581,7 @@ func (d *DiskDB) GetQuery(name string) (*models.Query, error) {
 	var lastExecuted sql.NullInt64
 
 	err := d.db.QueryRow(`
-		SELECT id, name, description, query_type, query_json, target_selection_set, update_mode,
+		SELECT id, name, description, query_type, query_json, target_resource_set, update_mode,
 		       created_at, updated_at, last_executed, execution_count
 		FROM queries WHERE name = ?
 	`, name).Scan(
@@ -1519,7 +1601,7 @@ func (d *DiskDB) GetQuery(name string) (*models.Query, error) {
 		query.Description = &description.String
 	}
 	if targetSet.Valid {
-		query.TargetSelectionSet = &targetSet.String
+		query.TargetResourceSet = &targetSet.String
 	}
 	if updateMode.Valid {
 		query.UpdateMode = &updateMode.String
@@ -1534,7 +1616,7 @@ func (d *DiskDB) GetQuery(name string) (*models.Query, error) {
 // ListQueries retrieves all queries
 func (d *DiskDB) ListQueries() ([]*models.Query, error) {
 	rows, err := d.db.Query(`
-		SELECT id, name, description, query_type, query_json, target_selection_set, update_mode,
+		SELECT id, name, description, query_type, query_json, target_resource_set, update_mode,
 		       created_at, updated_at, last_executed, execution_count
 		FROM queries ORDER BY created_at DESC
 	`)
@@ -1561,7 +1643,7 @@ func (d *DiskDB) ListQueries() ([]*models.Query, error) {
 			query.Description = &description.String
 		}
 		if targetSet.Valid {
-			query.TargetSelectionSet = &targetSet.String
+			query.TargetResourceSet = &targetSet.String
 		}
 		if updateMode.Valid {
 			query.UpdateMode = &updateMode.String
@@ -1788,6 +1870,33 @@ func (d *DiskDB) GetMetadataByPath(sourcePath string) ([]*models.Metadata, error
 	}
 
 	return metadataList, rows.Err()
+}
+
+// GetMetadataByCachePath retrieves metadata by its cache path
+func (d *DiskDB) GetMetadataByCachePath(cachePath string) (*models.Metadata, error) {
+	row := d.db.QueryRow(`
+		SELECT id, hash, source_path, metadata_type, mime_type, cache_path, file_size, metadata_json, created_at
+		FROM metadata WHERE cache_path = ?
+	`, cachePath)
+
+	var metadata models.Metadata
+	var metadataJson sql.NullString
+
+	if err := row.Scan(
+		&metadata.ID, &metadata.Hash, &metadata.SourcePath, &metadata.MetadataType,
+		&metadata.MimeType, &metadata.CachePath, &metadata.FileSize, &metadataJson, &metadata.CreatedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	if metadataJson.Valid {
+		metadata.MetadataJson = metadataJson.String
+	}
+
+	return &metadata, nil
 }
 
 // ListMetadata retrieves all metadata, optionally filtered by type

@@ -408,6 +408,107 @@ func serveContent(c *gin.Context, db *database.DiskDB) {
 	c.File(targetPath)
 }
 
+// serveContentFromCache serves files from a cache directory without database validation
+// Used for multi-project architecture where cache is shared across projects
+func serveContentFromCache(c *gin.Context, cacheDir string) {
+	path := c.Query("path")
+	if path == "" {
+		c.String(http.StatusBadRequest, "path required")
+		return
+	}
+
+	// Expand and validate the path
+	targetPath, err := pathutil.ExpandPath(path)
+	if err != nil {
+		c.String(http.StatusBadRequest, "invalid path")
+		return
+	}
+
+	// Get absolute cache directory for comparison
+	var absCacheDir string
+	if cacheDir != "" {
+		absCacheDir, _ = filepath.Abs(cacheDir)
+	}
+
+	// Security: Only allow files in the cache directory or paths starting with "cache/"
+	isValidArtifact := false
+
+	// Check configured cache dir (convert to absolute for comparison)
+	if absCacheDir != "" && strings.HasPrefix(filepath.Clean(targetPath), filepath.Clean(absCacheDir)) {
+		isValidArtifact = true
+	}
+
+	// Allow paths that look like cache paths (relative cache directory)
+	if !isValidArtifact && strings.HasPrefix(path, "cache/") {
+		isValidArtifact = true
+	}
+
+	if !isValidArtifact {
+		inspectLog.WithField("path", path).WithField("targetPath", targetPath).Warn("Path not accessible")
+		c.String(http.StatusForbidden, "path not accessible")
+		return
+	}
+
+	// Try to find the artifact on disk
+	actualPath := targetPath
+	if _, err := os.Stat(targetPath); err != nil {
+		// If targetPath is absolute and within cache dir, try the relative version
+		if absCacheDir != "" && strings.HasPrefix(filepath.Clean(targetPath), filepath.Clean(absCacheDir)) {
+			relPath, relErr := filepath.Rel(absCacheDir, targetPath)
+			if relErr == nil {
+				tryPath := filepath.Join(cacheDir, relPath)
+				if _, statErr := os.Stat(tryPath); statErr == nil {
+					actualPath = tryPath
+				}
+			}
+		}
+
+		if actualPath == targetPath {
+			c.String(http.StatusNotFound, "not found")
+			return
+		}
+	}
+
+	// Serve the file
+	file, err := os.Open(actualPath)
+	if err != nil {
+		c.String(http.StatusInternalServerError, "failed to open file")
+		return
+	}
+	defer file.Close()
+
+	buf := make([]byte, 512)
+	n, _ := file.Read(buf)
+	mimeType := http.DetectContentType(buf[:n])
+	file.Seek(0, io.SeekStart)
+
+	c.Header("Content-Type", mimeType)
+	c.File(actualPath)
+}
+
+// handleInspectWithDB handles file inspection with a database backend
+// Used for multi-project architecture where database is resolved from context
+func handleInspectWithDB(c *gin.Context, db database.Backend) {
+	path := c.Query("path")
+	limit, offset := parsePagination(c.Query("limit"), c.Query("offset"))
+
+	// For now, we need to cast to DiskDB until we refactor buildInspectResponse
+	// to work with the Backend interface
+	diskDB, ok := db.(*database.DiskDB)
+	if !ok {
+		c.String(http.StatusInternalServerError, "unsupported database backend")
+		return
+	}
+
+	response, err := buildInspectResponse(path, diskDB, limit, offset)
+	if err != nil {
+		c.String(http.StatusBadRequest, err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
 func createImageThumbnail(path string, mtime int64, hashKey string) (string, string, error) {
 	cachePath, err := artifactCachePath(hashKey, "thumb.jpg")
 	if err != nil {
