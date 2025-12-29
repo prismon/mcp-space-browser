@@ -42,19 +42,13 @@ func enrichEntriesWithThumbnails(db *database.DiskDB, entries []*models.Entry) {
 			continue
 		}
 
-		// Look up thumbnail metadata for this path
-		metadataList, err := db.GetMetadataByPath(entry.Path)
-		if err != nil || len(metadataList) == 0 {
+		// Look up thumbnail feature for this path
+		feature, err := db.GetFeatureByPathAndType(entry.Path, models.FeatureTypeThumbnail)
+		if err != nil || feature == nil || feature.CachePath == nil {
 			continue
 		}
 
-		// Find the thumbnail entry
-		for _, metadata := range metadataList {
-			if metadata.MetadataType == "thumbnail" {
-				entry.ThumbnailUrl = fmt.Sprintf("%s/api/content?path=%s", baseURL, url.QueryEscape(metadata.CachePath))
-				break
-			}
-		}
+		entry.ThumbnailUrl = fmt.Sprintf("%s/api/content?path=%s", baseURL, url.QueryEscape(*feature.CachePath))
 	}
 }
 

@@ -26,9 +26,14 @@ func NewOutcomeApplier(db *database.DiskDB, logger *logrus.Entry) *OutcomeApplie
 	}
 }
 
-// SetProcessor sets the classifier processor for generating thumbnails
+// SetProcessor sets the classifier processor for generating thumbnails.
+// It also sets the database on the processor for storing artifact metadata.
 func (oa *OutcomeApplier) SetProcessor(processor *classifier.Processor) {
 	oa.processor = processor
+	// Set the database so the processor can store artifact metadata
+	if processor != nil && oa.db != nil {
+		processor.SetDatabase(oa.db)
+	}
 }
 
 // ApplyAll applies all outcomes to matched entries

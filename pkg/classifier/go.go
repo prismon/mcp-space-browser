@@ -113,6 +113,7 @@ func (g *GoClassifier) generateImageThumbnail(req *ArtifactRequest) *ArtifactRes
 	return &ArtifactResult{
 		OutputPath: req.OutputPath,
 		MimeType:   "image/jpeg",
+		Generator:  "go-image",
 	}
 }
 
@@ -133,6 +134,7 @@ func (g *GoClassifier) generateVideoPlaceholder(req *ArtifactRequest) *ArtifactR
 	return &ArtifactResult{
 		OutputPath: req.OutputPath,
 		MimeType:   "image/jpeg",
+		Generator:  "go-image",
 	}
 }
 

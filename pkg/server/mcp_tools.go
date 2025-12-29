@@ -132,6 +132,7 @@ func registerMCPToolsMultiProject(s *server.MCPServer, sc *ServerContext, proces
 	registerListJobsToolMP(s, sc)
 	registerCancelJobToolMP(s, sc)
 	registerDbDiagnoseToolMP(s, sc)
+	registerMigrateMetadataToFeaturesToolMP(s, sc)
 
 	// Resource set tools
 	registerResourceSetCreateMP(s, sc)
@@ -186,13 +187,21 @@ func requireProjectDB(ctx context.Context, sc *ServerContext) (*database.DiskDB,
 		return nil, mcp.NewToolResultError(fmt.Sprintf("No active project: %v. Use project-open to select a project.", err))
 	}
 
-	// For now, we only support DiskDB until the full backend abstraction is implemented
-	db, ok := backend.(*database.DiskDB)
-	if !ok {
-		return nil, mcp.NewToolResultError("Unsupported database backend. Only SQLite is currently supported.")
+	// Handle SQLiteBackend - get the DiskDB wrapper
+	if sqliteBackend, ok := backend.(*database.SQLiteBackend); ok {
+		db, err := sqliteBackend.DiskDB()
+		if err != nil {
+			return nil, mcp.NewToolResultError(fmt.Sprintf("Failed to get database: %v", err))
+		}
+		return db, nil
 	}
 
-	return db, nil
+	// Also support direct DiskDB (for backwards compatibility)
+	if db, ok := backend.(*database.DiskDB); ok {
+		return db, nil
+	}
+
+	return nil, mcp.NewToolResultError("Unsupported database backend. Only SQLite is currently supported.")
 }
 
 // Tree compression utilities
@@ -742,18 +751,13 @@ func registerNavigateTool(s *server.MCPServer, db *database.DiskDB) {
 				"link":       fmt.Sprintf("synthesis://nodes/%s", child.Path),
 			}
 
-			// For files, look up thumbnail if available
+			// For files, look up thumbnail feature if available
 			if child.Kind == "file" {
-				metadataList, err := db.GetMetadataByPath(child.Path)
-				if err == nil && len(metadataList) > 0 {
-					listing["metadataUri"] = fmt.Sprintf("synthesis://nodes/%s/metadata", child.Path)
-					for _, metadata := range metadataList {
-						if metadata.MetadataType == "thumbnail" && metadata.CachePath != "" {
-							normalizedPath := normalizeCachePath(metadata.CachePath)
-							listing["thumbnailUrl"] = fmt.Sprintf("%s/api/content?path=%s", baseURL, normalizedPath)
-							break
-						}
-					}
+				feature, err := db.GetFeatureByPathAndType(child.Path, models.FeatureTypeThumbnail)
+				if err == nil && feature != nil && feature.CachePath != nil {
+					listing["featuresUri"] = fmt.Sprintf("synthesis://nodes/%s/features", child.Path)
+					normalizedPath := normalizeCachePath(*feature.CachePath)
+					listing["thumbnailUrl"] = fmt.Sprintf("%s/api/content?path=%s", baseURL, normalizedPath)
 				}
 			} else {
 				// Check if this child has metadata/artifacts (for directories)
@@ -2840,12 +2844,37 @@ func registerNavigateToolMP(s *server.MCPServer, sc *ServerContext) {
 
 		enrichEntriesWithThumbnails(db, children)
 
+		// Build base URL for HTTP content serving
+		baseURL := contentBaseURL
+		if baseURL == "" {
+			baseURL = "http://localhost:3000"
+		}
+
+		// Transform entries to include name field (matching old format)
+		listings := make([]map[string]any, 0, len(children))
+		for _, child := range children {
+			listing := map[string]any{
+				"path":       child.Path,
+				"name":       filepath.Base(child.Path),
+				"kind":       child.Kind,
+				"size":       child.Size,
+				"modifiedAt": time.Unix(child.Mtime, 0).Format(time.RFC3339),
+			}
+
+			// Include thumbnail URL if available
+			if child.ThumbnailUrl != "" {
+				listing["thumbnailUrl"] = child.ThumbnailUrl
+			}
+
+			listings = append(listings, listing)
+		}
+
 		response := map[string]interface{}{
 			"path":        expandedPath,
 			"total_size":  entry.Size,
 			"total_items": totalCount,
 			"summary":     summary,
-			"entries":     children,
+			"entries":     listings,
 			"pagination": map[string]int{
 				"offset": offset,
 				"limit":  limit,
@@ -2894,7 +2923,7 @@ func registerInspectToolMP(s *server.MCPServer, sc *ServerContext) {
 			return mcp.NewToolResultError("Path not found in index"), nil
 		}
 
-		metadata, _ := db.GetMetadataByPath(expandedPath)
+		features, _ := db.GetFeaturesByPath(expandedPath)
 
 		response := map[string]interface{}{
 			"path":         entry.Path,
@@ -2905,18 +2934,25 @@ func registerInspectToolMP(s *server.MCPServer, sc *ServerContext) {
 			"last_scanned": entry.LastScanned,
 		}
 
-		if len(metadata) > 0 {
-			metadataList := make([]map[string]interface{}, 0, len(metadata))
-			for _, m := range metadata {
-				normalizedPath := normalizeCachePath(m.CachePath)
-				metadataList = append(metadataList, map[string]interface{}{
-					"type":       m.MetadataType,
-					"hash":       m.Hash,
-					"cache_path": normalizedPath,
-					"url":        fmt.Sprintf("%s/api/content?path=%s", sc.ContentBaseURL, normalizedPath),
-				})
+		if len(features) > 0 {
+			featuresList := make([]map[string]interface{}, 0, len(features))
+			for _, f := range features {
+				featureData := map[string]interface{}{
+					"type":      f.FeatureType,
+					"hash":      f.Hash,
+					"generator": f.Generator,
+				}
+				if f.CachePath != nil {
+					normalizedPath := normalizeCachePath(*f.CachePath)
+					featureData["cache_path"] = normalizedPath
+					featureData["url"] = fmt.Sprintf("%s/api/content?path=%s", sc.ContentBaseURL, normalizedPath)
+				}
+				if f.DataJson != nil {
+					featureData["data"] = *f.DataJson
+				}
+				featuresList = append(featuresList, featureData)
 			}
-			response["metadata"] = metadataList
+			response["features"] = featuresList
 		}
 
 		payload, _ := json.Marshal(response)
@@ -3021,6 +3057,31 @@ func registerDbDiagnoseToolMP(s *server.MCPServer, sc *ServerContext) {
 		result := map[string]interface{}{
 			"entries_count": count,
 			"backend":       "sqlite3",
+		}
+		payload, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(payload)), nil
+	})
+}
+
+func registerMigrateMetadataToFeaturesToolMP(s *server.MCPServer, sc *ServerContext) {
+	tool := mcp.NewTool("migrate-metadata-to-features",
+		mcp.WithDescription("Migrate existing metadata entries to the features table. This is a one-time migration for upgrading from metadata-based to feature-based storage."),
+	)
+	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		db, errResult := requireProjectDB(ctx, sc)
+		if errResult != nil {
+			return errResult, nil
+		}
+
+		count, err := db.MigrateMetadataToFeatures()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Migration failed: %v", err)), nil
+		}
+
+		result := map[string]interface{}{
+			"status":          "success",
+			"migrated_count":  count,
+			"message":         fmt.Sprintf("Successfully migrated %d metadata entries to features", count),
 		}
 		payload, _ := json.Marshal(result)
 		return mcp.NewToolResultText(string(payload)), nil

@@ -38,6 +38,12 @@ func NewProcessor(config *ProcessorConfig) *Processor {
 	return &Processor{config: config}
 }
 
+// SetDatabase sets the database for storing artifact metadata.
+// This is used in multi-project mode where the database is resolved at runtime.
+func (p *Processor) SetDatabase(db *database.DiskDB) {
+	p.config.Database = db
+}
+
 // ProcessRequest represents a request to process a resource
 type ProcessRequest struct {
 	ResourceURL   string
@@ -127,7 +133,7 @@ func (p *Processor) ProcessResource(req *ProcessRequest) (*ProcessResult, error)
 		}
 	}
 
-	// Store artifacts in database for discovery via MCP resources
+	// Store artifacts as features in database for discovery via MCP resources
 	if p.config.Database != nil {
 		for _, artifact := range result.Artifacts {
 			// Get file size of cached artifact
@@ -137,25 +143,28 @@ func (p *Processor) ProcessResource(req *ProcessRequest) (*ProcessResult, error)
 			}
 
 			// Serialize metadata map to JSON
-			var metadataJson string
+			var dataJson *string
 			if artifact.Metadata != nil {
 				if jsonBytes, err := json.Marshal(artifact.Metadata); err == nil {
-					metadataJson = string(jsonBytes)
+					jsonStr := string(jsonBytes)
+					dataJson = &jsonStr
 				}
 			}
 
-			metadata := &models.Metadata{
-				Hash:         artifact.Hash,
-				SourcePath:   localPath,
-				MetadataType: artifact.Type,
-				MimeType:     artifact.MimeType,
-				CachePath:    artifact.CachePath,
-				FileSize:     fileSize,
-				MetadataJson: metadataJson,
+			// Create Feature from artifact
+			feature := &models.Feature{
+				EntryPath:   localPath,
+				FeatureType: artifact.Type,
+				Hash:        artifact.Hash,
+				MimeType:    &artifact.MimeType,
+				CachePath:   &artifact.CachePath,
+				DataJson:    dataJson,
+				FileSize:    fileSize,
+				Generator:   artifact.Generator,
 			}
 
-			if err := p.config.Database.CreateOrUpdateMetadata(metadata); err != nil {
-				processorLog.WithError(err).WithField("hash", artifact.Hash).Warn("Failed to store artifact metadata in database")
+			if err := p.config.Database.CreateOrUpdateFeature(feature); err != nil {
+				processorLog.WithError(err).WithField("hash", artifact.Hash).Warn("Failed to store feature in database")
 			}
 		}
 	}
@@ -325,12 +334,18 @@ func (p *Processor) generateThumbnail(path string, mediaType MediaType, hashKey 
 	// Check if already exists
 	if _, err := os.Stat(cachePath); err == nil {
 		processorLog.WithField("hash", hashKey).Debug("Thumbnail already exists in cache")
+		// Determine generator from media type (cached files don't have generator info)
+		generator := "go-image"
+		if mediaType == MediaTypeVideo {
+			generator = "ffmpeg"
+		}
 		return &database.ClassifierArtifact{
 			Type:        "thumbnail",
 			Hash:        hashKey,
 			MimeType:    "image/jpeg",
 			CachePath:   cachePath,
 			ResourceURI: fmt.Sprintf("synthesis://metadata/%s", hashKey),
+			Generator:   generator,
 		}, nil
 	}
 
@@ -354,6 +369,7 @@ func (p *Processor) generateThumbnail(path string, mediaType MediaType, hashKey 
 		MimeType:    result.MimeType,
 		CachePath:   result.OutputPath,
 		ResourceURI: fmt.Sprintf("synthesis://metadata/%s", hashKey),
+		Generator:   result.Generator,
 	}, nil
 }
 
@@ -367,6 +383,7 @@ func (p *Processor) generateTimeline(path string, hashKey string, frames int) ([
 			return nil, err
 		}
 
+		var generator string
 		// Check if already exists
 		if _, err := os.Stat(framePath); os.IsNotExist(err) {
 			req := &ArtifactRequest{
@@ -384,6 +401,10 @@ func (p *Processor) generateTimeline(path string, hashKey string, frames int) ([
 			if result.Error != nil {
 				return nil, result.Error
 			}
+			generator = result.Generator
+		} else {
+			// Default for cached files
+			generator = "ffmpeg"
 		}
 
 		frameHash := fmt.Sprintf("%s-frame-%d", hashKey, i)
@@ -393,6 +414,7 @@ func (p *Processor) generateTimeline(path string, hashKey string, frames int) ([
 			MimeType:    "image/jpeg",
 			CachePath:   framePath,
 			ResourceURI: fmt.Sprintf("synthesis://metadata/%s", frameHash),
+			Generator:   generator,
 			Metadata: map[string]any{
 				"frame": i,
 			},

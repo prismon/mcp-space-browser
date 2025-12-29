@@ -111,6 +111,7 @@ func (f *FFmpegClassifier) GenerateThumbnail(req *ArtifactRequest) *ArtifactResu
 	return &ArtifactResult{
 		OutputPath: req.OutputPath,
 		MimeType:   "image/jpeg",
+		Generator:  "ffmpeg",
 	}
 }
 
@@ -177,6 +178,7 @@ func (f *FFmpegClassifier) GenerateTimelineFrame(req *ArtifactRequest) *Artifact
 	return &ArtifactResult{
 		OutputPath: req.OutputPath,
 		MimeType:   "image/jpeg",
+		Generator:  "ffmpeg",
 	}
 }
 

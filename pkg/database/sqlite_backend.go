@@ -15,6 +15,7 @@ type SQLiteBackend struct {
 	path       string  // Absolute path to database file
 	db         *sql.DB // Underlying database connection
 	writeQueue *WriteQueue
+	diskDB     *DiskDB // Cached DiskDB wrapper for domain operations
 	mu         sync.RWMutex
 	isOpen     bool
 }
@@ -94,6 +95,14 @@ func (s *SQLiteBackend) Close() error {
 
 	log.WithField("path", s.path).Info("Closing SQLite database")
 
+	// Close the cached DiskDB's prepared statements (not the connection)
+	if s.diskDB != nil {
+		if s.diskDB.insertStmt != nil {
+			s.diskDB.insertStmt.Close()
+		}
+		s.diskDB = nil
+	}
+
 	// Stop the write queue first
 	if s.writeQueue != nil {
 		s.writeQueue.Stop()
@@ -141,6 +150,32 @@ func (s *SQLiteBackend) ConnectionInfo() string {
 // Path returns the absolute path to the database file
 func (s *SQLiteBackend) Path() string {
 	return s.path
+}
+
+// DiskDB returns a DiskDB wrapper for domain-level database operations.
+// The DiskDB is lazily created and cached for the lifetime of the backend.
+// The returned DiskDB shares the underlying connection and should not be closed directly.
+func (s *SQLiteBackend) DiskDB() (*DiskDB, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.isOpen || s.db == nil {
+		return nil, fmt.Errorf("database not open")
+	}
+
+	// Return cached DiskDB if available
+	if s.diskDB != nil {
+		return s.diskDB, nil
+	}
+
+	// Create new DiskDB wrapper
+	diskDB, err := NewDiskDBFromConnection(s.db, s.writeQueue, s.path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create DiskDB wrapper: %w", err)
+	}
+
+	s.diskDB = diskDB
+	return s.diskDB, nil
 }
 
 // InitSchema initializes all database tables and indexes
@@ -285,6 +320,37 @@ func (s *SQLiteBackend) InitSchema() error {
 	}
 
 	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_metadata_type ON metadata(metadata_type)"); err != nil {
+		return err
+	}
+
+	// Create features table - stores generated characteristics of entries
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS features (
+		id INTEGER PRIMARY KEY,
+		entry_path TEXT NOT NULL,
+		feature_type TEXT NOT NULL,
+		hash TEXT UNIQUE NOT NULL,
+		mime_type TEXT,
+		cache_path TEXT,
+		data_json TEXT,
+		file_size INTEGER DEFAULT 0,
+		generator TEXT NOT NULL,
+		generator_version TEXT,
+		created_at INTEGER DEFAULT (strftime('%s', 'now')),
+		updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+		FOREIGN KEY (entry_path) REFERENCES entries(path) ON DELETE CASCADE
+	)`); err != nil {
+		return fmt.Errorf("failed to create features table: %w", err)
+	}
+
+	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_features_entry ON features(entry_path)"); err != nil {
+		return err
+	}
+
+	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_features_type ON features(feature_type)"); err != nil {
+		return err
+	}
+
+	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_features_entry_type ON features(entry_path, feature_type)"); err != nil {
 		return err
 	}
 

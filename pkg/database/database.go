@@ -98,6 +98,26 @@ func NewDiskDB(path string) (*DiskDB, error) {
 	return diskDB, nil
 }
 
+// NewDiskDBFromConnection creates a DiskDB wrapper from an existing connection.
+// This is used by SQLiteBackend to provide a DiskDB interface without opening a new connection.
+// The caller is responsible for managing the underlying connection lifecycle.
+// Note: The returned DiskDB should NOT be closed directly as it does not own the connection.
+func NewDiskDBFromConnection(db *sql.DB, writeQueue *WriteQueue, path string) (*DiskDB, error) {
+	diskDB := &DiskDB{
+		db:         db,
+		writeQueue: writeQueue,
+		path:       path,
+		isOpen:     true,
+	}
+
+	// Prepare statements for efficient inserts
+	if err := diskDB.prepareStatements(); err != nil {
+		return nil, fmt.Errorf("failed to prepare statements: %w", err)
+	}
+
+	return diskDB, nil
+}
+
 // Close closes the database connection
 func (d *DiskDB) Close() error {
 	// Stop the write queue first to ensure all pending writes complete
@@ -290,6 +310,37 @@ func (d *DiskDB) init() error {
 	}
 
 	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_metadata_type ON metadata(metadata_type)"); err != nil {
+		return err
+	}
+
+	// Create features table - stores generated characteristics of entries
+	if _, err := d.db.Exec(`CREATE TABLE IF NOT EXISTS features (
+		id INTEGER PRIMARY KEY,
+		entry_path TEXT NOT NULL,
+		feature_type TEXT NOT NULL,
+		hash TEXT UNIQUE NOT NULL,
+		mime_type TEXT,
+		cache_path TEXT,
+		data_json TEXT,
+		file_size INTEGER DEFAULT 0,
+		generator TEXT NOT NULL,
+		generator_version TEXT,
+		created_at INTEGER DEFAULT (strftime('%s', 'now')),
+		updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+		FOREIGN KEY (entry_path) REFERENCES entries(path) ON DELETE CASCADE
+	)`); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_features_entry ON features(entry_path)"); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_features_type ON features(feature_type)"); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_features_entry_type ON features(entry_path, feature_type)"); err != nil {
 		return err
 	}
 
@@ -1949,6 +2000,242 @@ func (d *DiskDB) DeleteMetadata(hash string) error {
 	log.WithField("hash", hash).Info("Deleting metadata")
 	_, err := d.db.Exec(`DELETE FROM metadata WHERE hash = ?`, hash)
 	return err
+}
+
+// Feature Operations
+
+// CreateOrUpdateFeature creates or updates a feature in the database
+func (d *DiskDB) CreateOrUpdateFeature(feature *models.Feature) error {
+	now := time.Now().Unix()
+	feature.UpdatedAt = now
+	if feature.CreatedAt == 0 {
+		feature.CreatedAt = now
+	}
+
+	_, err := d.db.Exec(`
+		INSERT INTO features (entry_path, feature_type, hash, mime_type, cache_path, data_json, file_size, generator, generator_version, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(hash) DO UPDATE SET
+			entry_path = excluded.entry_path,
+			feature_type = excluded.feature_type,
+			mime_type = excluded.mime_type,
+			cache_path = excluded.cache_path,
+			data_json = excluded.data_json,
+			file_size = excluded.file_size,
+			generator = excluded.generator,
+			generator_version = excluded.generator_version,
+			updated_at = excluded.updated_at
+	`, feature.EntryPath, feature.FeatureType, feature.Hash, feature.MimeType, feature.CachePath,
+		feature.DataJson, feature.FileSize, feature.Generator, feature.GeneratorVersion,
+		feature.CreatedAt, feature.UpdatedAt)
+
+	return err
+}
+
+// GetFeature retrieves a feature by hash
+func (d *DiskDB) GetFeature(hash string) (*models.Feature, error) {
+	row := d.db.QueryRow(`
+		SELECT id, entry_path, feature_type, hash, mime_type, cache_path, data_json, file_size, generator, generator_version, created_at, updated_at
+		FROM features WHERE hash = ?
+	`, hash)
+
+	var feature models.Feature
+	err := row.Scan(
+		&feature.ID, &feature.EntryPath, &feature.FeatureType, &feature.Hash,
+		&feature.MimeType, &feature.CachePath, &feature.DataJson, &feature.FileSize,
+		&feature.Generator, &feature.GeneratorVersion, &feature.CreatedAt, &feature.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &feature, nil
+}
+
+// GetFeaturesByPath retrieves all features for an entry path
+func (d *DiskDB) GetFeaturesByPath(entryPath string) ([]*models.Feature, error) {
+	rows, err := d.db.Query(`
+		SELECT id, entry_path, feature_type, hash, mime_type, cache_path, data_json, file_size, generator, generator_version, created_at, updated_at
+		FROM features WHERE entry_path = ?
+		ORDER BY feature_type, created_at DESC
+	`, entryPath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var features []*models.Feature
+	for rows.Next() {
+		var f models.Feature
+		if err := rows.Scan(
+			&f.ID, &f.EntryPath, &f.FeatureType, &f.Hash,
+			&f.MimeType, &f.CachePath, &f.DataJson, &f.FileSize,
+			&f.Generator, &f.GeneratorVersion, &f.CreatedAt, &f.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		features = append(features, &f)
+	}
+	return features, rows.Err()
+}
+
+// GetFeatureByPathAndType retrieves a specific feature type for an entry
+func (d *DiskDB) GetFeatureByPathAndType(entryPath, featureType string) (*models.Feature, error) {
+	row := d.db.QueryRow(`
+		SELECT id, entry_path, feature_type, hash, mime_type, cache_path, data_json, file_size, generator, generator_version, created_at, updated_at
+		FROM features WHERE entry_path = ? AND feature_type = ?
+		ORDER BY created_at DESC LIMIT 1
+	`, entryPath, featureType)
+
+	var f models.Feature
+	err := row.Scan(
+		&f.ID, &f.EntryPath, &f.FeatureType, &f.Hash,
+		&f.MimeType, &f.CachePath, &f.DataJson, &f.FileSize,
+		&f.Generator, &f.GeneratorVersion, &f.CreatedAt, &f.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
+// ListFeatures retrieves all features, optionally filtered by type
+func (d *DiskDB) ListFeatures(featureType *string, limit, offset int) ([]*models.Feature, error) {
+	var query string
+	var args []interface{}
+
+	if featureType != nil {
+		query = `SELECT id, entry_path, feature_type, hash, mime_type, cache_path, data_json, file_size, generator, generator_version, created_at, updated_at
+			FROM features WHERE feature_type = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
+		args = []interface{}{*featureType, limit, offset}
+	} else {
+		query = `SELECT id, entry_path, feature_type, hash, mime_type, cache_path, data_json, file_size, generator, generator_version, created_at, updated_at
+			FROM features ORDER BY created_at DESC LIMIT ? OFFSET ?`
+		args = []interface{}{limit, offset}
+	}
+
+	rows, err := d.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var features []*models.Feature
+	for rows.Next() {
+		var f models.Feature
+		if err := rows.Scan(
+			&f.ID, &f.EntryPath, &f.FeatureType, &f.Hash,
+			&f.MimeType, &f.CachePath, &f.DataJson, &f.FileSize,
+			&f.Generator, &f.GeneratorVersion, &f.CreatedAt, &f.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		features = append(features, &f)
+	}
+	return features, rows.Err()
+}
+
+// DeleteFeature deletes a feature by hash
+func (d *DiskDB) DeleteFeature(hash string) error {
+	log.WithField("hash", hash).Info("Deleting feature")
+	_, err := d.db.Exec(`DELETE FROM features WHERE hash = ?`, hash)
+	return err
+}
+
+// DeleteFeaturesByPath deletes all features for an entry path
+func (d *DiskDB) DeleteFeaturesByPath(entryPath string) error {
+	log.WithField("entryPath", entryPath).Info("Deleting features for entry")
+	_, err := d.db.Exec(`DELETE FROM features WHERE entry_path = ?`, entryPath)
+	return err
+}
+
+// MigrateMetadataToFeatures copies all metadata entries to the features table.
+// This is used to migrate from the old metadata-based system to the new features system.
+// It skips entries that already exist in the features table (based on hash).
+func (d *DiskDB) MigrateMetadataToFeatures() (int, error) {
+	log.Info("Starting metadata to features migration")
+
+	// Get all metadata entries
+	rows, err := d.db.Query(`
+		SELECT hash, source_path, metadata_type, mime_type, cache_path, file_size, metadata_json, created_at
+		FROM metadata
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query metadata: %w", err)
+	}
+	defer rows.Close()
+
+	migratedCount := 0
+	for rows.Next() {
+		var hash, sourcePath, metadataType, mimeType, cachePath string
+		var fileSize int64
+		var metadataJson sql.NullString
+		var createdAt int64
+
+		err := rows.Scan(&hash, &sourcePath, &metadataType, &mimeType, &cachePath, &fileSize, &metadataJson, &createdAt)
+		if err != nil {
+			log.WithError(err).Warn("Failed to scan metadata row")
+			continue
+		}
+
+		// Check if this feature already exists
+		existing, _ := d.GetFeature(hash)
+		if existing != nil {
+			continue // Skip if already migrated
+		}
+
+		// Determine generator from metadata type
+		generator := "unknown"
+		switch metadataType {
+		case "thumbnail":
+			// Assume images use go-image, videos use ffmpeg
+			if strings.Contains(strings.ToLower(filepath.Ext(sourcePath)), "mp4") ||
+				strings.Contains(strings.ToLower(filepath.Ext(sourcePath)), "mov") ||
+				strings.Contains(strings.ToLower(filepath.Ext(sourcePath)), "mkv") ||
+				strings.Contains(strings.ToLower(filepath.Ext(sourcePath)), "avi") ||
+				strings.Contains(strings.ToLower(filepath.Ext(sourcePath)), "webm") {
+				generator = "ffmpeg"
+			} else {
+				generator = "go-image"
+			}
+		case "video-timeline":
+			generator = "ffmpeg"
+		case "exif", "media-info":
+			generator = "exiftool"
+		}
+
+		// Create the feature
+		feature := &models.Feature{
+			EntryPath:   sourcePath,
+			FeatureType: metadataType,
+			Hash:        hash,
+			MimeType:    &mimeType,
+			CachePath:   &cachePath,
+			FileSize:    fileSize,
+			Generator:   generator,
+			CreatedAt:   createdAt,
+			UpdatedAt:   createdAt,
+		}
+
+		if metadataJson.Valid && metadataJson.String != "" {
+			feature.DataJson = &metadataJson.String
+		}
+
+		if err := d.CreateOrUpdateFeature(feature); err != nil {
+			log.WithError(err).WithField("hash", hash).Warn("Failed to migrate metadata to feature")
+			continue
+		}
+
+		migratedCount++
+	}
+
+	log.WithField("count", migratedCount).Info("Completed metadata to features migration")
+	return migratedCount, rows.Err()
 }
 
 // File Operations

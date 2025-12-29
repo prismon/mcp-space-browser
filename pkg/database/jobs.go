@@ -294,12 +294,14 @@ type ClassifierJobResult struct {
 
 // ClassifierArtifact represents a generated artifact
 type ClassifierArtifact struct {
-	Type        string         `json:"type"`
-	Hash        string         `json:"hash"`
-	MimeType    string         `json:"mimeType"`
-	CachePath   string         `json:"cachePath"`
-	ResourceURI string         `json:"resourceUri"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	Type             string         `json:"type"`
+	Hash             string         `json:"hash"`
+	MimeType         string         `json:"mimeType"`
+	CachePath        string         `json:"cachePath"`
+	ResourceURI      string         `json:"resourceUri"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
+	Generator        string         `json:"generator,omitempty"`        // Generator that created this artifact (e.g., "ffmpeg", "go")
+	GeneratorVersion string         `json:"generatorVersion,omitempty"` // Version of the generator
 }
 
 // InitClassifierJobTables creates the classifier_jobs table

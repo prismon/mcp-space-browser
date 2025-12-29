@@ -142,6 +142,7 @@ func registerProjectList(s *server.MCPServer, sc *ServerContext) {
 			projectList = append(projectList, map[string]interface{}{
 				"name":        p.Name,
 				"description": p.Description,
+				"path":        p.Path,
 				"createdAt":   p.CreatedAt,
 				"updatedAt":   p.UpdatedAt,
 				"isActive":    p.Name == activeProject,

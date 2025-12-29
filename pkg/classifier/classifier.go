@@ -41,9 +41,11 @@ type ArtifactRequest struct {
 
 // ArtifactResult contains the result of artifact generation
 type ArtifactResult struct {
-	OutputPath string // Path to the generated artifact
-	MimeType   string // MIME type of the generated artifact
-	Error      error  // Error if generation failed
+	OutputPath       string // Path to the generated artifact
+	MimeType         string // MIME type of the generated artifact
+	Generator        string // Name of the generator that created this artifact (e.g., "ffmpeg", "go")
+	GeneratorVersion string // Version of the generator (optional)
+	Error            error  // Error if generation failed
 }
 
 // Classifier defines the interface for media classification and artifact generation

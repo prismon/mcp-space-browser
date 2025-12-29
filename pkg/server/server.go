@@ -177,11 +177,17 @@ func Start(config *auth.Config) error {
 		path := c.Request.URL.Path
 		query := c.Request.URL.RawQuery
 
-		// Extract session ID from header and ensure session exists
+		// Extract session ID from header, or generate a new one if not present
 		sessionID := c.GetHeader("Mcp-Session-Id")
-		if sessionID != "" {
-			sc.SessionManager.GetOrCreate(sessionID)
+		if sessionID == "" {
+			// Generate a new session ID for new connections
+			sessionID = fmt.Sprintf("sess-%d-%d", time.Now().UnixNano(), time.Now().UnixMicro()%10000)
 		}
+		// Ensure session exists in session manager
+		sc.SessionManager.GetOrCreate(sessionID)
+
+		// Always return the session ID in response headers
+		c.Header("Mcp-Session-Id", sessionID)
 
 		// Extract client IP and forwarding information
 		remoteAddr := c.Request.RemoteAddr
@@ -347,8 +353,8 @@ func Start(config *auth.Config) error {
 		server.WithStateLess(true),
 	)
 
-	// Mount MCP endpoint at /mcp with OAuth protection if enabled
-	var mcpHandler http.Handler = mcpHTTPServer
+	// Wrap MCP handler with session context middleware
+	var mcpHandler http.Handler = wrapWithSessionContext(mcpHTTPServer, sc)
 	if validator != nil {
 		// Wrap MCP handler with OAuth middleware
 		mcpHandler = auth.WrapMCPHandler(validator, &config.Auth, mcpHandler)
@@ -426,5 +432,33 @@ func handleInspectWithContext(c *gin.Context, sc *ServerContext) {
 
 	// Call original inspect handler with the resolved database
 	handleInspectWithDB(c, db)
+}
+
+// wrapWithSessionContext wraps an HTTP handler to inject session ID and request into context
+func wrapWithSessionContext(handler http.Handler, sc *ServerContext) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Extract or generate session ID
+		sessionID := r.Header.Get("Mcp-Session-Id")
+		if sessionID == "" {
+			sessionID = fmt.Sprintf("sess-%d-%d", time.Now().UnixNano(), time.Now().UnixMicro()%10000)
+		}
+
+		// Ensure session exists in session manager
+		sc.SessionManager.GetOrCreate(sessionID)
+
+		// Set session ID in response header
+		w.Header().Set("Mcp-Session-Id", sessionID)
+
+		// Add session ID and request to context
+		ctx := r.Context()
+		ctx = WithSessionID(ctx, sessionID)
+		ctx = WithRequest(ctx, r)
+
+		// Update request with new context
+		r = r.WithContext(ctx)
+
+		// Call the wrapped handler
+		handler.ServeHTTP(w, r)
+	})
 }
 
