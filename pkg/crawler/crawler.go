@@ -38,6 +38,16 @@ type IndexOptions struct {
 	// If a path was scanned within MaxAge seconds, indexing will be skipped (unless Force is true).
 	// Default: 3600 (1 hour). Set to 0 to always re-index.
 	MaxAge int64
+
+	// LifecycleTrigger executes lifecycle plans for added, removed, or refreshed entries.
+	LifecycleTrigger LifecycleTrigger
+}
+
+// LifecycleTrigger handles executing lifecycle plans after indexing.
+type LifecycleTrigger interface {
+	TriggerOnAdd(ctx context.Context, entries []*models.Entry) error
+	TriggerOnRemove(ctx context.Context, entries []*models.Entry) error
+	TriggerOnRefresh(ctx context.Context, entries []*models.Entry) error
 }
 
 // DefaultIndexOptions returns the default indexing options
@@ -200,8 +210,8 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 	stack := []string{abs}
 
 	log.WithFields(logrus.Fields{
-		"root":          abs,
-		"runID":         runID,
+		"root":           abs,
+		"runID":          runID,
 		"estimatedItems": totalEstimate,
 	}).Info("Starting crawl phase")
 
@@ -211,6 +221,9 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 	lastProgressLog := time.Now()
 	lastProgressUpdate := time.Now()
 	entriesInBatch := 0
+	var addedEntries []*models.Entry
+	var refreshedEntries []*models.Entry
+	var removedEntries []*models.Entry
 
 	// Begin transaction for better performance with batching
 	if err := db.BeginTransaction(); err != nil {
@@ -277,14 +290,35 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 			entry.Kind = "directory"
 		}
 
-		if err := db.InsertOrUpdate(entry); err != nil {
-			stats.Errors++
-			tracker.IncrementErrors()
-			log.WithFields(logrus.Fields{
-				"path":  current,
-				"error": err,
-			}).Error("Failed to insert/update entry")
-			continue
+		if opts.LifecycleTrigger != nil {
+			created, err := db.InsertOrUpdateWithChange(entry)
+			if err != nil {
+				stats.Errors++
+				tracker.IncrementErrors()
+				log.WithFields(logrus.Fields{
+					"path":  current,
+					"error": err,
+				}).Error("Failed to insert/update entry")
+				continue
+			}
+
+			if entry.Kind == "file" {
+				if created {
+					addedEntries = append(addedEntries, entry)
+				} else {
+					refreshedEntries = append(refreshedEntries, entry)
+				}
+			}
+		} else {
+			if err := db.InsertOrUpdate(entry); err != nil {
+				stats.Errors++
+				tracker.IncrementErrors()
+				log.WithFields(logrus.Fields{
+					"path":  current,
+					"error": err,
+				}).Error("Failed to insert/update entry")
+				continue
+			}
 		}
 
 		entriesInBatch++
@@ -427,6 +461,19 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 		})
 	}
 
+	if opts.LifecycleTrigger != nil {
+		staleEntries, err := db.GetStaleEntries(abs, runID)
+		if err != nil {
+			log.WithError(err).WithField("root", abs).Warn("Failed to load stale entries for lifecycle plans")
+		} else {
+			for _, entry := range staleEntries {
+				if entry.Kind == "file" {
+					removedEntries = append(removedEntries, entry)
+				}
+			}
+		}
+	}
+
 	if err := db.DeleteStale(abs, runID); err != nil {
 		return nil, fmt.Errorf("failed to delete stale entries: %w", err)
 	}
@@ -448,16 +495,36 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 		return nil, fmt.Errorf("failed to compute aggregates: %w", err)
 	}
 
+	if opts.LifecycleTrigger != nil {
+		if len(addedEntries) > 0 {
+			if err := opts.LifecycleTrigger.TriggerOnAdd(ctx, addedEntries); err != nil {
+				log.WithError(err).WithField("count", len(addedEntries)).Warn("Failed to execute lifecycle add plans")
+			}
+		}
+
+		if len(removedEntries) > 0 {
+			if err := opts.LifecycleTrigger.TriggerOnRemove(ctx, removedEntries); err != nil {
+				log.WithError(err).WithField("count", len(removedEntries)).Warn("Failed to execute lifecycle remove plans")
+			}
+		}
+
+		if len(refreshedEntries) > 0 {
+			if err := opts.LifecycleTrigger.TriggerOnRefresh(ctx, refreshedEntries); err != nil {
+				log.WithError(err).WithField("count", len(refreshedEntries)).Warn("Failed to execute lifecycle refresh plans")
+			}
+		}
+	}
+
 	// Post-index validation: check if any entries were indexed
 	entryCount, err := db.GetEntryCount(abs)
 	if err != nil {
 		log.WithError(err).WithField("root", abs).Warn("Failed to get entry count for validation")
 	} else if entryCount == 0 {
 		log.WithFields(logrus.Fields{
-			"root":               abs,
-			"filesProcessed":     stats.FilesProcessed,
+			"root":                 abs,
+			"filesProcessed":       stats.FilesProcessed,
 			"directoriesProcessed": stats.DirectoriesProcessed,
-			"errors":             stats.Errors,
+			"errors":               stats.Errors,
 		}).Warn("Index completed but no entries in database - possible issue with path permissions or empty directory")
 	} else {
 		log.WithFields(logrus.Fields{

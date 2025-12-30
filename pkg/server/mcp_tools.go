@@ -457,6 +457,9 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 			mcp.Required(),
 			mcp.Description("File or directory path to index"),
 		),
+		mcp.WithBoolean("autoExecutePlans",
+			mcp.Description("Automatically execute lifecycle plans for added, removed, and refreshed entries (default: true)"),
+		),
 		mcp.WithBoolean("async",
 			mcp.Description("Run asynchronously and return job ID immediately (default: true)"),
 		),
@@ -470,10 +473,11 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 
 	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args struct {
-			Root   string  `json:"root"`
-			Async  *bool   `json:"async,omitempty"`
-			Force  *bool   `json:"force,omitempty"`
-			MaxAge *int64  `json:"maxAge,omitempty"`
+			Root             string `json:"root"`
+			AutoExecutePlans *bool  `json:"autoExecutePlans,omitempty"`
+			Async            *bool  `json:"async,omitempty"`
+			Force            *bool  `json:"force,omitempty"`
+			MaxAge           *int64 `json:"maxAge,omitempty"`
 		}
 
 		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
@@ -487,6 +491,9 @@ func registerIndexTool(s *server.MCPServer, db *database.DiskDB) {
 		}
 		if args.MaxAge != nil {
 			indexOpts.MaxAge = *args.MaxAge
+		}
+		if getBoolOrDefault(args.AutoExecutePlans, true) {
+			indexOpts.LifecycleTrigger = plans.NewLifecycleTrigger(db, plans.NewExecutor(db, log))
 		}
 
 		log.WithFields(logrus.Fields{
@@ -2395,14 +2402,14 @@ func registerPlanExecute(s *server.MCPServer, db *database.DiskDB, processor *cl
 		}
 
 		result := map[string]interface{}{
-			"execution_id":       execution.ID,
-			"plan":               plan.Name,
-			"status":             execution.Status,
-			"entries_processed":  execution.EntriesProcessed,
-			"entries_matched":    execution.EntriesMatched,
-			"outcomes_applied":   execution.OutcomesApplied,
-			"duration_ms":        execution.DurationMs,
-			"error_message":      execution.ErrorMessage,
+			"execution_id":      execution.ID,
+			"plan":              plan.Name,
+			"status":            execution.Status,
+			"entries_processed": execution.EntriesProcessed,
+			"entries_matched":   execution.EntriesMatched,
+			"outcomes_applied":  execution.OutcomesApplied,
+			"duration_ms":       execution.DurationMs,
+			"error_message":     execution.ErrorMessage,
 		}
 
 		payload, _ := json.Marshal(result)
@@ -2453,8 +2460,8 @@ func registerPlanGet(s *server.MCPServer, db *database.DiskDB) {
 
 	s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args struct {
-			Name           string  `json:"name"`
-			ExecutionLimit *int    `json:"executionLimit,omitempty"`
+			Name           string `json:"name"`
+			ExecutionLimit *int   `json:"executionLimit,omitempty"`
 		}
 
 		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
@@ -2582,6 +2589,9 @@ func registerIndexToolMP(s *server.MCPServer, sc *ServerContext) {
 			mcp.Required(),
 			mcp.Description("File or directory path to index"),
 		),
+		mcp.WithBoolean("autoExecutePlans",
+			mcp.Description("Automatically execute lifecycle plans for added, removed, and refreshed entries (default: true)"),
+		),
 		mcp.WithBoolean("async",
 			mcp.Description("Run asynchronously and return job ID immediately (default: true)"),
 		),
@@ -2600,10 +2610,11 @@ func registerIndexToolMP(s *server.MCPServer, sc *ServerContext) {
 		}
 
 		var args struct {
-			Root   string `json:"root"`
-			Async  *bool  `json:"async,omitempty"`
-			Force  *bool  `json:"force,omitempty"`
-			MaxAge *int64 `json:"maxAge,omitempty"`
+			Root             string `json:"root"`
+			AutoExecutePlans *bool  `json:"autoExecutePlans,omitempty"`
+			Async            *bool  `json:"async,omitempty"`
+			Force            *bool  `json:"force,omitempty"`
+			MaxAge           *int64 `json:"maxAge,omitempty"`
 		}
 
 		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
@@ -2617,6 +2628,9 @@ func registerIndexToolMP(s *server.MCPServer, sc *ServerContext) {
 		}
 		if args.MaxAge != nil {
 			indexOpts.MaxAge = *args.MaxAge
+		}
+		if getBoolOrDefault(args.AutoExecutePlans, true) {
+			indexOpts.LifecycleTrigger = plans.NewLifecycleTrigger(db, plans.NewExecutor(db, log))
 		}
 
 		log.WithFields(logrus.Fields{
@@ -2747,11 +2761,11 @@ func registerIndexToolMP(s *server.MCPServer, sc *ServerContext) {
 
 		response := map[string]any{
 			"root":                 expandedPath,
-			"filesProcessed":      stats.FilesProcessed,
+			"filesProcessed":       stats.FilesProcessed,
 			"directoriesProcessed": stats.DirectoriesProcessed,
-			"totalSize":           stats.TotalSize,
-			"duration":            stats.Duration.String(),
-			"errors":              stats.Errors,
+			"totalSize":            stats.TotalSize,
+			"duration":             stats.Duration.String(),
+			"errors":               stats.Errors,
 		}
 		payload, _ := json.Marshal(response)
 		return mcp.NewToolResultText(string(payload)), nil
@@ -3079,9 +3093,9 @@ func registerMigrateMetadataToFeaturesToolMP(s *server.MCPServer, sc *ServerCont
 		}
 
 		result := map[string]interface{}{
-			"status":          "success",
-			"migrated_count":  count,
-			"message":         fmt.Sprintf("Successfully migrated %d metadata entries to features", count),
+			"status":         "success",
+			"migrated_count": count,
+			"message":        fmt.Sprintf("Successfully migrated %d metadata entries to features", count),
 		}
 		payload, _ := json.Marshal(result)
 		return mcp.NewToolResultText(string(payload)), nil
