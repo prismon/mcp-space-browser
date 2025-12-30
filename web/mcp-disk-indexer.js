@@ -186,6 +186,25 @@ class McpDiskIndexer extends HTMLElement {
           width: 0%;
         }
 
+        .checkbox-group {
+          margin-bottom: 16px;
+        }
+
+        .checkbox-group label {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          cursor: pointer;
+          font-size: 14px;
+          color: #586069;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+          width: 16px;
+          height: 16px;
+          cursor: pointer;
+        }
+
         .progress-text {
           margin-top: 4px;
           font-size: 12px;
@@ -243,6 +262,13 @@ class McpDiskIndexer extends HTMLElement {
               value="${this.defaultPath}"
               required
             />
+          </div>
+
+          <div class="form-group checkbox-group">
+            <label>
+              <input type="checkbox" id="autoExecutePlans" checked />
+              Auto-execute lifecycle plans (classify files, generate thumbnails)
+            </label>
           </div>
 
           <button type="submit" id="submitBtn">
@@ -337,11 +363,15 @@ class McpDiskIndexer extends HTMLElement {
     this.showStatus('info', 'Starting indexing via MCP...', true);
     this.hideProgress();
 
+    // Get checkbox value
+    const autoExecutePlans = this.shadowRoot.getElementById('autoExecutePlans').checked;
+
     try {
       // Call the MCP index tool
       const result = await this.callMCPTool('index', {
         root: path,
-        async: true
+        async: true,
+        autoExecutePlans: autoExecutePlans
       });
 
       // Validate response structure
