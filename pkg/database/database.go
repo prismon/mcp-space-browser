@@ -581,6 +581,55 @@ func (d *DiskDB) InsertOrUpdate(entry *models.Entry) error {
 	return err
 }
 
+// InsertOrUpdateWithChange inserts or updates an entry and returns true if it was newly created.
+func (d *DiskDB) InsertOrUpdateWithChange(entry *models.Entry) (bool, error) {
+	if logger.IsLevelEnabled(logrus.TraceLevel) {
+		log.WithFields(logrus.Fields{
+			"path":   entry.Path,
+			"kind":   entry.Kind,
+			"size":   entry.Size,
+			"blocks": entry.Blocks,
+		}).Trace("Inserting/updating entry with change tracking")
+	}
+
+	result, err := d.exec(`
+		INSERT INTO entries
+			(path, parent, size, blocks, kind, ctime, mtime, last_scanned, dirty)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+		ON CONFLICT(path) DO NOTHING
+	`, entry.Path, entry.Parent, entry.Size, entry.Blocks, entry.Kind, entry.Ctime, entry.Mtime, entry.LastScanned)
+	if err != nil {
+		return false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	if rowsAffected > 0 {
+		return true, nil
+	}
+
+	_, err = d.exec(`
+		UPDATE entries
+		SET parent = ?, size = ?, blocks = ?, kind = ?, ctime = ?, mtime = ?, last_scanned = ?, dirty = 0
+		WHERE path = ?
+	`, entry.Parent, entry.Size, entry.Blocks, entry.Kind, entry.Ctime, entry.Mtime, entry.LastScanned, entry.Path)
+	if err != nil {
+		return false, err
+	}
+
+	return false, nil
+}
+
+func (d *DiskDB) exec(query string, args ...interface{}) (sql.Result, error) {
+	if d.tx != nil {
+		return d.tx.Exec(query, args...)
+	}
+	return d.db.Exec(query, args...)
+}
+
 // Get retrieves an entry by path
 func (d *DiskDB) Get(path string) (*models.Entry, error) {
 	if logger.IsLevelEnabled(logrus.TraceLevel) {
@@ -686,6 +735,41 @@ func (d *DiskDB) DeleteStale(root string, runID int64) error {
 	}).Info("Stale entries deleted")
 
 	return nil
+}
+
+// GetStaleEntries returns entries that were not seen in the current scan.
+func (d *DiskDB) GetStaleEntries(root string, runID int64) ([]*models.Entry, error) {
+	rows, err := d.db.Query(`
+		SELECT id, path, parent, size, blocks, kind, ctime, mtime, last_scanned
+		FROM entries
+		WHERE (path = ? OR path LIKE ?) AND last_scanned < ?
+	`, root, root+"/%", runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []*models.Entry
+	for rows.Next() {
+		var entry models.Entry
+		var parent sql.NullString
+
+		if err := rows.Scan(&entry.ID, &entry.Path, &parent, &entry.Size, &entry.Blocks, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned); err != nil {
+			return nil, err
+		}
+
+		if parent.Valid {
+			entry.Parent = &parent.String
+		}
+
+		entries = append(entries, &entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return entries, nil
 }
 
 // ComputeAggregates computes aggregate sizes and blocks for directories
