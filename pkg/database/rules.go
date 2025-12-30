@@ -438,45 +438,31 @@ func (d *DiskDB) ListRuleOutcomesByResourceSet(resourceSetID int64, limit int) (
 
 // Helper Functions
 
-// ValidateRuleOutcome validates that an outcome has a required selection set
+// ValidateRuleOutcome validates a rule outcome using its built-in validation
 func ValidateRuleOutcome(outcome *models.RuleOutcome) error {
-	if outcome.ResourceSetName == "" {
-		return fmt.Errorf("resourceSetName is required for all rule outcomes")
-	}
-
-	// Validate chained outcomes recursively
-	if outcome.Type == "chained" {
-		for i, childOutcome := range outcome.Outcomes {
-			if err := ValidateRuleOutcome(childOutcome); err != nil {
-				return fmt.Errorf("chained outcome %d: %w", i, err)
-			}
-		}
-	}
-
-	return nil
+	return outcome.Validate()
 }
 
-// EnsureResourceSetForOutcome ensures a selection set exists for the given outcome
+// EnsureResourceSetExists ensures a resource set with the given name exists
 // If it doesn't exist, it creates one
-func (d *DiskDB) EnsureResourceSetForOutcome(outcome *models.RuleOutcome, ruleName string) (int64, error) {
-	if outcome.ResourceSetName == "" {
-		return 0, fmt.Errorf("resourceSetName is required")
+func (d *DiskDB) EnsureResourceSetExists(setName string, description string) (int64, error) {
+	if setName == "" {
+		return 0, fmt.Errorf("resource set name is required")
 	}
 
-	// Check if selection set exists
-	set, err := d.GetResourceSet(outcome.ResourceSetName)
+	// Check if resource set exists
+	set, err := d.GetResourceSet(setName)
 	if err != nil {
-		return 0, fmt.Errorf("failed to check selection set: %w", err)
+		return 0, fmt.Errorf("failed to check resource set: %w", err)
 	}
 
 	if set != nil {
 		return set.ID, nil
 	}
 
-	// Create new selection set
-	description := fmt.Sprintf("Auto-created for rule: %s", ruleName)
+	// Create new resource set
 	newSet := &models.ResourceSet{
-		Name:        outcome.ResourceSetName,
+		Name:        setName,
 		Description: &description,
 		CreatedAt:   time.Now().Unix(),
 		UpdatedAt:   time.Now().Unix(),
@@ -484,14 +470,13 @@ func (d *DiskDB) EnsureResourceSetForOutcome(outcome *models.RuleOutcome, ruleNa
 
 	setID, err := d.CreateResourceSet(newSet)
 	if err != nil {
-		return 0, fmt.Errorf("failed to create selection set: %w", err)
+		return 0, fmt.Errorf("failed to create resource set: %w", err)
 	}
 
 	log.WithFields(logrus.Fields{
-		"setName": outcome.ResourceSetName,
+		"setName": setName,
 		"setID":   setID,
-		"rule":    ruleName,
-	}).Info("Auto-created selection set for rule outcome")
+	}).Info("Auto-created resource set")
 
 	return setID, nil
 }

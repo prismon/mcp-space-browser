@@ -7,23 +7,26 @@ import (
 
 // Plan defines what to process, how to filter, and what outcomes to produce
 type Plan struct {
-	ID          int64   `db:"id" json:"id"`
-	Name        string  `db:"name" json:"name"`
-	Description *string `db:"description" json:"description,omitempty"`
-	Mode        string  `db:"mode" json:"mode"`                    // "oneshot", "continuous"
-	Status      string  `db:"status" json:"status"`                // "active", "paused", "disabled"
-	SourcesJSON string  `db:"sources_json" json:"-"`
-	ConditionsJSON *string `db:"conditions_json" json:"-"`
-	OutcomesJSON   string `db:"outcomes_json" json:"-"`
-	CreatedAt      int64  `db:"created_at" json:"created_at"`
-	UpdatedAt      int64  `db:"updated_at" json:"updated_at"`
-	LastRunAt      *int64 `db:"last_run_at" json:"last_run_at,omitempty"`
+	ID              int64   `db:"id" json:"id"`
+	Name            string  `db:"name" json:"name"`
+	Description     *string `db:"description" json:"description,omitempty"`
+	Mode            string  `db:"mode" json:"mode"`     // "oneshot", "continuous"
+	Status          string  `db:"status" json:"status"` // "active", "paused", "disabled"
+	Trigger         string  `db:"trigger" json:"trigger,omitempty"` // "manual", "on_add", "on_remove", "on_refresh"
+	SourcesJSON     string  `db:"sources_json" json:"-"`
+	ConditionsJSON  *string `db:"conditions_json" json:"-"`
+	OutcomesJSON    string  `db:"outcomes_json" json:"-"`
+	PreferencesJSON *string `db:"preferences_json" json:"-"`
+	CreatedAt       int64   `db:"created_at" json:"created_at"`
+	UpdatedAt       int64   `db:"updated_at" json:"updated_at"`
+	LastRunAt       *int64  `db:"last_run_at" json:"last_run_at,omitempty"`
 
 	// Parsed fields (not stored in DB)
 	// Reuses RuleCondition and RuleOutcome from existing rules system
-	Sources    []PlanSource    `db:"-" json:"sources"`
-	Conditions *RuleCondition  `db:"-" json:"conditions,omitempty"`
-	Outcomes   []RuleOutcome   `db:"-" json:"outcomes"`
+	Sources     []PlanSource           `db:"-" json:"sources"`
+	Conditions  *RuleCondition         `db:"-" json:"conditions,omitempty"`
+	Outcomes    []RuleOutcome          `db:"-" json:"outcomes"`
+	Preferences map[string]interface{} `db:"-" json:"preferences,omitempty"`
 }
 
 // PlanSource defines where to get files and what metadata to generate
@@ -94,6 +97,15 @@ func (p *Plan) MarshalForDB() error {
 	}
 	p.OutcomesJSON = string(outcomesJSON)
 
+	if p.Preferences != nil && len(p.Preferences) > 0 {
+		preferencesJSON, err := json.Marshal(p.Preferences)
+		if err != nil {
+			return fmt.Errorf("failed to marshal preferences: %w", err)
+		}
+		prefStr := string(preferencesJSON)
+		p.PreferencesJSON = &prefStr
+	}
+
 	return nil
 }
 
@@ -113,6 +125,12 @@ func (p *Plan) UnmarshalFromDB() error {
 		return fmt.Errorf("failed to unmarshal outcomes: %w", err)
 	}
 
+	if p.PreferencesJSON != nil && *p.PreferencesJSON != "" {
+		if err := json.Unmarshal([]byte(*p.PreferencesJSON), &p.Preferences); err != nil {
+			return fmt.Errorf("failed to unmarshal preferences: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -130,6 +148,14 @@ func (p *Plan) Validate() error {
 		return fmt.Errorf("status must be 'active', 'paused', or 'disabled'")
 	}
 
+	// Validate trigger if provided
+	if p.Trigger != "" {
+		validTriggers := map[string]bool{"manual": true, "on_add": true, "on_remove": true, "on_refresh": true}
+		if !validTriggers[p.Trigger] {
+			return fmt.Errorf("trigger must be 'manual', 'on_add', 'on_remove', or 'on_refresh'")
+		}
+	}
+
 	if len(p.Sources) == 0 {
 		return fmt.Errorf("at least one source is required")
 	}
@@ -145,13 +171,10 @@ func (p *Plan) Validate() error {
 		}
 	}
 
-	// Validate outcomes (use existing RuleOutcome validation)
+	// Validate outcomes
 	for i, outcome := range p.Outcomes {
-		if outcome.ResourceSetName == "" {
-			return fmt.Errorf("outcome[%d]: resourceSetName is required", i)
-		}
-		if outcome.Type != "selection_set" && outcome.Type != "classifier" && outcome.Type != "chained" {
-			return fmt.Errorf("outcome[%d]: invalid outcome type: %s", i, outcome.Type)
+		if err := outcome.Validate(); err != nil {
+			return fmt.Errorf("outcome[%d]: %w", i, err)
 		}
 	}
 
@@ -169,8 +192,22 @@ func (ps *PlanSource) Validate() error {
 		if ps.SourceRef == nil || *ps.SourceRef == "" {
 			return fmt.Errorf("%s source requires source_ref", ps.Type)
 		}
+	case "project":
+		// Project source returns all entries in the database - no additional config needed
+	case "entries":
+		// Entries source is for lifecycle plans - entries are passed directly to executor
 	default:
-		return fmt.Errorf("invalid source type: %s", ps.Type)
+		return fmt.Errorf("invalid source type: %s (valid types: filesystem, selection_set, query, project, entries)", ps.Type)
 	}
 	return nil
+}
+
+// DefaultPreferences returns the default preference values for lifecycle plans
+func DefaultPreferences() map[string]interface{} {
+	return map[string]interface{}{
+		"large.file.size":      int64(524288000), // 500MB
+		"thumbnail.max_width":  320,
+		"thumbnail.max_height": 320,
+		"timeline.frame_count": 5,
+	}
 }

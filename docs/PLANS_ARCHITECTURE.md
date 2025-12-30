@@ -93,7 +93,7 @@ type Plan struct {
 // PlanSource defines where to get files and what metadata to generate
 type PlanSource struct {
     // Filesystem specification
-    Type      string   `json:"type"`           // "filesystem", "selection_set", "query"
+    Type      string   `json:"type"`           // "filesystem", "project", "selection_set", "query"
     Paths     []string `json:"paths"`          // Root paths to scan (for filesystem)
 
     // Source-specific parameters
@@ -148,33 +148,55 @@ type RuleCondition struct {
 
 **Note:** Plans reuse the existing condition logic - no duplication.
 
-### 4. Plan Outcome (Reuses RuleOutcome)
+### 4. Plan Outcome (Tool-Based)
 
-Plans use the existing `RuleOutcome` type from the rules system:
+Plan outcomes invoke MCP tools directly, providing a unified and extensible approach:
 
 ```go
-// RuleOutcome represents the outcome of a rule (from internal/models/models.go)
-// IMPORTANT: All outcomes must have a ResourceSetName to ensure traceability
+// RuleOutcome represents an outcome that invokes an MCP tool
 type RuleOutcome struct {
-    Type             string         `json:"type"` // "selection_set", "classifier", "chained"
-    ResourceSetName string         `json:"selectionSetName"` // REQUIRED for all outcome types
+    // Tool-based outcome format (current)
+    Tool      string                 `json:"tool"`                // MCP tool name (e.g., "resource-set-modify")
+    Arguments map[string]interface{} `json:"arguments,omitempty"` // Generic JSON arguments for the tool
 
-    // For selection_set outcome
-    Operation *string `json:"operation,omitempty"` // "add", "remove"
+    // For chained outcomes (multiple sequential operations)
+    Outcomes    []*RuleOutcome `json:"outcomes,omitempty"`
+    StopOnError *bool          `json:"stopOnError,omitempty"`
+}
 
-    // For classifier outcome
-    ClassifierOperation *string `json:"classifierOperation,omitempty"` // "generate_thumbnail", "extract_metadata"
-    MaxWidth            *int    `json:"maxWidth,omitempty"`
-    MaxHeight           *int    `json:"maxHeight,omitempty"`
-    Quality             *int    `json:"quality,omitempty"`
-
-    // For chained outcome
-    Outcomes     []*RuleOutcome `json:"outcomes,omitempty"`
-    StopOnError  *bool          `json:"stopOnError,omitempty"`
+// IsChained returns true if this outcome has sub-outcomes
+func (ro *RuleOutcome) IsChained() bool {
+    return len(ro.Outcomes) > 0
 }
 ```
 
-**Note:** Plans reuse the existing outcome logic - no duplication.
+**Supported Tools:**
+- `resource-set-modify` - Add/remove entries from resource sets
+- `resource-set-create` - Create new resource sets
+- `resource-set-add-child` - Create DAG parent-child relationships
+- `resource-set-remove-child` - Remove DAG parent-child relationships
+- `classifier-process` - Generate thumbnails/extract metadata
+- `index` - Index filesystem paths
+
+**Template Variables:**
+Arguments support template substitution for entry data:
+- `{{entry.path}}` - Full file path
+- `{{entry.size}}` - File size in bytes
+- `{{entry.kind}}` - "file" or "directory"
+- `{{entry.mtime}}` - Modification timestamp
+- `{{entry.ctime}}` - Creation timestamp
+- `{{entry.parent}}` - Parent directory path
+
+**Example:**
+```json
+{
+  "tool": "resource-set-modify",
+  "arguments": {
+    "name": "large-videos",
+    "operation": "add"
+  }
+}
+```
 
 ### 5. Plan Execution Record
 
@@ -452,38 +474,49 @@ func (ce *ConditionEvaluator) evaluateLeaf(entry *models.Entry, condition *model
 
 ```go
 type OutcomeApplier struct {
-    db     *database.DiskDB
-    logger *logrus.Entry
+    db          *database.DiskDB
+    toolInvoker *ToolInvoker
+    logger      *logrus.Entry
 }
 
-func (oa *OutcomeApplier) Apply(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) error {
-    switch outcome.Type {
-    case "selection_set":
-        return oa.applyResourceSet(entries, outcome, execID, planID)
-    case "classifier":
-        return oa.applyClassifier(entries, outcome, execID, planID)
-    case "chained":
+func (oa *OutcomeApplier) Apply(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) (int, error) {
+    // Handle chained outcomes
+    if outcome.IsChained() {
         return oa.applyChained(entries, outcome, execID, planID)
-    default:
-        return fmt.Errorf("unknown outcome type: %s", outcome.Type)
     }
+
+    // Validate tool-based outcome
+    if outcome.Tool == "" {
+        return 0, fmt.Errorf("outcome must specify 'tool'")
+    }
+
+    // Invoke the MCP tool via ToolInvoker
+    return oa.toolInvoker.Invoke(entries, outcome)
 }
 
-func (oa *OutcomeApplier) applyResourceSet(entries []*models.Entry, outcome models.RuleOutcome, execID, planID int64) error {
-    paths := extractPaths(entries)
+// ToolInvoker routes tool calls to appropriate handlers
+type ToolInvoker struct {
+    db       *database.DiskDB
+    resolver *TemplateResolver
+    logger   *logrus.Entry
+}
 
-    // RuleOutcome.ResourceSetName is always required (string, not *string)
-    setName := outcome.ResourceSetName
-
-    switch *outcome.Operation {
-    case "add":
-        return oa.db.AddToResourceSet(setName, paths)
-    case "remove":
-        return oa.db.RemoveFromResourceSet(setName, paths)
+func (ti *ToolInvoker) Invoke(entries []*models.Entry, outcome models.RuleOutcome) (int, error) {
+    switch outcome.Tool {
+    case "resource-set-modify":
+        return ti.invokeResourceSetModify(entries, outcome.Arguments)
+    case "resource-set-create":
+        return ti.invokeResourceSetCreate(outcome.Arguments)
+    case "resource-set-add-child":
+        return ti.invokeResourceSetAddChild(outcome.Arguments)
+    case "resource-set-remove-child":
+        return ti.invokeResourceSetRemoveChild(outcome.Arguments)
+    case "classifier-process":
+        return ti.invokeClassifierProcess(entries, outcome.Arguments)
+    default:
+        ti.logger.Warnf("unknown tool: %s", outcome.Tool)
+        return 0, nil
     }
-
-    // Record outcome for audit trail
-    oa.recordOutcomes(entries, outcome, execID, planID)
 }
 ```
 
@@ -623,9 +656,11 @@ db.AddToResourceSet("my-favorites", []string{
   },
   "outcomes": [
     {
-      "type": "selection_set",
-      "selection_set_name": "large-videos",
-      "operation": "replace"
+      "tool": "resource-set-modify",
+      "arguments": {
+        "name": "large-videos",
+        "operation": "add"
+      }
     }
   ]
 }
@@ -659,9 +694,11 @@ db.AddToResourceSet("my-favorites", []string{
   },
   "outcomes": [
     {
-      "type": "selection_set",
-      "selection_set_name": "backup-queue",
-      "operation": "add"
+      "tool": "resource-set-modify",
+      "arguments": {
+        "name": "backup-queue",
+        "operation": "add"
+      }
     }
   ]
 }
@@ -689,14 +726,45 @@ db.AddToResourceSet("my-favorites", []string{
   },
   "outcomes": [
     {
-      "type": "selection_set",
-      "selection_set_name": "unprocessed-photos",
-      "operation": "add"
+      "tool": "resource-set-modify",
+      "arguments": {
+        "name": "unprocessed-photos",
+        "operation": "add"
+      }
     },
     {
-      "type": "classifier",
-      "classifier_type": "thumbnail",
-      "classifier_params": {"size": 256}
+      "tool": "classifier-process",
+      "arguments": {
+        "operation": "thumbnail",
+        "size": 256
+      }
+    }
+  ]
+}
+```
+
+### Example 4: Process All Indexed Files (Project Source)
+
+```json
+{
+  "name": "classify-all",
+  "description": "Generate thumbnails for all images in the project",
+  "mode": "oneshot",
+  "sources": [
+    {
+      "type": "project"
+    }
+  ],
+  "conditions": {
+    "type": "media_type",
+    "media_type": "image"
+  },
+  "outcomes": [
+    {
+      "tool": "classifier-process",
+      "arguments": {
+        "operation": "thumbnail"
+      }
     }
   ]
 }

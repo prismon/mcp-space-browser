@@ -14,22 +14,29 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// LifecycleTrigger interface for triggering lifecycle plans
+type LifecycleTrigger interface {
+	TriggerOnAdd(ctx context.Context, entries []*models.Entry) error
+	TriggerOnRemove(ctx context.Context, entries []*models.Entry) error
+}
+
 // LiveFilesystemSource watches a filesystem directory for changes in real-time
 type LiveFilesystemSource struct {
-	config       *SourceConfig
-	liveConfig   *LiveFilesystemConfig
-	db           *sql.DB
-	watcher      *fsnotify.Watcher
-	ruleExecutor RuleExecutor
-	stats        *SourceStats
-	status       SourceStatus
-	mu           sync.RWMutex
-	stopChan     chan struct{}
-	doneChan     chan struct{}
-	log          *logrus.Entry
-	eventQueue   chan FilesystemEvent
-	debounceMap  map[string]*time.Timer
-	debounceMu   sync.Mutex
+	config           *SourceConfig
+	liveConfig       *LiveFilesystemConfig
+	db               *sql.DB
+	watcher          *fsnotify.Watcher
+	ruleExecutor     RuleExecutor
+	lifecycleTrigger LifecycleTrigger
+	stats            *SourceStats
+	status           SourceStatus
+	mu               sync.RWMutex
+	stopChan         chan struct{}
+	doneChan         chan struct{}
+	log              *logrus.Entry
+	eventQueue       chan FilesystemEvent
+	debounceMap      map[string]*time.Timer
+	debounceMu       sync.Mutex
 }
 
 // NewLiveFilesystemSource creates a new live filesystem source
@@ -180,6 +187,13 @@ func (s *LiveFilesystemSource) SetRuleExecutor(executor RuleExecutor) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ruleExecutor = executor
+}
+
+// SetLifecycleTrigger sets the lifecycle trigger for this source
+func (s *LiveFilesystemSource) SetLifecycleTrigger(trigger LifecycleTrigger) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lifecycleTrigger = trigger
 }
 
 // watchLoop is the main event loop that watches for filesystem changes
@@ -387,17 +401,42 @@ func (s *LiveFilesystemSource) handleCreateOrModify(ctx context.Context, path st
 		}
 	}
 
+	// Trigger lifecycle "added" plan
+	if s.lifecycleTrigger != nil {
+		go func() {
+			if err := s.lifecycleTrigger.TriggerOnAdd(ctx, []*models.Entry{entry}); err != nil {
+				s.log.WithError(err).Warn("Failed to trigger lifecycle plan for added entry")
+			}
+		}()
+	}
+
 	return nil
 }
 
 // handleDelete handles file deletion
 func (s *LiveFilesystemSource) handleDelete(path string) error {
+	// Create entry for lifecycle trigger (before deletion)
+	entry := &models.Entry{
+		Path: path,
+	}
+
 	// Delete entry from database
 	if err := s.deleteEntry(path); err != nil {
 		return fmt.Errorf("failed to delete entry: %w", err)
 	}
 
 	s.log.WithField("path", path).Debug("Deleted entry from database")
+
+	// Trigger lifecycle "removed" plan
+	if s.lifecycleTrigger != nil {
+		go func() {
+			ctx := context.Background()
+			if err := s.lifecycleTrigger.TriggerOnRemove(ctx, []*models.Entry{entry}); err != nil {
+				s.log.WithError(err).Warn("Failed to trigger lifecycle plan for removed entry")
+			}
+		}()
+	}
+
 	return nil
 }
 

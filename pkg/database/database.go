@@ -445,9 +445,11 @@ func (d *DiskDB) init() error {
 		description TEXT,
 		mode TEXT CHECK(mode IN ('oneshot', 'continuous')) DEFAULT 'oneshot',
 		status TEXT CHECK(status IN ('active', 'paused', 'disabled')) DEFAULT 'active',
+		trigger TEXT CHECK(trigger IS NULL OR trigger = '' OR trigger IN ('manual', 'on_add', 'on_remove', 'on_refresh')) DEFAULT 'manual',
 		sources_json TEXT NOT NULL,
 		conditions_json TEXT,
 		outcomes_json TEXT NOT NULL,
+		preferences_json TEXT,
 		created_at INTEGER DEFAULT (strftime('%s', 'now')),
 		updated_at INTEGER DEFAULT (strftime('%s', 'now')),
 		last_run_at INTEGER
@@ -460,6 +462,10 @@ func (d *DiskDB) init() error {
 	}
 
 	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_plans_mode ON plans(mode)"); err != nil {
+		return err
+	}
+
+	if _, err := d.db.Exec("CREATE INDEX IF NOT EXISTS idx_plans_trigger ON plans(trigger)"); err != nil {
 		return err
 	}
 
@@ -878,6 +884,12 @@ func (d *DiskDB) All() ([]*models.Entry, error) {
 	}
 
 	return entries, rows.Err()
+}
+
+// GetAllEntries returns all filesystem entries in the database.
+// This is used by the "project" source type to operate on all indexed entries.
+func (d *DiskDB) GetAllEntries() ([]*models.Entry, error) {
+	return d.All()
 }
 
 // TreeOptions configures tree building behavior
@@ -2147,11 +2159,14 @@ func (d *DiskDB) DeleteFeature(hash string) error {
 	return err
 }
 
-// DeleteFeaturesByPath deletes all features for an entry path
-func (d *DiskDB) DeleteFeaturesByPath(entryPath string) error {
+// DeleteFeaturesByPath deletes all features for an entry path and returns the count
+func (d *DiskDB) DeleteFeaturesByPath(entryPath string) (int64, error) {
 	log.WithField("entryPath", entryPath).Info("Deleting features for entry")
-	_, err := d.db.Exec(`DELETE FROM features WHERE entry_path = ?`, entryPath)
-	return err
+	result, err := d.db.Exec(`DELETE FROM features WHERE entry_path = ?`, entryPath)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 // MigrateMetadataToFeatures copies all metadata entries to the features table.

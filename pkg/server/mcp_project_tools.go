@@ -7,6 +7,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/prismon/mcp-space-browser/pkg/plans"
+	"github.com/prismon/mcp-space-browser/pkg/project"
 )
 
 // registerProjectTools registers all project management MCP tools
@@ -17,6 +19,9 @@ func registerProjectTools(s *server.MCPServer, sc *ServerContext) {
 	registerProjectGet(s, sc)
 	registerProjectOpen(s, sc)
 	registerProjectClose(s, sc)
+	registerProjectProcessAdded(s, sc)
+	registerProjectProcessRemoved(s, sc)
+	registerProjectProcessRefresh(s, sc)
 }
 
 // project-create: Create a new project
@@ -309,6 +314,168 @@ func registerProjectClose(s *server.MCPServer, sc *ServerContext) {
 		result := map[string]interface{}{
 			"success": true,
 			"message": fmt.Sprintf("Project '%s' closed", projectName),
+		}
+
+		data, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(data)), nil
+	})
+}
+
+// project-process-added: Manually trigger the "added" lifecycle plan
+func registerProjectProcessAdded(s *server.MCPServer, sc *ServerContext) {
+	s.AddTool(mcp.Tool{
+		Name:        "project-process-added",
+		Description: "Manually trigger the 'added' lifecycle plan for specified paths. Classifies files into resource-sets and generates features (thumbnails).",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"paths": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]string{"type": "string"},
+					"description": "List of file paths to process",
+				},
+			},
+			Required: []string{"paths"},
+		},
+	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Paths []string `json:"paths"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		if len(args.Paths) == 0 {
+			return mcp.NewToolResultError("No paths provided"), nil
+		}
+
+		db, errResult := requireProjectDB(ctx, sc)
+		if errResult != nil {
+			return errResult, nil
+		}
+
+		trigger := plans.NewLifecycleTrigger(db, plans.NewExecutor(db, log))
+		exec, err := trigger.TriggerForPaths(ctx, project.PlanAdded, args.Paths)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to trigger plan: %v", err)), nil
+		}
+
+		result := map[string]interface{}{
+			"success":          true,
+			"plan":             project.PlanAdded,
+			"pathsProcessed":   len(args.Paths),
+			"entriesMatched":   exec.EntriesMatched,
+			"outcomesApplied":  exec.OutcomesApplied,
+			"status":           exec.Status,
+		}
+
+		data, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(data)), nil
+	})
+}
+
+// project-process-removed: Manually trigger the "removed" lifecycle plan
+func registerProjectProcessRemoved(s *server.MCPServer, sc *ServerContext) {
+	s.AddTool(mcp.Tool{
+		Name:        "project-process-removed",
+		Description: "Manually trigger the 'removed' lifecycle plan for specified paths. Removes from resource-sets and cleans up features.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"paths": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]string{"type": "string"},
+					"description": "List of file paths to process as removed",
+				},
+			},
+			Required: []string{"paths"},
+		},
+	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Paths []string `json:"paths"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		if len(args.Paths) == 0 {
+			return mcp.NewToolResultError("No paths provided"), nil
+		}
+
+		db, errResult := requireProjectDB(ctx, sc)
+		if errResult != nil {
+			return errResult, nil
+		}
+
+		trigger := plans.NewLifecycleTrigger(db, plans.NewExecutor(db, log))
+		exec, err := trigger.TriggerForPaths(ctx, project.PlanRemoved, args.Paths)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to trigger plan: %v", err)), nil
+		}
+
+		result := map[string]interface{}{
+			"success":          true,
+			"plan":             project.PlanRemoved,
+			"pathsProcessed":   len(args.Paths),
+			"entriesMatched":   exec.EntriesMatched,
+			"outcomesApplied":  exec.OutcomesApplied,
+			"status":           exec.Status,
+		}
+
+		data, _ := json.Marshal(result)
+		return mcp.NewToolResultText(string(data)), nil
+	})
+}
+
+// project-process-refresh: Manually trigger the "refresh" lifecycle plan
+func registerProjectProcessRefresh(s *server.MCPServer, sc *ServerContext) {
+	s.AddTool(mcp.Tool{
+		Name:        "project-process-refresh",
+		Description: "Manually trigger the 'refresh' lifecycle plan for specified paths. Regenerates features (thumbnails, timelines) for media files.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"paths": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]string{"type": "string"},
+					"description": "List of file paths to refresh",
+				},
+			},
+			Required: []string{"paths"},
+		},
+	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args struct {
+			Paths []string `json:"paths"`
+		}
+
+		if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+		}
+
+		if len(args.Paths) == 0 {
+			return mcp.NewToolResultError("No paths provided"), nil
+		}
+
+		db, errResult := requireProjectDB(ctx, sc)
+		if errResult != nil {
+			return errResult, nil
+		}
+
+		trigger := plans.NewLifecycleTrigger(db, plans.NewExecutor(db, log))
+		exec, err := trigger.TriggerForPaths(ctx, project.PlanRefresh, args.Paths)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to trigger plan: %v", err)), nil
+		}
+
+		result := map[string]interface{}{
+			"success":          true,
+			"plan":             project.PlanRefresh,
+			"pathsProcessed":   len(args.Paths),
+			"entriesMatched":   exec.EntriesMatched,
+			"outcomesApplied":  exec.OutcomesApplied,
+			"status":           exec.Status,
 		}
 
 		data, _ := json.Marshal(result)

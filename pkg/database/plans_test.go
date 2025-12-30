@@ -11,11 +11,12 @@ import (
 
 // Helper to create a valid outcome
 func createTestOutcome() models.RuleOutcome {
-	addOp := "add"
 	return models.RuleOutcome{
-		Type:             "selection_set",
-		ResourceSetName: "test-set",
-		Operation:        &addOp,
+		Tool: "resource-set-modify",
+		Arguments: map[string]interface{}{
+			"name":      "test-set",
+			"operation": "add",
+		},
 	}
 }
 

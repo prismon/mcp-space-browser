@@ -816,6 +816,130 @@ func (db *DiskDB) isAncestor(potentialAncestor, node int64) bool {
 
 ---
 
+## Resource-Set Layering
+
+Resource-sets can be organized in hierarchical layers to represent different organizational perspectives. The DAG structure allows flexible categorization where resources can belong to multiple hierarchies simultaneously.
+
+### Example: Media Organization
+
+```
+all-resources (root)
+├── media
+│   ├── images
+│   │   ├── photos
+│   │   │   ├── vacation-2024
+│   │   │   └── family-portraits
+│   │   └── screenshots
+│   ├── videos
+│   │   ├── movies
+│   │   └── tutorials
+│   └── audio
+│       ├── music
+│       └── podcasts
+├── documents
+│   ├── work
+│   └── personal
+└── by-year
+    ├── 2023
+    └── 2024
+```
+
+### Creating a Layered Structure
+
+```json
+// Step 1: Create leaf-level resource-sets
+{"tool": "resource-set-create", "params": {"name": "vacation-2024"}}
+{"tool": "resource-set-create", "params": {"name": "family-portraits"}}
+{"tool": "resource-set-create", "params": {"name": "screenshots"}}
+{"tool": "resource-set-create", "params": {"name": "movies"}}
+{"tool": "resource-set-create", "params": {"name": "tutorials"}}
+
+// Step 2: Create intermediate layers
+{"tool": "resource-set-create", "params": {"name": "photos"}}
+{"tool": "resource-set-create", "params": {"name": "videos"}}
+{"tool": "resource-set-create", "params": {"name": "images"}}
+{"tool": "resource-set-create", "params": {"name": "media"}}
+{"tool": "resource-set-create", "params": {"name": "all-resources"}}
+
+// Step 3: Build the hierarchy bottom-up
+{"tool": "resource-set-add-child", "params": {"parent": "photos", "child": "vacation-2024"}}
+{"tool": "resource-set-add-child", "params": {"parent": "photos", "child": "family-portraits"}}
+{"tool": "resource-set-add-child", "params": {"parent": "images", "child": "photos"}}
+{"tool": "resource-set-add-child", "params": {"parent": "images", "child": "screenshots"}}
+{"tool": "resource-set-add-child", "params": {"parent": "videos", "child": "movies"}}
+{"tool": "resource-set-add-child", "params": {"parent": "videos", "child": "tutorials"}}
+{"tool": "resource-set-add-child", "params": {"parent": "media", "child": "images"}}
+{"tool": "resource-set-add-child", "params": {"parent": "media", "child": "videos"}}
+{"tool": "resource-set-add-child", "params": {"parent": "all-resources", "child": "media"}}
+```
+
+### Cross-Cutting Hierarchies (Multiple Parents)
+
+Resources can belong to multiple hierarchies. For example, vacation photos from 2024 can be in both the content-type hierarchy AND the temporal hierarchy:
+
+```json
+// vacation-2024 already in: photos → images → media → all-resources
+// Add to temporal hierarchy as well:
+{"tool": "resource-set-add-child", "params": {"parent": "2024", "child": "vacation-2024"}}
+{"tool": "resource-set-add-child", "params": {"parent": "by-year", "child": "2024"}}
+{"tool": "resource-set-add-child", "params": {"parent": "all-resources", "child": "by-year"}}
+```
+
+Now `vacation-2024` has two parents: `photos` and `2024`. Queries against either path will find the same resources.
+
+### Aggregation Through Layers
+
+When aggregating metrics, values roll up through the DAG:
+
+```json
+// Get total size of all media
+{"tool": "resource-sum", "params": {"name": "media", "metric": "size"}}
+// Response: Aggregates size from images + videos + audio (and all children)
+
+// Get total size of just photos
+{"tool": "resource-sum", "params": {"name": "photos", "metric": "size"}}
+// Response: Aggregates size from vacation-2024 + family-portraits
+
+// Get total size by year
+{"tool": "resource-sum", "params": {"name": "2024", "metric": "size"}}
+// Response: Aggregates all resources from 2024 (regardless of content type)
+```
+
+### Automating Layer Population with Plans
+
+Use plans to automatically populate resource-sets based on conditions:
+
+```json
+{
+  "tool": "plan-create",
+  "params": {
+    "name": "organize-photos-by-year",
+    "mode": "oneshot",
+    "sources": [
+      {"type": "filesystem", "paths": ["/home/user/Photos"]}
+    ],
+    "conditions": {
+      "type": "all",
+      "conditions": [
+        {"type": "media_type", "media_type": "image"},
+        {"type": "time", "min_mtime": 1704067200, "max_mtime": 1735689599}
+      ]
+    },
+    "outcomes": [
+      {
+        "tool": "resource-set-modify",
+        "arguments": {
+          "name": "2024",
+          "operation": "add"
+        }
+      }
+    ]
+  }
+}
+```
+
+---
+
 ## Benefits
 
 1. **Resource-Neutral**: Operations work on any resources, not tied to files

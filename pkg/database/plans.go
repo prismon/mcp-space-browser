@@ -24,13 +24,14 @@ func (d *DiskDB) CreatePlan(plan *models.Plan) error {
 	plan.UpdatedAt = now
 
 	log.WithFields(logrus.Fields{
-		"name": plan.Name,
-		"mode": plan.Mode,
+		"name":    plan.Name,
+		"mode":    plan.Mode,
+		"trigger": plan.Trigger,
 	}).Info("Creating plan")
 
 	query := `
-		INSERT INTO plans (name, description, mode, status, sources_json, conditions_json, outcomes_json, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO plans (name, description, mode, status, trigger, sources_json, conditions_json, outcomes_json, preferences_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	result, err := d.db.Exec(query,
@@ -38,9 +39,11 @@ func (d *DiskDB) CreatePlan(plan *models.Plan) error {
 		plan.Description,
 		plan.Mode,
 		plan.Status,
+		plan.Trigger,
 		plan.SourcesJSON,
 		plan.ConditionsJSON,
 		plan.OutcomesJSON,
+		plan.PreferencesJSON,
 		plan.CreatedAt,
 		plan.UpdatedAt,
 	)
@@ -59,12 +62,14 @@ func (d *DiskDB) CreatePlan(plan *models.Plan) error {
 
 // GetPlan retrieves a plan by name
 func (d *DiskDB) GetPlan(name string) (*models.Plan, error) {
-	query := `SELECT id, name, description, mode, status, sources_json, conditions_json, outcomes_json, created_at, updated_at, last_run_at
+	query := `SELECT id, name, description, mode, status, trigger, sources_json, conditions_json, outcomes_json, preferences_json, created_at, updated_at, last_run_at
 			  FROM plans WHERE name = ?`
 
 	var plan models.Plan
 	var description sql.NullString
+	var trigger sql.NullString
 	var conditionsJSON sql.NullString
+	var preferencesJSON sql.NullString
 	var lastRunAt sql.NullInt64
 
 	err := d.db.QueryRow(query, name).Scan(
@@ -73,9 +78,11 @@ func (d *DiskDB) GetPlan(name string) (*models.Plan, error) {
 		&description,
 		&plan.Mode,
 		&plan.Status,
+		&trigger,
 		&plan.SourcesJSON,
 		&conditionsJSON,
 		&plan.OutcomesJSON,
+		&preferencesJSON,
 		&plan.CreatedAt,
 		&plan.UpdatedAt,
 		&lastRunAt,
@@ -90,9 +97,16 @@ func (d *DiskDB) GetPlan(name string) (*models.Plan, error) {
 	if description.Valid {
 		plan.Description = &description.String
 	}
+	if trigger.Valid {
+		plan.Trigger = trigger.String
+	}
 	if conditionsJSON.Valid {
 		condStr := conditionsJSON.String
 		plan.ConditionsJSON = &condStr
+	}
+	if preferencesJSON.Valid {
+		prefStr := preferencesJSON.String
+		plan.PreferencesJSON = &prefStr
 	}
 	if lastRunAt.Valid {
 		plan.LastRunAt = &lastRunAt.Int64
@@ -107,7 +121,7 @@ func (d *DiskDB) GetPlan(name string) (*models.Plan, error) {
 
 // ListPlans returns all plans
 func (d *DiskDB) ListPlans() ([]*models.Plan, error) {
-	query := `SELECT id, name, description, mode, status, sources_json, conditions_json, outcomes_json, created_at, updated_at, last_run_at
+	query := `SELECT id, name, description, mode, status, trigger, sources_json, conditions_json, outcomes_json, preferences_json, created_at, updated_at, last_run_at
 			  FROM plans ORDER BY created_at DESC`
 
 	rows, err := d.db.Query(query)
@@ -120,7 +134,9 @@ func (d *DiskDB) ListPlans() ([]*models.Plan, error) {
 	for rows.Next() {
 		var plan models.Plan
 		var description sql.NullString
+		var trigger sql.NullString
 		var conditionsJSON sql.NullString
+		var preferencesJSON sql.NullString
 		var lastRunAt sql.NullInt64
 
 		if err := rows.Scan(
@@ -129,9 +145,11 @@ func (d *DiskDB) ListPlans() ([]*models.Plan, error) {
 			&description,
 			&plan.Mode,
 			&plan.Status,
+			&trigger,
 			&plan.SourcesJSON,
 			&conditionsJSON,
 			&plan.OutcomesJSON,
+			&preferencesJSON,
 			&plan.CreatedAt,
 			&plan.UpdatedAt,
 			&lastRunAt,
@@ -142,9 +160,16 @@ func (d *DiskDB) ListPlans() ([]*models.Plan, error) {
 		if description.Valid {
 			plan.Description = &description.String
 		}
+		if trigger.Valid {
+			plan.Trigger = trigger.String
+		}
 		if conditionsJSON.Valid {
 			condStr := conditionsJSON.String
 			plan.ConditionsJSON = &condStr
+		}
+		if preferencesJSON.Valid {
+			prefStr := preferencesJSON.String
+			plan.PreferencesJSON = &prefStr
 		}
 		if lastRunAt.Valid {
 			plan.LastRunAt = &lastRunAt.Int64
@@ -173,12 +198,13 @@ func (d *DiskDB) UpdatePlan(plan *models.Plan) error {
 	plan.UpdatedAt = time.Now().Unix()
 
 	log.WithFields(logrus.Fields{
-		"name": plan.Name,
+		"name":    plan.Name,
+		"trigger": plan.Trigger,
 	}).Info("Updating plan")
 
 	query := `
 		UPDATE plans
-		SET description = ?, mode = ?, status = ?, sources_json = ?, conditions_json = ?, outcomes_json = ?, updated_at = ?
+		SET description = ?, mode = ?, status = ?, trigger = ?, sources_json = ?, conditions_json = ?, outcomes_json = ?, preferences_json = ?, updated_at = ?
 		WHERE name = ?
 	`
 
@@ -186,9 +212,11 @@ func (d *DiskDB) UpdatePlan(plan *models.Plan) error {
 		plan.Description,
 		plan.Mode,
 		plan.Status,
+		plan.Trigger,
 		plan.SourcesJSON,
 		plan.ConditionsJSON,
 		plan.OutcomesJSON,
+		plan.PreferencesJSON,
 		plan.UpdatedAt,
 		plan.Name,
 	)
@@ -348,6 +376,72 @@ func (d *DiskDB) GetPlanExecutions(planName string, limit int) ([]*models.PlanEx
 	}
 
 	return executions, nil
+}
+
+// GetPlansByTrigger returns all active plans with the specified trigger
+func (d *DiskDB) GetPlansByTrigger(trigger string) ([]*models.Plan, error) {
+	query := `SELECT id, name, description, mode, status, trigger, sources_json, conditions_json, outcomes_json, preferences_json, created_at, updated_at, last_run_at
+			  FROM plans WHERE trigger = ? AND status = 'active' ORDER BY created_at DESC`
+
+	rows, err := d.db.Query(query, trigger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get plans by trigger: %w", err)
+	}
+	defer rows.Close()
+
+	var plans []*models.Plan
+	for rows.Next() {
+		var plan models.Plan
+		var description sql.NullString
+		var triggerVal sql.NullString
+		var conditionsJSON sql.NullString
+		var preferencesJSON sql.NullString
+		var lastRunAt sql.NullInt64
+
+		if err := rows.Scan(
+			&plan.ID,
+			&plan.Name,
+			&description,
+			&plan.Mode,
+			&plan.Status,
+			&triggerVal,
+			&plan.SourcesJSON,
+			&conditionsJSON,
+			&plan.OutcomesJSON,
+			&preferencesJSON,
+			&plan.CreatedAt,
+			&plan.UpdatedAt,
+			&lastRunAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan plan: %w", err)
+		}
+
+		if description.Valid {
+			plan.Description = &description.String
+		}
+		if triggerVal.Valid {
+			plan.Trigger = triggerVal.String
+		}
+		if conditionsJSON.Valid {
+			condStr := conditionsJSON.String
+			plan.ConditionsJSON = &condStr
+		}
+		if preferencesJSON.Valid {
+			prefStr := preferencesJSON.String
+			plan.PreferencesJSON = &prefStr
+		}
+		if lastRunAt.Valid {
+			plan.LastRunAt = &lastRunAt.Int64
+		}
+
+		if err := plan.UnmarshalFromDB(); err != nil {
+			return nil, err
+		}
+
+		plans = append(plans, &plan)
+	}
+
+	return plans, nil
 }
 
 // RecordPlanOutcome creates an outcome record

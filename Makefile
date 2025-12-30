@@ -143,6 +143,23 @@ run-dev:
 	@echo "Starting MCP server (dev mode)..."
 	$(GOCMD) run $(MAIN_PACKAGE) server --port=3000
 
+# Run backend and open frontend in browser
+# The Go server serves the web UI at /web/
+.PHONY: dev
+dev: build
+	@echo "Starting MCP server with web UI..."
+	@echo "Opening http://localhost:3000/web/ in browser..."
+	@(sleep 1 && open http://localhost:3000/web/ 2>/dev/null || xdg-open http://localhost:3000/web/ 2>/dev/null || start http://localhost:3000/web/ 2>/dev/null || true) &
+	$(BUILD_DIR)/$(BINARY_NAME) server --port=3000
+
+# Run backend and frontend in development mode (no build, opens browser)
+.PHONY: dev-quick
+dev-quick:
+	@echo "Starting MCP server (dev mode) with web UI..."
+	@echo "Opening http://localhost:3000/web/ in browser..."
+	@(sleep 1 && open http://localhost:3000/web/ 2>/dev/null || xdg-open http://localhost:3000/web/ 2>/dev/null || start http://localhost:3000/web/ 2>/dev/null || true) &
+	$(GOCMD) run $(MAIN_PACKAGE) server --port=3000
+
 # Run disk-index command (requires PATH argument)
 .PHONY: index
 index:
@@ -183,25 +200,40 @@ pre-commit: fmt vet test
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  make build          - Build the binary"
-	@echo "  make build-debug    - Build with debug symbols"
-	@echo "  make install        - Install binary to GOPATH/bin"
-	@echo "  make test           - Run all tests"
-	@echo "  make test-verbose   - Run tests with verbose output"
-	@echo "  make test-coverage  - Run tests with coverage report"
-	@echo "  make coverage-html  - View coverage report in browser"
-	@echo "  make test-pkg       - Run tests for specific package (use PKG=...)"
-	@echo "  make clean          - Remove build artifacts"
-	@echo "  make fmt            - Format code"
-	@echo "  make vet            - Run go vet"
-	@echo "  make tidy           - Run go mod tidy"
-	@echo "  make deps           - Download dependencies"
-	@echo "  make verify         - Verify dependencies"
-	@echo "  make run            - Build and run MCP server"
-	@echo "  make run-dev        - Run MCP server without building"
-	@echo "  make index          - Run disk-index (use PATH_ARG=...)"
-	@echo "  make du             - Run disk-du (use PATH_ARG=...)"
-	@echo "  make tree           - Run disk-tree (use PATH_ARG=...)"
-	@echo "  make check          - Run fmt, vet, and test"
-	@echo "  make pre-commit     - Run pre-commit checks"
-	@echo "  make help           - Show this help message"
+	@echo ""
+	@echo "  Development:"
+	@echo "    make dev          - Build, run server, and open web UI in browser"
+	@echo "    make dev-quick    - Run server (no build) and open web UI in browser"
+	@echo "    make run          - Build and run MCP server only"
+	@echo "    make run-dev      - Run MCP server without building"
+	@echo ""
+	@echo "  Build:"
+	@echo "    make build        - Build the binary"
+	@echo "    make build-debug  - Build with debug symbols"
+	@echo "    make install      - Install binary to GOPATH/bin"
+	@echo "    make clean        - Remove build artifacts"
+	@echo ""
+	@echo "  Testing:"
+	@echo "    make test         - Run all tests"
+	@echo "    make test-verbose - Run tests with verbose output"
+	@echo "    make test-coverage- Run tests with coverage report"
+	@echo "    make coverage-html- View coverage report in browser"
+	@echo "    make test-pkg     - Run tests for specific package (use PKG=...)"
+	@echo ""
+	@echo "  Code Quality:"
+	@echo "    make fmt          - Format code"
+	@echo "    make vet          - Run go vet"
+	@echo "    make check        - Run fmt, vet, and test"
+	@echo "    make pre-commit   - Run pre-commit checks"
+	@echo ""
+	@echo "  Dependencies:"
+	@echo "    make tidy         - Run go mod tidy"
+	@echo "    make deps         - Download dependencies"
+	@echo "    make verify       - Verify dependencies"
+	@echo ""
+	@echo "  CLI Commands:"
+	@echo "    make index        - Run disk-index (use PATH_ARG=...)"
+	@echo "    make du           - Run disk-du (use PATH_ARG=...)"
+	@echo "    make tree         - Run disk-tree (use PATH_ARG=...)"
+	@echo ""
+	@echo "  Web UI: http://localhost:3000/web/ (served by the backend)"

@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Entry represents a filesystem entry (file or directory)
 type Entry struct {
@@ -213,24 +216,46 @@ type RuleCondition struct {
 	PathPattern    *string `json:"pathPattern,omitempty"` // Regex
 }
 
-// RuleOutcome represents the outcome of a rule
-// IMPORTANT: All outcomes must have a ResourceSetName to ensure traceability
+// RuleOutcome represents the outcome of a rule - invokes an MCP tool
+// Arguments support template variables like {{entry.path}}, {{entry.size}}, etc.
 type RuleOutcome struct {
-	Type             string         `json:"type"` // "selection_set", "classifier", "chained"
-	ResourceSetName string         `json:"selectionSetName"` // REQUIRED for all outcome types
+	// Tool name - any supported MCP tool (e.g., "resource-set-modify", "classifier-process")
+	Tool string `json:"tool,omitempty"`
 
-	// For selection_set outcome
-	Operation *string `json:"operation,omitempty"` // "add", "remove"
+	// Tool arguments as JSON object, supports {{entry.path}} templates
+	Arguments map[string]interface{} `json:"arguments,omitempty"`
 
-	// For classifier outcome
-	ClassifierOperation *string `json:"classifierOperation,omitempty"` // "generate_thumbnail", "extract_metadata"
-	MaxWidth            *int    `json:"maxWidth,omitempty"`
-	MaxHeight           *int    `json:"maxHeight,omitempty"`
-	Quality             *int    `json:"quality,omitempty"`
+	// Per-outcome condition - filter entries before applying this outcome
+	Conditions *RuleCondition `json:"conditions,omitempty"`
 
-	// For chained outcome
-	Outcomes     []*RuleOutcome `json:"outcomes,omitempty"`
-	StopOnError  *bool          `json:"stopOnError,omitempty"`
+	// For chained outcomes - execute multiple tools in sequence
+	Outcomes    []*RuleOutcome `json:"outcomes,omitempty"`
+	StopOnError *bool          `json:"stopOnError,omitempty"`
+}
+
+// IsChained returns true if this outcome contains sub-outcomes
+func (ro *RuleOutcome) IsChained() bool {
+	return len(ro.Outcomes) > 0
+}
+
+// Validate checks that the outcome is properly configured
+func (ro *RuleOutcome) Validate() error {
+	if ro.IsChained() {
+		// Chained outcome - validate sub-outcomes
+		for i, sub := range ro.Outcomes {
+			if err := sub.Validate(); err != nil {
+				return fmt.Errorf("outcome[%d]: %w", i, err)
+			}
+		}
+		return nil
+	}
+
+	// Single tool outcome - must have tool name
+	if ro.Tool == "" {
+		return fmt.Errorf("outcome must specify 'tool' name")
+	}
+
+	return nil
 }
 
 // RuleExecution represents a single execution of a rule

@@ -22,16 +22,17 @@ func TestCreateAndGetRule(t *testing.T) {
 
 	// Create a test rule
 	condition := models.RuleCondition{
-		Type:      "size",
-		MinSize:   int64Ptr(1048576),
+		Type:    "size",
+		MinSize: int64Ptr(1048576),
 	}
 	conditionJSON, err := json.Marshal(condition)
 	require.NoError(t, err)
 
 	outcome := models.RuleOutcome{
-		Type:             "classifier",
-		ResourceSetName: "test-thumbnails",
-		ClassifierOperation: strPtr("generate_thumbnail"),
+		Tool: "classifier-process",
+		Arguments: map[string]interface{}{
+			"operation": "generate_thumbnail",
+		},
 	}
 	outcomeJSON, err := json.Marshal(outcome)
 	require.NoError(t, err)
@@ -69,8 +70,7 @@ func TestCreateAndGetRule(t *testing.T) {
 	// Parse and verify outcome
 	parsedOutcome, err := ParseRuleOutcome(retrieved.OutcomeJSON)
 	require.NoError(t, err)
-	assert.Equal(t, "classifier", parsedOutcome.Type)
-	assert.Equal(t, "test-thumbnails", parsedOutcome.ResourceSetName)
+	assert.Equal(t, "classifier-process", parsedOutcome.Tool)
 }
 
 func TestListRules(t *testing.T) {
@@ -97,9 +97,11 @@ func TestListRules(t *testing.T) {
 		conditionJSON, _ := json.Marshal(condition)
 
 		outcome := models.RuleOutcome{
-			Type:             "selection_set",
-			ResourceSetName: "test-set",
-			Operation:        strPtr("add"),
+			Tool: "resource-set-modify",
+			Arguments: map[string]interface{}{
+				"name":      "test-set",
+				"operation": "add",
+			},
 		}
 		outcomeJSON, _ := json.Marshal(outcome)
 
@@ -141,9 +143,11 @@ func TestRuleExecutionWithResourceSet(t *testing.T) {
 	condition := models.RuleCondition{Type: "size"}
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
-		Type:             "selection_set",
-		ResourceSetName: "test-set",
-		Operation:        strPtr("add"),
+		Tool: "resource-set-modify",
+		Arguments: map[string]interface{}{
+			"name":      "test-set",
+			"operation": "add",
+		},
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -169,7 +173,7 @@ func TestRuleExecutionWithResourceSet(t *testing.T) {
 	// Create a rule execution - MUST have selection_set_id
 	execution := &models.RuleExecution{
 		RuleID:           ruleID,
-		ResourceSetID:   setID,
+		ResourceSetID:    setID,
 		EntriesMatched:   10,
 		EntriesProcessed: 10,
 		Status:           "success",
@@ -210,8 +214,10 @@ func TestRuleExecutionRequiresResourceSet(t *testing.T) {
 	condition := models.RuleCondition{Type: "size"}
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
-		Type:             "selection_set",
-		ResourceSetName: "test-set",
+		Tool: "resource-set-modify",
+		Arguments: map[string]interface{}{
+			"name": "test-set",
+		},
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -228,7 +234,7 @@ func TestRuleExecutionRequiresResourceSet(t *testing.T) {
 	// Try to create execution WITHOUT selection_set_id - should fail
 	execution := &models.RuleExecution{
 		RuleID:           ruleID,
-		ResourceSetID:   0, // Missing!
+		ResourceSetID:    0, // Missing!
 		EntriesMatched:   5,
 		EntriesProcessed: 5,
 		Status:           "success",
@@ -250,8 +256,10 @@ func TestRuleOutcomeRecord(t *testing.T) {
 	condition := models.RuleCondition{Type: "size"}
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
-		Type:             "classifier",
-		ResourceSetName: "test-thumbnails",
+		Tool: "classifier-process",
+		Arguments: map[string]interface{}{
+			"operation": "thumbnail",
+		},
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -271,9 +279,9 @@ func TestRuleOutcomeRecord(t *testing.T) {
 	setID, _ := db.CreateResourceSet(resourceSet)
 
 	execution := &models.RuleExecution{
-		RuleID:         ruleID,
+		RuleID:        ruleID,
 		ResourceSetID: setID,
-		Status:         "success",
+		Status:        "success",
 	}
 	executionID, _ := db.CreateRuleExecution(execution)
 
@@ -287,11 +295,11 @@ func TestRuleOutcomeRecord(t *testing.T) {
 
 	// Create outcome record - MUST have selection_set_id
 	outcomeRecord := &models.RuleOutcomeRecord{
-		ExecutionID:    executionID,
+		ExecutionID:   executionID,
 		ResourceSetID: setID,
-		EntryPath:      "/test/file.jpg",
-		OutcomeType:    "generate_thumbnail",
-		Status:         "success",
+		EntryPath:     "/test/file.jpg",
+		OutcomeType:   "generate_thumbnail",
+		Status:        "success",
 	}
 	outcomeID, err := db.CreateRuleOutcome(outcomeRecord)
 	require.NoError(t, err)
@@ -321,11 +329,11 @@ func TestRuleOutcomeRequiresResourceSet(t *testing.T) {
 
 	// Try to create outcome WITHOUT selection_set_id - should fail
 	outcomeRecord := &models.RuleOutcomeRecord{
-		ExecutionID:    1,
+		ExecutionID:   1,
 		ResourceSetID: 0, // Missing!
-		EntryPath:      "/test/file.jpg",
-		OutcomeType:    "test",
-		Status:         "success",
+		EntryPath:     "/test/file.jpg",
+		OutcomeType:   "test",
+		Status:        "success",
 	}
 	_, err = db.CreateRuleOutcome(outcomeRecord)
 	assert.Error(t, err)
@@ -340,49 +348,53 @@ func TestValidateRuleOutcome(t *testing.T) {
 		errMsg    string
 	}{
 		{
-			name: "valid selection_set outcome",
+			name: "valid tool-based outcome",
 			outcome: &models.RuleOutcome{
-				Type:             "selection_set",
-				ResourceSetName: "test-set",
+				Tool: "resource-set-modify",
+				Arguments: map[string]interface{}{
+					"name": "test-set",
+				},
 			},
 			shouldErr: false,
 		},
 		{
-			name: "missing resourceSetName",
+			name: "missing tool",
 			outcome: &models.RuleOutcome{
-				Type: "selection_set",
+				Arguments: map[string]interface{}{
+					"name": "test-set",
+				},
 			},
 			shouldErr: true,
-			errMsg:    "resourceSetName is required",
+			errMsg:    "must specify 'tool'",
 		},
 		{
 			name: "valid chained outcome",
 			outcome: &models.RuleOutcome{
-				Type:             "chained",
-				ResourceSetName: "parent-set",
 				Outcomes: []*models.RuleOutcome{
 					{
-						Type:             "classifier",
-						ResourceSetName: "child-set",
+						Tool: "resource-set-modify",
+						Arguments: map[string]interface{}{
+							"name": "child-set",
+						},
 					},
 				},
 			},
 			shouldErr: false,
 		},
 		{
-			name: "chained outcome with missing child resourceSetName",
+			name: "chained outcome with invalid child",
 			outcome: &models.RuleOutcome{
-				Type:             "chained",
-				ResourceSetName: "parent-set",
 				Outcomes: []*models.RuleOutcome{
 					{
-						Type: "classifier",
-						// Missing ResourceSetName!
+						// Missing Tool!
+						Arguments: map[string]interface{}{
+							"name": "test",
+						},
 					},
 				},
 			},
 			shouldErr: true,
-			errMsg:    "chained outcome 0",
+			errMsg:    "must specify 'tool'",
 		},
 	}
 
@@ -401,7 +413,7 @@ func TestValidateRuleOutcome(t *testing.T) {
 	}
 }
 
-func TestEnsureResourceSetForOutcome(t *testing.T) {
+func TestEnsureResourceSetExists(t *testing.T) {
 	os.Setenv("GO_ENV", "test")
 	defer os.Unsetenv("GO_ENV")
 
@@ -409,13 +421,8 @@ func TestEnsureResourceSetForOutcome(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	outcome := &models.RuleOutcome{
-		Type:             "classifier",
-		ResourceSetName: "auto-created-set",
-	}
-
 	// Should auto-create the selection set
-	setID, err := db.EnsureResourceSetForOutcome(outcome, "test-rule")
+	setID, err := db.EnsureResourceSetExists("auto-created-set", "test-rule")
 	require.NoError(t, err)
 	assert.Greater(t, setID, int64(0))
 
@@ -427,7 +434,7 @@ func TestEnsureResourceSetForOutcome(t *testing.T) {
 	assert.Contains(t, *set.Description, "test-rule")
 
 	// Calling again should return the same ID
-	setID2, err := db.EnsureResourceSetForOutcome(outcome, "test-rule")
+	setID2, err := db.EnsureResourceSetExists("auto-created-set", "test-rule")
 	require.NoError(t, err)
 	assert.Equal(t, setID, setID2)
 }
@@ -444,8 +451,10 @@ func TestGetRuleByID(t *testing.T) {
 	condition := models.RuleCondition{Type: "size", MinSize: int64Ptr(100)}
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
-		Type:             "selection_set",
-		ResourceSetName: "test-set",
+		Tool: "resource-set-modify",
+		Arguments: map[string]interface{}{
+			"name": "test-set",
+		},
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -484,8 +493,10 @@ func TestUpdateRule(t *testing.T) {
 	condition := models.RuleCondition{Type: "size", MinSize: int64Ptr(100)}
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
-		Type:             "selection_set",
-		ResourceSetName: "test-set",
+		Tool: "resource-set-modify",
+		Arguments: map[string]interface{}{
+			"name": "test-set",
+		},
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -528,8 +539,10 @@ func TestDeleteRule(t *testing.T) {
 	condition := models.RuleCondition{Type: "size"}
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
-		Type:             "selection_set",
-		ResourceSetName: "test-set",
+		Tool: "resource-set-modify",
+		Arguments: map[string]interface{}{
+			"name": "test-set",
+		},
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -610,8 +623,10 @@ func TestListRuleExecutionsWithLimit(t *testing.T) {
 	condition := models.RuleCondition{Type: "size"}
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
-		Type:             "selection_set",
-		ResourceSetName: "test-set",
+		Tool: "resource-set-modify",
+		Arguments: map[string]interface{}{
+			"name": "test-set",
+		},
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -631,9 +646,9 @@ func TestListRuleExecutionsWithLimit(t *testing.T) {
 	// Create multiple executions
 	for i := 0; i < 5; i++ {
 		exec := &models.RuleExecution{
-			RuleID:         ruleID,
+			RuleID:        ruleID,
 			ResourceSetID: setID,
-			Status:         "success",
+			Status:        "success",
 		}
 		_, err := db.CreateRuleExecution(exec)
 		require.NoError(t, err)
@@ -704,9 +719,9 @@ func TestGetResourceSetStatsFromRules(t *testing.T) {
 	now := time.Now().Unix()
 	for i := 0; i < 5; i++ {
 		entry := &models.Entry{
-			Path: "/rulestats/file" + string(rune('a'+i)) + ".txt",
-			Size: int64(i * 100),
-			Kind: "file",
+			Path:  "/rulestats/file" + string(rune('a'+i)) + ".txt",
+			Size:  int64(i * 100),
+			Kind:  "file",
 			Mtime: now,
 		}
 		db.InsertOrUpdate(entry)
@@ -734,8 +749,10 @@ func TestListRuleOutcomesByResourceSetWithLimit(t *testing.T) {
 	condition := models.RuleCondition{Type: "size"}
 	conditionJSON, _ := json.Marshal(condition)
 	outcome := models.RuleOutcome{
-		Type:             "selection_set",
-		ResourceSetName: "limit-test-set",
+		Tool: "resource-set-modify",
+		Arguments: map[string]interface{}{
+			"name": "limit-test-set",
+		},
 	}
 	outcomeJSON, _ := json.Marshal(outcome)
 
@@ -753,9 +770,9 @@ func TestListRuleOutcomesByResourceSetWithLimit(t *testing.T) {
 
 	// Create execution
 	exec := &models.RuleExecution{
-		RuleID:         ruleID,
+		RuleID:        ruleID,
 		ResourceSetID: setID,
-		Status:         "success",
+		Status:        "success",
 	}
 	execID, _ := db.CreateRuleExecution(exec)
 
@@ -769,11 +786,11 @@ func TestListRuleOutcomesByResourceSetWithLimit(t *testing.T) {
 		db.InsertOrUpdate(entry)
 
 		outcomeRecord := &models.RuleOutcomeRecord{
-			ExecutionID:    execID,
+			ExecutionID:   execID,
 			ResourceSetID: setID,
-			EntryPath:      entry.Path,
-			OutcomeType:    "test",
-			Status:         "success",
+			EntryPath:     entry.Path,
+			OutcomeType:   "test",
+			Status:        "success",
 		}
 		db.CreateRuleOutcome(outcomeRecord)
 	}

@@ -12,23 +12,35 @@ import (
 
 	"github.com/prismon/mcp-space-browser/internal/models"
 	"github.com/prismon/mcp-space-browser/pkg/classifier"
+	"github.com/prismon/mcp-space-browser/pkg/database"
+	"github.com/prismon/mcp-space-browser/pkg/plans"
 	"github.com/sirupsen/logrus"
 )
 
 // Engine is responsible for evaluating rules and applying outcomes
 type Engine struct {
-	db         *sql.DB
-	classifier classifier.Classifier
-	log        *logrus.Entry
+	db          *sql.DB
+	diskDB      *database.DiskDB
+	classifier  classifier.Classifier
+	toolInvoker *plans.ToolInvoker
+	log         *logrus.Entry
 }
 
 // NewEngine creates a new rule execution engine
-func NewEngine(db *sql.DB, clf classifier.Classifier) *Engine {
+func NewEngine(db *sql.DB, diskDB *database.DiskDB, clf classifier.Classifier) *Engine {
+	log := logrus.WithField("component", "rules-engine")
 	return &Engine{
-		db:         db,
-		classifier: clf,
-		log:        logrus.WithField("component", "rules-engine"),
+		db:          db,
+		diskDB:      diskDB,
+		classifier:  clf,
+		toolInvoker: plans.NewToolInvoker(diskDB, nil, log),
+		log:         log,
 	}
+}
+
+// SetProcessor sets the classifier processor on the tool invoker
+func (e *Engine) SetProcessor(processor *classifier.Processor) {
+	e.toolInvoker.SetProcessor(processor)
 }
 
 // ExecuteRulesForPath evaluates and executes all enabled rules for a given path
@@ -49,8 +61,8 @@ func (e *Engine) ExecuteRulesForPath(ctx context.Context, path string) error {
 	}
 
 	e.log.WithFields(logrus.Fields{
-		"path":       path,
-		"ruleCount":  len(rules),
+		"path":      path,
+		"ruleCount": len(rules),
 	}).Debug("Executing rules for path")
 
 	// Execute each rule
@@ -107,37 +119,30 @@ func (e *Engine) executeRule(ctx context.Context, rule *models.Rule, entry *mode
 		return fmt.Errorf("failed to parse outcome: %w", err)
 	}
 
-	// Validate outcome has resource set name
-	if outcome.ResourceSetName == "" {
-		return fmt.Errorf("rule outcome missing required ResourceSetName")
+	// Validate outcome
+	if err := outcome.Validate(); err != nil {
+		return fmt.Errorf("invalid outcome: %w", err)
 	}
 
-	// Ensure resource set exists
-	resourceSetID, err := e.ensureResourceSet(outcome.ResourceSetName)
-	if err != nil {
-		return fmt.Errorf("failed to ensure resource set: %w", err)
-	}
+	// Apply outcome using tool invoker
+	err = e.applyOutcome(ctx, &outcome, entry)
 
-	// Create execution record
-	executionID, err := e.createExecution(rule.ID, resourceSetID)
-	if err != nil {
-		return fmt.Errorf("failed to create execution record: %w", err)
-	}
-
-	// Apply outcome
-	err = e.applyOutcome(ctx, &outcome, entry, executionID, resourceSetID)
-
-	// Update execution record
+	// Log result
 	duration := time.Since(startTime).Milliseconds()
-	status := "success"
-	var errorMsg *string
 	if err != nil {
-		status = "error"
-		msg := err.Error()
-		errorMsg = &msg
+		e.log.WithError(err).WithFields(logrus.Fields{
+			"rule":     rule.Name,
+			"path":     entry.Path,
+			"duration": duration,
+		}).Error("Rule outcome failed")
+	} else {
+		e.log.WithFields(logrus.Fields{
+			"rule":     rule.Name,
+			"path":     entry.Path,
+			"tool":     outcome.Tool,
+			"duration": duration,
+		}).Info("Rule outcome applied successfully")
 	}
-
-	e.updateExecution(executionID, status, int(duration), errorMsg)
 
 	return err
 }
@@ -285,130 +290,19 @@ func (e *Engine) matchPath(cond *models.RuleCondition, entry *models.Entry) (boo
 	return true, nil
 }
 
-// applyOutcome applies a rule outcome to an entry
-func (e *Engine) applyOutcome(ctx context.Context, outcome *models.RuleOutcome, entry *models.Entry, executionID, resourceSetID int64) error {
-	switch outcome.Type {
-	case "selection_set":
-		return e.applyResourceSetOutcome(outcome, entry, executionID, resourceSetID)
-
-	case "classifier":
-		return e.applyClassifierOutcome(ctx, outcome, entry, executionID, resourceSetID)
-
-	case "chained":
-		return e.applyChainedOutcome(ctx, outcome, entry, executionID, resourceSetID)
-
-	default:
-		return fmt.Errorf("unknown outcome type: %s", outcome.Type)
-	}
-}
-
-// applyResourceSetOutcome applies a resource set outcome
-func (e *Engine) applyResourceSetOutcome(outcome *models.RuleOutcome, entry *models.Entry, executionID, resourceSetID int64) error {
-	operation := "add"
-	if outcome.Operation != nil {
-		operation = *outcome.Operation
+// applyOutcome applies a rule outcome using the tool invoker
+func (e *Engine) applyOutcome(ctx context.Context, outcome *models.RuleOutcome, entry *models.Entry) error {
+	// Handle chained outcomes
+	if outcome.IsChained() {
+		return e.applyChainedOutcome(ctx, outcome, entry)
 	}
 
-	var err error
-	switch operation {
-	case "add":
-		err = e.addToResourceSet(resourceSetID, entry.Path)
-	case "remove":
-		err = e.removeFromResourceSet(resourceSetID, entry.Path)
-	default:
-		err = fmt.Errorf("unknown operation: %s", operation)
-	}
-
-	// Record outcome
-	status := "success"
-	var errorMsg *string
-	if err != nil {
-		status = "error"
-		msg := err.Error()
-		errorMsg = &msg
-	}
-
-	e.recordOutcome(executionID, resourceSetID, entry.Path, outcome.Type, nil, status, errorMsg)
-
-	return err
-}
-
-// applyClassifierOutcome applies a classifier outcome
-func (e *Engine) applyClassifierOutcome(ctx context.Context, outcome *models.RuleOutcome, entry *models.Entry, executionID, resourceSetID int64) error {
-	if e.classifier == nil {
-		return fmt.Errorf("classifier not available")
-	}
-
-	operation := "generate_thumbnail"
-	if outcome.ClassifierOperation != nil {
-		operation = *outcome.ClassifierOperation
-	}
-
-	var err error
-	var outcomeData string
-
-	switch operation {
-	case "generate_thumbnail":
-		// Detect media type
-		mediaType := classifier.DetectMediaType(entry.Path)
-
-		// Create temporary output path
-		outputPath := fmt.Sprintf("/tmp/thumb_%d.jpg", time.Now().UnixNano())
-
-		req := &classifier.ArtifactRequest{
-			SourcePath:   entry.Path,
-			OutputPath:   outputPath,
-			MediaType:    mediaType,
-			ArtifactType: classifier.ArtifactTypeThumbnail,
-		}
-		if outcome.MaxWidth != nil {
-			req.MaxWidth = *outcome.MaxWidth
-		} else {
-			req.MaxWidth = 320
-		}
-		if outcome.MaxHeight != nil {
-			req.MaxHeight = *outcome.MaxHeight
-		} else {
-			req.MaxHeight = 320
-		}
-
-		result := e.classifier.GenerateThumbnail(req)
-		if result.Error != nil {
-			err = result.Error
-		} else if result.OutputPath != "" {
-			data, _ := json.Marshal(result)
-			outcomeData = string(data)
-		}
-
-	default:
-		err = fmt.Errorf("unknown classifier operation: %s", operation)
-	}
-
-	// Record outcome
-	status := "success"
-	var errorMsg *string
-	var outcomeDataPtr *string
-	if err != nil {
-		status = "error"
-		msg := err.Error()
-		errorMsg = &msg
-	}
-	if outcomeData != "" {
-		outcomeDataPtr = &outcomeData
-	}
-
-	e.recordOutcome(executionID, resourceSetID, entry.Path, outcome.Type, outcomeDataPtr, status, errorMsg)
-
-	// Also add to resource set for traceability
-	if err == nil {
-		e.addToResourceSet(resourceSetID, entry.Path)
-	}
-
-	return err
+	// Invoke the tool
+	return e.toolInvoker.InvokeTool(ctx, outcome.Tool, outcome.Arguments, entry)
 }
 
 // applyChainedOutcome applies a chained outcome
-func (e *Engine) applyChainedOutcome(ctx context.Context, outcome *models.RuleOutcome, entry *models.Entry, executionID, resourceSetID int64) error {
+func (e *Engine) applyChainedOutcome(ctx context.Context, outcome *models.RuleOutcome, entry *models.Entry) error {
 	stopOnError := false
 	if outcome.StopOnError != nil {
 		stopOnError = *outcome.StopOnError
@@ -416,12 +310,7 @@ func (e *Engine) applyChainedOutcome(ctx context.Context, outcome *models.RuleOu
 
 	var errors []error
 	for _, subOutcome := range outcome.Outcomes {
-		// Use the parent's resource set name if sub-outcome doesn't have one
-		if subOutcome.ResourceSetName == "" {
-			subOutcome.ResourceSetName = outcome.ResourceSetName
-		}
-
-		err := e.applyOutcome(ctx, subOutcome, entry, executionID, resourceSetID)
+		err := e.applyOutcome(ctx, subOutcome, entry)
 		if err != nil {
 			errors = append(errors, err)
 			if stopOnError {
@@ -497,74 +386,6 @@ func (e *Engine) getEnabledRules() ([]*models.Rule, error) {
 	}
 
 	return rules, rows.Err()
-}
-
-func (e *Engine) ensureResourceSet(name string) (int64, error) {
-	// Check if resource set exists
-	var id int64
-	err := e.db.QueryRow(`SELECT id FROM resource_sets WHERE name = ?`, name).Scan(&id)
-	if err == nil {
-		return id, nil
-	}
-	if err != sql.ErrNoRows {
-		return 0, err
-	}
-
-	// Create resource set
-	result, err := e.db.Exec(`
-		INSERT INTO resource_sets (name, description, criteria_type)
-		VALUES (?, ?, ?)
-	`, name, "Auto-created by rule execution", "tool_query")
-	if err != nil {
-		return 0, err
-	}
-
-	return result.LastInsertId()
-}
-
-func (e *Engine) createExecution(ruleID, resourceSetID int64) (int64, error) {
-	result, err := e.db.Exec(`
-		INSERT INTO rule_executions (rule_id, selection_set_id, entries_matched, entries_processed, status)
-		VALUES (?, ?, 1, 0, 'running')
-	`, ruleID, resourceSetID)
-	if err != nil {
-		return 0, err
-	}
-
-	return result.LastInsertId()
-}
-
-func (e *Engine) updateExecution(executionID int64, status string, durationMs int, errorMsg *string) error {
-	_, err := e.db.Exec(`
-		UPDATE rule_executions
-		SET status = ?, entries_processed = 1, duration_ms = ?, error_message = ?
-		WHERE id = ?
-	`, status, durationMs, errorMsg, executionID)
-	return err
-}
-
-func (e *Engine) recordOutcome(executionID, resourceSetID int64, entryPath, outcomeType string, outcomeData *string, status string, errorMsg *string) error {
-	_, err := e.db.Exec(`
-		INSERT INTO rule_outcomes (execution_id, selection_set_id, entry_path, outcome_type, outcome_data, status, error_message)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, executionID, resourceSetID, entryPath, outcomeType, outcomeData, status, errorMsg)
-	return err
-}
-
-func (e *Engine) addToResourceSet(setID int64, path string) error {
-	_, err := e.db.Exec(`
-		INSERT OR IGNORE INTO resource_set_entries (set_id, entry_path)
-		VALUES (?, ?)
-	`, setID, path)
-	return err
-}
-
-func (e *Engine) removeFromResourceSet(setID int64, path string) error {
-	_, err := e.db.Exec(`
-		DELETE FROM resource_set_entries
-		WHERE set_id = ? AND entry_path = ?
-	`, setID, path)
-	return err
 }
 
 // Helper functions

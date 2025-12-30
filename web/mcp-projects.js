@@ -470,9 +470,7 @@ class McpProjects extends HTMLElement {
 
     projectList.innerHTML = this.projects.map(project => {
       const isActive = project.isActive || project.name === this.activeProject;
-      const createdDate = project.createdAt
-        ? new Date(project.createdAt * 1000).toLocaleDateString()
-        : 'Unknown';
+      const createdDate = this.formatDate(project.createdAt);
 
       return `
         <div class="project-card ${isActive ? 'active' : ''}" data-name="${this.escapeHtml(project.name)}">
@@ -655,6 +653,32 @@ class McpProjects extends HTMLElement {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  formatDate(dateValue) {
+    if (!dateValue) return 'Unknown';
+
+    let date;
+    // Handle ISO 8601 string (e.g., "2024-01-15T10:30:00Z")
+    if (typeof dateValue === 'string') {
+      date = new Date(dateValue);
+    }
+    // Handle Unix timestamp (seconds)
+    else if (typeof dateValue === 'number') {
+      // If it looks like milliseconds (> year 2001 in ms), use directly
+      // Otherwise assume seconds and multiply by 1000
+      date = dateValue > 1000000000000 ? new Date(dateValue) : new Date(dateValue * 1000);
+    }
+    else {
+      return 'Unknown';
+    }
+
+    // Check for invalid date
+    if (isNaN(date.getTime())) {
+      return 'Unknown';
+    }
+
+    return date.toLocaleDateString();
   }
 
   showStatus(type, message, showSpinner = false) {

@@ -349,6 +349,12 @@ class McpDiskIndexer extends HTMLElement {
         throw new Error('Invalid MCP response structure: missing content array');
       }
 
+      // Check for tool error (isError flag)
+      if (result.isError) {
+        const errorText = result.content[0]?.text || 'Unknown error';
+        throw new Error(errorText);
+      }
+
       if (!result.content[0].text) {
         throw new Error('Invalid MCP response: missing text content');
       }
@@ -400,11 +406,18 @@ class McpDiskIndexer extends HTMLElement {
       }));
 
     } catch (error) {
-      this.showStatus('error', `✗ Error: ${error.message}`);
+      let errorMsg = error.message;
+
+      // Check for common errors and provide helpful hints
+      if (errorMsg.includes('No active project')) {
+        errorMsg = 'No active project. Please go to the Projects tab and open a project first.';
+      }
+
+      this.showStatus('error', `✗ Error: ${errorMsg}`);
 
       // Dispatch error event
       this.dispatchEvent(new CustomEvent('index-error', {
-        detail: { path, error: error.message },
+        detail: { path, error: errorMsg },
         bubbles: true,
         composed: true
       }));

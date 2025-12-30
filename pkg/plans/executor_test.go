@@ -36,9 +36,8 @@ func TestExecutePlan_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Create a plan
+	// Create a plan with tool-based outcome
 	minSize := int64(1024 * 100) // 100KB
-	operation := "add"
 	plan := &models.Plan{
 		ID:     1,
 		Name:   "test-plan",
@@ -56,9 +55,11 @@ func TestExecutePlan_Success(t *testing.T) {
 		},
 		Outcomes: []models.RuleOutcome{
 			{
-				Type:             "selection_set",
-				ResourceSetName: "test-results",
-				Operation:        &operation,
+				Tool: "resource-set-modify",
+				Arguments: map[string]interface{}{
+					"name":      "test-results",
+					"operation": "add",
+				},
 			},
 		},
 	}
@@ -87,7 +88,6 @@ func TestExecutePlan_NoConditions(t *testing.T) {
 	tmpDir := t.TempDir()
 	createTestEntries(t, db, tmpDir)
 
-	operation := "add"
 	plan := &models.Plan{
 		ID:         1,
 		Name:       "all-files-plan",
@@ -99,9 +99,11 @@ func TestExecutePlan_NoConditions(t *testing.T) {
 		},
 		Outcomes: []models.RuleOutcome{
 			{
-				Type:             "selection_set",
-				ResourceSetName: "all-files",
-				Operation:        &operation,
+				Tool: "resource-set-modify",
+				Arguments: map[string]interface{}{
+					"name":      "all-files",
+					"operation": "add",
+				},
 			},
 		},
 	}
@@ -127,7 +129,6 @@ func TestExecutePlan_AutoCreateResourceSet(t *testing.T) {
 	tmpDir := t.TempDir()
 	createTestEntries(t, db, tmpDir)
 
-	operation := "add"
 	plan := &models.Plan{
 		ID:     1,
 		Name:   "auto-create-plan",
@@ -138,9 +139,11 @@ func TestExecutePlan_AutoCreateResourceSet(t *testing.T) {
 		},
 		Outcomes: []models.RuleOutcome{
 			{
-				Type:             "selection_set",
-				ResourceSetName: "auto-created", // Doesn't exist yet
-				Operation:        &operation,
+				Tool: "resource-set-modify",
+				Arguments: map[string]interface{}{
+					"name":      "auto-created", // Doesn't exist yet
+					"operation": "add",
+				},
 			},
 		},
 	}
@@ -153,6 +156,47 @@ func TestExecutePlan_AutoCreateResourceSet(t *testing.T) {
 	set, err := db.GetResourceSet("auto-created")
 	require.NoError(t, err)
 	assert.NotNil(t, set)
+}
+
+func TestExecutePlan_ProjectSource(t *testing.T) {
+	os.Setenv("GO_ENV", "test")
+	defer os.Unsetenv("GO_ENV")
+
+	db, err := database.NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	logger := logrus.New().WithField("test", "executor")
+	executor := NewExecutor(db, logger)
+
+	tmpDir := t.TempDir()
+	createTestEntries(t, db, tmpDir)
+
+	// Plan with project source - gets ALL entries
+	plan := &models.Plan{
+		ID:     1,
+		Name:   "project-source-plan",
+		Mode:   "oneshot",
+		Status: "active",
+		Sources: []models.PlanSource{
+			{Type: "project"}, // Project source - all entries
+		},
+		Outcomes: []models.RuleOutcome{
+			{
+				Tool: "resource-set-modify",
+				Arguments: map[string]interface{}{
+					"name":      "all-project-files",
+					"operation": "add",
+				},
+			},
+		},
+	}
+
+	execution, err := executor.Execute(plan)
+	require.NoError(t, err)
+	assert.Equal(t, "success", execution.Status)
+	// Should match all entries in the database
+	assert.Equal(t, 4, execution.EntriesProcessed) // 1 dir + 3 files
 }
 
 // Test Negative Cases
@@ -168,7 +212,6 @@ func TestExecutePlan_InvalidSource(t *testing.T) {
 	logger := logrus.New().WithField("test", "executor")
 	executor := NewExecutor(db, logger)
 
-	operation := "add"
 	plan := &models.Plan{
 		ID:     1,
 		Name:   "invalid-source-plan",
@@ -179,9 +222,11 @@ func TestExecutePlan_InvalidSource(t *testing.T) {
 		},
 		Outcomes: []models.RuleOutcome{
 			{
-				Type:             "selection_set",
-				ResourceSetName: "test",
-				Operation:        &operation,
+				Tool: "resource-set-modify",
+				Arguments: map[string]interface{}{
+					"name":      "test",
+					"operation": "add",
+				},
 			},
 		},
 	}
@@ -205,7 +250,6 @@ func TestExecutePlan_NonexistentPath(t *testing.T) {
 	logger := logrus.New().WithField("test", "executor")
 	executor := NewExecutor(db, logger)
 
-	operation := "add"
 	plan := &models.Plan{
 		ID:     1,
 		Name:   "nonexistent-path-plan",
@@ -216,9 +260,11 @@ func TestExecutePlan_NonexistentPath(t *testing.T) {
 		},
 		Outcomes: []models.RuleOutcome{
 			{
-				Type:             "selection_set",
-				ResourceSetName: "test",
-				Operation:        &operation,
+				Tool: "resource-set-modify",
+				Arguments: map[string]interface{}{
+					"name":      "test",
+					"operation": "add",
+				},
 			},
 		},
 	}
@@ -245,7 +291,6 @@ func TestExecutePlan_NoMatchingEntries(t *testing.T) {
 
 	// Condition that won't match anything
 	minSize := int64(1024 * 1024 * 1024 * 100) // 100GB - way too large
-	operation := "add"
 	plan := &models.Plan{
 		ID:     1,
 		Name:   "no-match-plan",
@@ -260,9 +305,11 @@ func TestExecutePlan_NoMatchingEntries(t *testing.T) {
 		},
 		Outcomes: []models.RuleOutcome{
 			{
-				Type:             "selection_set",
-				ResourceSetName: "test",
-				Operation:        &operation,
+				Tool: "resource-set-modify",
+				Arguments: map[string]interface{}{
+					"name":      "test",
+					"operation": "add",
+				},
 			},
 		},
 	}
@@ -274,7 +321,7 @@ func TestExecutePlan_NoMatchingEntries(t *testing.T) {
 	assert.Equal(t, 0, execution.OutcomesApplied)
 }
 
-func TestExecutePlan_InvalidOperation(t *testing.T) {
+func TestExecutePlan_InvalidTool(t *testing.T) {
 	os.Setenv("GO_ENV", "test")
 	defer os.Unsetenv("GO_ENV")
 
@@ -288,10 +335,9 @@ func TestExecutePlan_InvalidOperation(t *testing.T) {
 	tmpDir := t.TempDir()
 	createTestEntries(t, db, tmpDir)
 
-	invalidOp := "invalid_operation"
 	plan := &models.Plan{
 		ID:     1,
-		Name:   "invalid-op-plan",
+		Name:   "invalid-tool-plan",
 		Mode:   "oneshot",
 		Status: "active",
 		Sources: []models.PlanSource{
@@ -299,19 +345,21 @@ func TestExecutePlan_InvalidOperation(t *testing.T) {
 		},
 		Outcomes: []models.RuleOutcome{
 			{
-				Type:             "selection_set",
-				ResourceSetName: "test",
-				Operation:        &invalidOp, // Invalid operation
+				Tool: "nonexistent-tool", // Invalid tool
+				Arguments: map[string]interface{}{
+					"param": "value",
+				},
 			},
 		},
 	}
 
 	execution, err := executor.Execute(plan)
-	// Configuration errors should return error and execution record
-	require.Error(t, err) // Invalid operation is a configuration error
+	// Invalid tools are logged as warnings but don't fail the plan
+	// The plan succeeds but with 0 outcomes applied
+	require.NoError(t, err)
 	assert.NotNil(t, execution)
-	assert.Equal(t, "error", execution.Status)
-	assert.NotNil(t, execution.ErrorMessage)
+	assert.Equal(t, "success", execution.Status) // Still "success" because entries were matched
+	assert.Equal(t, 0, execution.OutcomesApplied) // But no outcomes could be applied
 }
 
 // Helper functions
@@ -332,7 +380,7 @@ func createTestEntries(t *testing.T, db *database.DiskDB, baseDir string) {
 	}{
 		{"small.txt", 100},
 		{"medium.dat", 1024 * 200}, // 200KB
-		{"large.bin", 1024 * 1024},  // 1MB
+		{"large.bin", 1024 * 1024}, // 1MB
 	}
 
 	for _, f := range files {

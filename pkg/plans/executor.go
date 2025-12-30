@@ -138,7 +138,8 @@ func (e *Executor) resolveSources(sources []models.PlanSource) ([]*models.Entry,
 		entries, err := e.resolveSource(source)
 		if err != nil {
 			// Check if this is a configuration error (invalid type) vs transient error
-			if source.Type != "filesystem" && source.Type != "selection_set" && source.Type != "query" {
+			validTypes := map[string]bool{"filesystem": true, "selection_set": true, "query": true, "project": true}
+			if !validTypes[source.Type] {
 				// Invalid source type is a configuration error - fail fast
 				return nil, fmt.Errorf("source[%d]: %w", i, err)
 			}
@@ -170,9 +171,16 @@ func (e *Executor) resolveSource(source models.PlanSource) ([]*models.Entry, err
 		return e.resolveResourceSetSource(source)
 	case "query":
 		return e.resolveQuerySource(source)
+	case "project":
+		return e.resolveProjectSource(source)
 	default:
-		return nil, fmt.Errorf("unknown source type: %s", source.Type)
+		return nil, fmt.Errorf("unknown source type: %s (valid types: filesystem, selection_set, query, project)", source.Type)
 	}
+}
+
+// resolveProjectSource returns ALL entries in the project database
+func (e *Executor) resolveProjectSource(source models.PlanSource) ([]*models.Entry, error) {
+	return e.db.GetAllEntries()
 }
 
 func (e *Executor) resolveFilesystemSource(source models.PlanSource) ([]*models.Entry, error) {
@@ -270,4 +278,105 @@ func (e *Executor) filterEntries(entries []*models.Entry, condition *models.Rule
 	}
 
 	return matched, nil
+}
+
+// ExecuteForEntries runs a plan on specific entries without source resolution
+// This is used by lifecycle triggers to process specific file events
+func (e *Executor) ExecuteForEntries(plan *models.Plan, entries []*models.Entry) (*models.PlanExecution, error) {
+	e.logger.WithFields(logrus.Fields{
+		"plan":    plan.Name,
+		"trigger": plan.Trigger,
+		"entries": len(entries),
+	}).Info("Starting plan execution for specific entries")
+
+	if len(entries) == 0 {
+		e.logger.Info("No entries provided for execution")
+		return nil, nil
+	}
+
+	startTime := time.Now()
+
+	// Create execution record
+	exec, err := e.db.CreatePlanExecution(plan.ID, plan.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create execution: %w", err)
+	}
+	exec.EntriesProcessed = len(entries)
+
+	// Execute plan for entries (capture any errors)
+	execErr := e.executePlanForEntries(plan, entries, exec)
+
+	// Update execution record
+	completedAt := time.Now().Unix()
+	durationMs := int(time.Since(startTime).Milliseconds())
+	exec.CompletedAt = &completedAt
+	exec.DurationMs = &durationMs
+
+	if execErr != nil {
+		exec.Status = "error"
+		errMsg := execErr.Error()
+		exec.ErrorMessage = &errMsg
+	} else if exec.EntriesMatched > 0 {
+		exec.Status = "success"
+	} else {
+		exec.Status = "partial" // No matches
+	}
+
+	if updateErr := e.db.UpdatePlanExecution(exec); updateErr != nil {
+		e.logger.Errorf("Failed to update execution: %v", updateErr)
+	}
+
+	// Update plan's last run time
+	if updateErr := e.db.UpdatePlanLastRun(plan.ID); updateErr != nil {
+		e.logger.Errorf("Failed to update plan last run: %v", updateErr)
+	}
+
+	e.logger.WithFields(logrus.Fields{
+		"plan":      plan.Name,
+		"status":    exec.Status,
+		"matched":   exec.EntriesMatched,
+		"processed": exec.EntriesProcessed,
+		"applied":   exec.OutcomesApplied,
+		"duration":  durationMs,
+	}).Info("Plan execution completed")
+
+	return exec, execErr
+}
+
+// executePlanForEntries processes specific entries through conditions and outcomes
+func (e *Executor) executePlanForEntries(plan *models.Plan, entries []*models.Entry, exec *models.PlanExecution) error {
+	e.logger.Debugf("Processing %d entries through plan conditions", len(entries))
+
+	// Apply plan-level conditions if any
+	var matchedEntries []*models.Entry
+	if plan.Conditions != nil {
+		var err error
+		matchedEntries, err = e.filterEntries(entries, plan.Conditions)
+		if err != nil {
+			return fmt.Errorf("failed to filter entries: %w", err)
+		}
+	} else {
+		matchedEntries = entries
+	}
+	exec.EntriesMatched = len(matchedEntries)
+	e.logger.Debugf("Matched %d entries after plan-level filtering", len(matchedEntries))
+
+	if len(matchedEntries) == 0 {
+		e.logger.Info("No entries matched plan conditions")
+		return nil
+	}
+
+	// Apply outcomes with per-outcome conditions
+	outcomesApplied, err := e.applier.ApplyAllWithPreferences(matchedEntries, plan.Outcomes, exec.ID, plan.ID, plan.Preferences)
+	if err != nil {
+		return fmt.Errorf("failed to apply outcomes: %w", err)
+	}
+	exec.OutcomesApplied = outcomesApplied
+
+	return nil
+}
+
+// GetEvaluator returns the condition evaluator for external use
+func (e *Executor) GetEvaluator() *ConditionEvaluator {
+	return e.evaluator
 }

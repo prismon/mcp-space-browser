@@ -455,9 +455,11 @@ func (s *SQLiteBackend) InitSchema() error {
 		description TEXT,
 		mode TEXT CHECK(mode IN ('oneshot', 'continuous')) DEFAULT 'oneshot',
 		status TEXT CHECK(status IN ('active', 'paused', 'disabled')) DEFAULT 'active',
+		trigger TEXT CHECK(trigger IS NULL OR trigger = '' OR trigger IN ('manual', 'on_add', 'on_remove', 'on_refresh')) DEFAULT 'manual',
 		sources_json TEXT NOT NULL,
 		conditions_json TEXT,
 		outcomes_json TEXT NOT NULL,
+		preferences_json TEXT,
 		created_at INTEGER DEFAULT (strftime('%s', 'now')),
 		updated_at INTEGER DEFAULT (strftime('%s', 'now')),
 		last_run_at INTEGER
@@ -470,6 +472,10 @@ func (s *SQLiteBackend) InitSchema() error {
 	}
 
 	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_plans_mode ON plans(mode)"); err != nil {
+		return err
+	}
+
+	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_plans_trigger ON plans(trigger)"); err != nil {
 		return err
 	}
 

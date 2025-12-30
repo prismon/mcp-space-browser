@@ -18,8 +18,8 @@ import (
 var sourceManager *sources.Manager
 
 // InitializeSourceManager initializes the global source manager
-func InitializeSourceManager(db *sql.DB, clf classifier.Classifier) error {
-	ruleEngine := rules.NewEngine(db, clf)
+func InitializeSourceManager(db *sql.DB, diskDB *database.DiskDB, clf classifier.Classifier) error {
+	ruleEngine := rules.NewEngine(db, diskDB, clf)
 	sourceManager = sources.NewManager(db, ruleEngine)
 
 	// Restore active sources
