@@ -1,0 +1,14 @@
+server:
+  port: 3000
+  host: "0.0.0.0"
+  cors_origins:
+    - "*"  # Allow all origins for development
+
+database:
+  path: "disk.db"
+
+cache:
+  dir: "./cache"
+
+logging:
+  level: "info"

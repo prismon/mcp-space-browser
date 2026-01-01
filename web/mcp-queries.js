@@ -17,6 +17,8 @@ class McpQueries extends HTMLElement {
     this.apiBase = this.getAttribute('api-base') || window.location.origin;
     this.requestId = 0;
     this.currentQuery = null;
+    // Use shared session ID from localStorage for cross-component persistence
+    this.sessionId = localStorage.getItem('mcp-session-id') || '';
   }
 
   connectedCallback() {
@@ -375,11 +377,23 @@ class McpQueries extends HTMLElement {
       }
     };
 
+    const headers = { 'Content-Type': 'application/json' };
+    if (this.sessionId) {
+      headers['Mcp-Session-Id'] = this.sessionId;
+    }
+
     const response = await fetch(`${this.apiBase}/mcp`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
+      credentials: 'include',
       body: JSON.stringify(request)
     });
+
+    const newSessionId = response.headers.get('Mcp-Session-Id');
+    if (newSessionId) {
+      this.sessionId = newSessionId;
+      localStorage.setItem('mcp-session-id', newSessionId);
+    }
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
