@@ -1,4 +1,4 @@
-package source
+package sources
 
 import (
 	"sync"
@@ -86,7 +86,6 @@ func (pt *ProgressTracker) GetEstimate() ProgressEstimate {
 	pt.mu.RLock()
 	defer pt.mu.RUnlock()
 
-	// Create a snapshot with current atomic values
 	estimate := pt.estimate
 	estimate.ProcessedItems = pt.processedItems.Load()
 	estimate.FilesProcessed = pt.filesProcessed.Load()

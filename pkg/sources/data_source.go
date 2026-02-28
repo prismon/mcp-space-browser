@@ -1,4 +1,4 @@
-package source
+package sources
 
 import (
 	"context"
@@ -6,14 +6,14 @@ import (
 	"time"
 )
 
-// Source represents an abstract data source that can be indexed
+// DataSource represents an abstract data source that can be indexed
 // This allows the crawler to work with filesystems, cloud storage, archives, etc.
-type Source interface {
+type DataSource interface {
 	// Stat returns information about the item at the given path
 	Stat(ctx context.Context, path string) (ItemInfo, error)
 
 	// ReadDir reads the directory named by path and returns a list of directory entries
-	ReadDir(ctx context.Context, path string) ([]DirEntry, error)
+	ReadDir(ctx context.Context, path string) ([]DataDirEntry, error)
 
 	// EstimateSize estimates the total number of items to be indexed under the given path
 	// This is used for progress tracking. Returns (estimatedCount, error)
@@ -50,8 +50,8 @@ type ItemInfo interface {
 	Mode() fs.FileMode
 }
 
-// DirEntry represents an entry in a directory listing
-type DirEntry interface {
+// DataDirEntry represents an entry in a directory listing
+type DataDirEntry interface {
 	// Name returns the name of the file (without path)
 	Name() string
 
@@ -99,11 +99,8 @@ type ProgressEstimate struct {
 func (p *ProgressEstimate) PercentComplete() int {
 	switch p.Phase {
 	case "estimating":
-		// Estimation phase: 0-5%
 		return 0
-
 	case "crawling":
-		// Crawling phase: 5-85%
 		if p.TotalItems == 0 {
 			return 5
 		}
@@ -113,18 +110,12 @@ func (p *ProgressEstimate) PercentComplete() int {
 			progress = 85
 		}
 		return progress
-
 	case "cleanup":
-		// Cleanup phase: 85-90%
 		return 87
-
 	case "aggregation":
-		// Aggregation phase: 90-100%
 		return 95
-
 	case "complete":
 		return 100
-
 	default:
 		return 0
 	}

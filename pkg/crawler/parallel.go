@@ -12,20 +12,20 @@ import (
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
 	"github.com/prismon/mcp-space-browser/pkg/queue"
-	"github.com/prismon/mcp-space-browser/pkg/source"
+	"github.com/prismon/mcp-space-browser/pkg/sources"
 	"github.com/sirupsen/logrus"
 )
 
 // ParallelIndexer performs parallel indexing using a worker pool
 type ParallelIndexer struct {
 	root        string
-	src         source.Source
+	src         sources.DataSource
 	db          *database.DiskDB
 	pool        *queue.WorkerPool
 	runID       int64
 	jobID       int64
 	opts        *ParallelIndexOptions
-	tracker     *source.ProgressTracker
+	tracker     *sources.ProgressTracker
 
 	// Stats
 	filesProcessed       atomic.Int64
@@ -62,7 +62,7 @@ func DefaultParallelIndexOptions() *ParallelIndexOptions {
 
 // IndexParallel performs indexing using parallel workers with a source interface
 // If src is nil, a default FileSystemSource will be used
-func IndexParallel(root string, db *database.DiskDB, src source.Source, opts *ParallelIndexOptions) (*IndexStats, error) {
+func IndexParallel(root string, db *database.DiskDB, src sources.DataSource, opts *ParallelIndexOptions) (*IndexStats, error) {
 	startTime := time.Now()
 
 	if opts == nil {
@@ -71,11 +71,11 @@ func IndexParallel(root string, db *database.DiskDB, src source.Source, opts *Pa
 
 	// Use default filesystem source if none provided
 	if src == nil {
-		src = source.NewFileSystemSource()
+		src = sources.NewFileSystemSource()
 		defer src.Close()
 	}
 
-	abs, err := source.ValidatePath(root)
+	abs, err := sources.ValidatePath(root)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func IndexParallel(root string, db *database.DiskDB, src source.Source, opts *Pa
 	}).Info("Estimation complete")
 
 	// Create progress tracker
-	tracker := source.NewProgressTracker(totalEstimate)
+	tracker := sources.NewProgressTracker(totalEstimate)
 	tracker.SetPhase("crawling")
 
 	// Create job in database
@@ -513,7 +513,7 @@ func (j *DirectoryScanJob) Execute(ctx context.Context) error {
 
 		// Submit child directories and files as separate jobs
 		for _, child := range children {
-			childPath := source.GetFullPath(j.path, child)
+			childPath := sources.GetFullPath(j.path, child)
 			childJob := &DirectoryScanJob{
 				path:    childPath,
 				indexer: j.indexer,

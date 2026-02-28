@@ -9,7 +9,7 @@ import (
 	"github.com/prismon/mcp-space-browser/internal/models"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
-	"github.com/prismon/mcp-space-browser/pkg/source"
+	"github.com/prismon/mcp-space-browser/pkg/sources"
 	"github.com/sirupsen/logrus"
 )
 
@@ -80,13 +80,13 @@ type ProgressCallback func(stats *IndexStats, remaining int)
 // If src is nil, a default FileSystemSource will be used
 // If jobID is provided (non-zero), it will update job progress in the database
 // If progressCallback is provided, it will be called with progress updates
-func Index(root string, db *database.DiskDB, src source.Source, jobID int64, progressCallback ProgressCallback) (*IndexStats, error) {
+func Index(root string, db *database.DiskDB, src sources.DataSource, jobID int64, progressCallback ProgressCallback) (*IndexStats, error) {
 	return IndexWithOptions(root, db, src, jobID, progressCallback, nil)
 }
 
 // IndexWithOptions performs indexing with configurable options
 // If opts is nil, default options will be used (skip if scanned within 1 hour)
-func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID int64, progressCallback ProgressCallback, opts *IndexOptions) (*IndexStats, error) {
+func IndexWithOptions(root string, db *database.DiskDB, src sources.DataSource, jobID int64, progressCallback ProgressCallback, opts *IndexOptions) (*IndexStats, error) {
 	startTime := time.Now()
 	ctx := context.Background()
 
@@ -97,11 +97,11 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 
 	// Use default filesystem source if none provided
 	if src == nil {
-		src = source.NewFileSystemSource()
+		src = sources.NewFileSystemSource()
 		defer src.Close()
 	}
 
-	abs, err := source.ValidatePath(root)
+	abs, err := sources.ValidatePath(root)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +194,7 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 	}).Info("Estimation complete")
 
 	// Create progress tracker (source package tracker for estimate calculations)
-	tracker := source.NewProgressTracker(totalEstimate)
+	tracker := sources.NewProgressTracker(totalEstimate)
 	tracker.SetPhase("crawling")
 
 	// Update job progress: estimation complete (5%)
@@ -368,7 +368,7 @@ func IndexWithOptions(root string, db *database.DiskDB, src source.Source, jobID
 			}
 
 			for _, child := range children {
-				stack = append(stack, source.GetFullPath(current, child))
+				stack = append(stack, sources.GetFullPath(current, child))
 			}
 		} else {
 			stats.FilesProcessed++
