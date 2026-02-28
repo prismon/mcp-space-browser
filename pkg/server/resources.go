@@ -24,14 +24,234 @@ func registerResources(s *server.MCPServer, db *database.DiskDB) {
 	registerProjectsResource(s, db)
 }
 
-// registerResourcesMP registers resources with multi-project support
-func registerResourcesMP(s *server.MCPServer, sc *ServerContext) {
-	// For multi-project, each resource handler resolves the DB from context.
-	// For simplicity, we register the same templates and resolve DB in handlers.
-	// The resource template URIs remain the same.
-	// Note: In multi-project mode, resources that need a project DB
-	// will need the context to resolve it. For now, we wire them up
-	// with the assumption that project selection happens at the tool level.
+// registerEntryResourceMP registers the entry resource template with ServerContext
+func registerEntryResourceMP(s *server.MCPServer, sc *ServerContext) {
+	template := mcp.NewResourceTemplate(
+		"synthesis://entries/{path}",
+		"Filesystem Entry",
+		mcp.WithTemplateDescription("Individual filesystem entry with attributes"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		db, err := resolveProjectDB(ctx, sc)
+		if err != nil {
+			return nil, err
+		}
+
+		path := extractURIParam(request.Params.URI, "synthesis://entries/")
+		if path == "" {
+			return nil, fmt.Errorf("path parameter is required")
+		}
+
+		if strings.HasSuffix(path, "/attributes") {
+			path = strings.TrimSuffix(path, "/attributes")
+		}
+
+		entry, err := db.Get(path)
+		if err != nil || entry == nil {
+			return nil, fmt.Errorf("entry not found: %s", path)
+		}
+
+		attrs, err := db.GetAttributes(path)
+		if err != nil {
+			attrs = nil
+		}
+
+		result := map[string]interface{}{
+			"entry":      entry,
+			"attributes": attrs,
+		}
+
+		return resourceJSON(result, request.Params.URI)
+	})
+}
+
+// registerEntryAttributesResourceMP registers the entry attributes resource template with ServerContext
+func registerEntryAttributesResourceMP(s *server.MCPServer, sc *ServerContext) {
+	template := mcp.NewResourceTemplate(
+		"synthesis://entries/{path}/attributes",
+		"Entry Attributes",
+		mcp.WithTemplateDescription("Attributes for a filesystem entry"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		db, err := resolveProjectDB(ctx, sc)
+		if err != nil {
+			return nil, err
+		}
+
+		uri := request.Params.URI
+		path := extractURIParam(uri, "synthesis://entries/")
+		path = strings.TrimSuffix(path, "/attributes")
+		if path == "" {
+			return nil, fmt.Errorf("path parameter is required")
+		}
+
+		attrs, err := db.GetAttributes(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get attributes: %w", err)
+		}
+
+		return resourceJSON(attrs, uri)
+	})
+}
+
+// registerSetsListResourceMP registers the sets list resource with ServerContext
+func registerSetsListResourceMP(s *server.MCPServer, sc *ServerContext) {
+	resource := mcp.NewResource(
+		"synthesis://sets",
+		"Resource Sets",
+		mcp.WithResourceDescription("List of all resource sets"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		db, err := resolveProjectDB(ctx, sc)
+		if err != nil {
+			return nil, err
+		}
+
+		sets, err := db.ListResourceSets()
+		if err != nil {
+			return nil, fmt.Errorf("failed to list resource sets: %w", err)
+		}
+		return resourceJSON(sets, request.Params.URI)
+	})
+}
+
+// registerSetResourceMP registers the set details resource template with ServerContext
+func registerSetResourceMP(s *server.MCPServer, sc *ServerContext) {
+	template := mcp.NewResourceTemplate(
+		"synthesis://sets/{name}",
+		"Resource Set",
+		mcp.WithTemplateDescription("Resource set details"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		db, err := resolveProjectDB(ctx, sc)
+		if err != nil {
+			return nil, err
+		}
+
+		name := extractURIParam(request.Params.URI, "synthesis://sets/")
+		if strings.Contains(name, "/") {
+			name = strings.Split(name, "/")[0]
+		}
+		if name == "" {
+			return nil, fmt.Errorf("name parameter is required")
+		}
+
+		set, err := db.GetResourceSet(name)
+		if err != nil || set == nil {
+			return nil, fmt.Errorf("resource set not found: %s", name)
+		}
+
+		return resourceJSON(set, request.Params.URI)
+	})
+}
+
+// registerSetEntriesResourceMP registers the set entries resource template with ServerContext
+func registerSetEntriesResourceMP(s *server.MCPServer, sc *ServerContext) {
+	template := mcp.NewResourceTemplate(
+		"synthesis://sets/{name}/entries",
+		"Resource Set Entries",
+		mcp.WithTemplateDescription("Entries in a resource set"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		db, err := resolveProjectDB(ctx, sc)
+		if err != nil {
+			return nil, err
+		}
+
+		name := extractURIParam(request.Params.URI, "synthesis://sets/")
+		name = strings.TrimSuffix(name, "/entries")
+		if name == "" {
+			return nil, fmt.Errorf("name parameter is required")
+		}
+
+		entries, err := db.GetResourceSetEntries(name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get entries: %w", err)
+		}
+
+		return resourceJSON(entries, request.Params.URI)
+	})
+}
+
+// registerJobsListResourceMP registers the jobs list resource with ServerContext
+func registerJobsListResourceMP(s *server.MCPServer, sc *ServerContext) {
+	resource := mcp.NewResource(
+		"synthesis://jobs",
+		"Index Jobs",
+		mcp.WithResourceDescription("List of all indexing jobs"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		db, err := resolveProjectDB(ctx, sc)
+		if err != nil {
+			return nil, err
+		}
+
+		jobs, err := db.ListIndexJobs(nil, 100)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list jobs: %w", err)
+		}
+		return resourceJSON(jobs, request.Params.URI)
+	})
+}
+
+// registerJobResourceMP registers the job details resource template with ServerContext
+func registerJobResourceMP(s *server.MCPServer, sc *ServerContext) {
+	template := mcp.NewResourceTemplate(
+		"synthesis://jobs/{id}",
+		"Index Job",
+		mcp.WithTemplateDescription("Individual indexing job details"),
+		mcp.WithTemplateMIMEType("application/json"),
+	)
+
+	s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		db, err := resolveProjectDB(ctx, sc)
+		if err != nil {
+			return nil, err
+		}
+
+		idStr := extractURIParam(request.Params.URI, "synthesis://jobs/")
+		if idStr == "" {
+			return nil, fmt.Errorf("id parameter is required")
+		}
+
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid job ID: %s", idStr)
+		}
+
+		job, err := db.GetIndexJob(id)
+		if err != nil {
+			return nil, fmt.Errorf("job not found: %d", id)
+		}
+
+		return resourceJSON(job, request.Params.URI)
+	})
+}
+
+// registerProjectsResourceMP registers the projects resource with ServerContext
+func registerProjectsResourceMP(s *server.MCPServer, sc *ServerContext) {
+	resource := mcp.NewResource(
+		"synthesis://projects",
+		"Projects",
+		mcp.WithResourceDescription("List of all projects"),
+		mcp.WithMIMEType("application/json"),
+	)
+
+	s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		return resourceJSON([]interface{}{}, request.Params.URI)
+	})
 }
 
 func resourceJSON(data interface{}, uri string) ([]mcp.ResourceContents, error) {

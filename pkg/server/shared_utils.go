@@ -77,6 +77,24 @@ func requireProjectDB(ctx context.Context, sc *ServerContext) (*database.DiskDB,
 	return nil, mcp.NewToolResultError("Unsupported database backend.")
 }
 
+// resolveProjectDB resolves the DiskDB for resource handlers (returns error instead of CallToolResult)
+func resolveProjectDB(ctx context.Context, sc *ServerContext) (*database.DiskDB, error) {
+	backend, err := sc.GetProjectDB(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("no active project: %w", err)
+	}
+
+	if sqliteBackend, ok := backend.(*database.SQLiteBackend); ok {
+		return sqliteBackend.DiskDB()
+	}
+
+	if db, ok := backend.(*database.DiskDB); ok {
+		return db, nil
+	}
+
+	return nil, fmt.Errorf("unsupported database backend")
+}
+
 // PaginatedTreeResponse represents a paginated tree structure with summary statistics
 type PaginatedTreeResponse struct {
 	Path       string                  `json:"path"`

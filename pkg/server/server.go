@@ -348,7 +348,6 @@ func Start(config *auth.Config) error {
 	registerWatchToolMP(mcpServer, sc)
 
 	// Register consolidated resource templates (8 replacing 31)
-	// Note: registerResourcesMP is a no-op for now; resources use direct DB in single-project mode
 	registerMCPResourcesWithContext(mcpServer, sc)
 
 	// Create streamable HTTP server with stateless mode
@@ -389,8 +388,15 @@ func Start(config *auth.Config) error {
 
 // registerMCPResourcesWithContext registers MCP resources with ServerContext
 func registerMCPResourcesWithContext(s *server.MCPServer, sc *ServerContext) {
-	// TODO: Refactor resources to use ServerContext
 	log.Info("Registering MCP resources with multi-project support")
+	registerEntryResourceMP(s, sc)
+	registerEntryAttributesResourceMP(s, sc)
+	registerSetsListResourceMP(s, sc)
+	registerSetResourceMP(s, sc)
+	registerSetEntriesResourceMP(s, sc)
+	registerJobsListResourceMP(s, sc)
+	registerJobResourceMP(s, sc)
+	registerProjectsResourceMP(s, sc)
 }
 
 // serveContentWithContext handles content serving with project context

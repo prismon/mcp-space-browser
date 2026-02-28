@@ -1,13 +1,16 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/prismon/mcp-space-browser/internal/models"
+	"github.com/prismon/mcp-space-browser/pkg/auth"
 	"github.com/prismon/mcp-space-browser/pkg/database"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -152,4 +155,51 @@ func TestResource_MarshalEntry(t *testing.T) {
 	require.NoError(t, json.Unmarshal(payload, &response))
 	assert.NotNil(t, response["entry"])
 	assert.NotNil(t, response["attributes"])
+}
+
+func TestRegisterMCPResourcesWithContext_RegistersAllTemplates(t *testing.T) {
+	tmpDir := t.TempDir()
+	sc, err := NewServerContext(
+		&auth.Config{},
+		filepath.Join(tmpDir, "projects"),
+		filepath.Join(tmpDir, "cache"),
+	)
+	require.NoError(t, err)
+	defer sc.Close()
+
+	s := mcpserver.NewMCPServer("test", "1.0",
+		mcpserver.WithResourceCapabilities(true, true),
+	)
+	registerMCPResourcesWithContext(s, sc)
+
+	// Initialize the MCP session
+	initMsg := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}`
+	s.HandleMessage(context.Background(), json.RawMessage(initMsg))
+
+	// List resource templates
+	listMsg := `{"jsonrpc":"2.0","id":2,"method":"resources/templates/list"}`
+	response := s.HandleMessage(context.Background(), json.RawMessage(listMsg))
+
+	responseJSON, err := json.Marshal(response)
+	require.NoError(t, err)
+	responseStr := string(responseJSON)
+
+	// All 5 resource templates must be registered
+	assert.Contains(t, responseStr, "synthesis://entries/{path}", "entries template missing")
+	assert.Contains(t, responseStr, "synthesis://entries/{path}/attributes", "entry attributes template missing")
+	assert.Contains(t, responseStr, "synthesis://sets/{name}", "sets template missing")
+	assert.Contains(t, responseStr, "synthesis://sets/{name}/entries", "set entries template missing")
+	assert.Contains(t, responseStr, "synthesis://jobs/{id}", "jobs template missing")
+
+	// Also verify static resources (synthesis://sets, synthesis://jobs, synthesis://projects)
+	listResourcesMsg := `{"jsonrpc":"2.0","id":3,"method":"resources/list"}`
+	resourcesResponse := s.HandleMessage(context.Background(), json.RawMessage(listResourcesMsg))
+
+	resourcesJSON, err := json.Marshal(resourcesResponse)
+	require.NoError(t, err)
+	resourcesStr := string(resourcesJSON)
+
+	assert.Contains(t, resourcesStr, "synthesis://sets", "sets resource missing")
+	assert.Contains(t, resourcesStr, "synthesis://jobs", "jobs resource missing")
+	assert.Contains(t, resourcesStr, "synthesis://projects", "projects resource missing")
 }
