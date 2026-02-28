@@ -44,37 +44,34 @@ Run coverage: `go test -v -cover ./...`
 
 ## Project Overview
 
-**mcp-space-browser** is a disk space indexing agent that crawls filesystems, stores metadata in SQLite, and provides tools for exploring disk utilization (similar to Baobab/WinDirStat).
+**mcp-space-browser** is a disk space indexing agent that crawls filesystems, stores metadata in SQLite, and provides **5 composable MCP tools** for exploring disk utilization (similar to Baobab/WinDirStat).
 
 This is a **Go implementation** providing:
-- **3-5x faster** filesystem indexing
+- **5 composable MCP tools** replacing 59 specialized ones (scan, query, manage, batch, watch)
+- **Extensible attribute system** with key-value metadata per entry
 - **Single static binary** deployment (no runtime dependencies)
-- **Better resource management** and lower memory usage
 - **MCP server** with streamable HTTP transport
 - **Live filesystem monitoring** with real-time updates using fsnotify
-- **Rule-based automation** for automatic file classification and processing
+- **Cursor-based pagination** for LLM-friendly result navigation
 
 ## Essential Commands
 
 #### Build
 ```bash
-# Build CLI and MCP server
 go build -o mcp-space-browser ./cmd/mcp-space-browser
 ```
 
 #### Development
 ```bash
-# Run MCP server with streamable HTTP transport
+# Run MCP server
 go run ./cmd/mcp-space-browser server --port=3000
 # MCP endpoint: http://localhost:3000/mcp
 
 # Run tests
 go test ./...                        # All tests
-go test ./pkg/crawler/...            # Specific package
+go test ./pkg/server/...             # Server package (tools + resources)
 go test -v -cover ./...              # With coverage
 ```
-
-Note: Indexing is performed via Plans. Create a plan with a `filesystem.index` source and execute it using the `plan-execute` MCP tool.
 
 ## Architecture
 
@@ -85,167 +82,70 @@ Note: Indexing is performed via Plans. Create a plan with a `filesystem.index` s
 ├── cmd/
 │   └── mcp-space-browser/    # CLI application and MCP server
 ├── pkg/
-│   ├── logger/                # Structured logging (logrus)
-│   ├── database/              # SQLite abstraction
-│   ├── crawler/               # Filesystem traversal
-│   ├── sources/               # Source abstraction and live filesystem monitoring
+│   ├── server/                # MCP server: 5 tools + 8 resource templates
+│   ├── database/              # SQLite abstraction (entries, attributes, sets, plans)
+│   ├── crawler/               # Filesystem traversal (stack-based DFS)
+│   ├── sources/               # Source abstraction and live monitoring (fsnotify)
 │   ├── rules/                 # Rule execution engine for automation
-│   ├── classifier/            # Media file classification and thumbnail generation
-│   └── server/                # MCP server with streamable HTTP transport
+│   ├── classifier/            # Media file classification and thumbnails
+│   └── logger/                # Structured logging (logrus)
 └── internal/
-    └── models/                # Shared data structures
+    └── models/                # Shared data structures (Entry, Attribute, Plan, etc.)
 ```
 
 ### Core Components
-1. **CLI Entry Point**: Command-line interface for server and utility commands
-2. **Filesystem Crawler**: Stack-based DFS traversal, metadata collection, database updates
-   - **Performance optimization**: Skips indexing if a path was recently scanned (within configurable `maxAge`, default 1 hour)
-   - Use `force=true` in the MCP `index` tool to override and force re-indexing
-3. **Database Layer**: SQLite abstraction with multiple tables (entries, resource_sets, sources, rules, plans, etc.)
-4. **Resource-Set Management** (DAG-based):
-   - Named collections of file/directory entries
-   - **DAG structure**: Resource-sets form a Directed Acyclic Graph (multiple parents allowed)
-   - **Bidirectional navigation**: `resource-children` and `resource-parent`
-   - Pure storage containers (no logic about HOW items got there)
-5. **Unified Source Abstraction**:
-   - `filesystem.index`: One-time filesystem scans (triggered via Plans)
-   - `filesystem.watch`: Real-time monitoring using fsnotify
-   - `query`: File filter queries against indexed data
-   - `resource-set`: Copy entries from another resource-set
-   - All sources target a resource-set and track execution history
-6. **Rule Engine**:
-   - Evaluates conditions (media type, size, time, path patterns)
-   - Applies outcomes (add to resource-sets, generate thumbnails, chain actions)
-   - Automatic execution on file changes for live sources
-7. **Plans**: Orchestration layer that owns indexing operations
-8. **MCP Server**: Streamable HTTP server with tools AND resource templates
+1. **5 MCP Tools** (`pkg/server/tool_*.go`):
+   - `scan` — Index filesystem paths, extract attributes
+   - `query` — Search, filter, aggregate with dynamic SQL and cursor pagination
+   - `manage` — CRUD for resource-sets, plans, and jobs
+   - `batch` — Multi-file operations (attributes, duplicates, move, delete)
+   - `watch` — Real-time filesystem monitoring via fsnotify
+2. **Attribute System** (`pkg/database/attributes.go`, `internal/models/attribute.go`):
+   - Extensible key-value pairs per filesystem entry
+   - Keys: `mime`, `hash.md5`, `hash.sha256`, `exif.*`, `permissions`, etc.
+   - Queryable via the `query` tool's `where` clause (auto-JOINs on non-entry columns)
+3. **Filesystem Crawler**: Stack-based DFS with bottom-up size aggregation
+   - Skips re-indexing recent paths (configurable `maxAge`, default 1 hour)
+   - Use `force=true` in `scan` tool to override
+4. **Resource-Set DAG**: Named collections with parent-child edges (multiple parents allowed)
+5. **Plans**: Orchestration layer for indexing operations
+6. **8 Resource Templates**: Declarative `synthesis://` URIs for entries, sets, jobs, projects
 
 ### Key Design Patterns
-- **Single Table Design**: All filesystem entries in one table with parent references
-- **Incremental Updates**: Uses `last_scanned` timestamp to detect/remove stale entries
-- **Post-Processing Aggregation**: Directory sizes computed after crawling completes
-- **In-Memory Testing**: Tests use temporary directories and `:memory:` SQLite
-
-### Space Usage Tree Calculation (Treemap/Radial)
-
-The system builds an accurate space usage tree suitable for treemap or radial visualizations. The algorithm works in two phases:
-
-**Phase 1: Filesystem Crawl (DFS)**
-- Stack-based depth-first traversal of the filesystem
-- Files get their actual size from filesystem metadata
-- Directories are initially inserted with size=0
-- Each entry records its parent path for hierarchy navigation
-
-**Phase 2: Bottom-Up Aggregation (`ComputeAggregates`)**
-1. Query all directories under the root, ordered by path length descending (deepest first)
-2. For each directory (from deepest to shallowest):
-   - Execute: `SELECT SUM(size) FROM entries WHERE parent = ?`
-   - Update the directory's size to the computed sum
-3. This bottom-up approach ensures child sizes are computed before their parents
-
-**Key Properties:**
-- **Invariant**: A directory's size always equals the sum of its direct children's sizes
-- **Empty directories**: Have size 0 (no children)
-- **Empty files**: Tracked with size 0, count as files
-- **Deep hierarchies**: Sizes propagate correctly through any nesting depth
-- **Wide directories**: Handles hundreds of children efficiently
-
-**Test Coverage:** See `TestIndexSpaceUsageTreeCalculation` and related tests in `pkg/crawler/crawler_test.go` for comprehensive validation of size calculations across various directory structures.
+- **Composable Tool Interface**: 5 tools with structured parameters replace 59 specialized tools
+- **Attribute-Based Filtering**: `query` WHERE clause handles both entry columns and attributes transparently
+- **Cursor Pagination**: Base64-encoded offset tokens for stateless pagination
+- **Single Table + Attributes**: Entries table for core data, attributes table for extensible metadata
+- **Bottom-Up Aggregation**: Directory sizes computed after crawling (deepest-first)
+- **In-Memory Testing**: All tests use `:memory:` SQLite
 
 ### Database Schema
 
-**Core Tables:**
+See `docs/SCHEMA.md` for complete schema. Key tables:
+
 ```sql
--- Filesystem entries
-CREATE TABLE entries (
-  id INTEGER PRIMARY KEY,
-  path TEXT UNIQUE NOT NULL,
-  parent TEXT,
-  size INTEGER,
-  kind TEXT CHECK(kind IN ('file', 'directory')),
-  ctime INTEGER,
-  mtime INTEGER,
-  last_scanned INTEGER,
-  dirty INTEGER DEFAULT 0
-)
+-- Core data
+entries (path, parent, size, kind, ctime, mtime, last_scanned)
+attributes (entry_path, key, value, source, computed_at)  -- extensible metadata
 
--- Resource-sets (named collections, supports nesting)
-CREATE TABLE resource_sets (
-  id INTEGER PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,
-  description TEXT,
-  created_at INTEGER,
-  updated_at INTEGER
-)
+-- Organization
+resource_sets (name, description)
+resource_set_entries (set_id, entry_path)
+resource_set_edges (parent_id, child_id)  -- DAG structure
 
--- Resource-set entries (links sets to filesystem entries)
-CREATE TABLE resource_set_entries (
-  set_id INTEGER NOT NULL,
-  entry_path TEXT NOT NULL,
-  added_at INTEGER,
-  PRIMARY KEY (set_id, entry_path)
-)
-
--- Resource-set edges (DAG structure, supports multiple parents)
-CREATE TABLE resource_set_edges (
-  parent_id INTEGER NOT NULL,
-  child_id INTEGER NOT NULL,
-  added_at INTEGER,
-  PRIMARY KEY (parent_id, child_id),
-  CHECK (parent_id != child_id)
-)
-
--- Unified sources (filesystem, query, resource-set)
-CREATE TABLE sources (
-  id INTEGER PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,
-  type TEXT CHECK(type IN ('filesystem.index', 'filesystem.watch', 'query', 'resource-set')) NOT NULL,
-  target_set_name TEXT NOT NULL,
-  update_mode TEXT CHECK(update_mode IN ('replace', 'append', 'merge')),
-  config_json TEXT,
-  status TEXT CHECK(status IN ('stopped', 'starting', 'running', 'stopping', 'completed', 'error')),
-  enabled INTEGER DEFAULT 1,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  last_run_at INTEGER,
-  last_error TEXT
-)
-
--- Rules for automatic file processing
-CREATE TABLE rules (
-  id INTEGER PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,
-  enabled INTEGER DEFAULT 1,
-  priority INTEGER DEFAULT 0,
-  condition_json TEXT NOT NULL,
-  outcome_json TEXT NOT NULL,
-  created_at INTEGER,
-  updated_at INTEGER
-)
-
--- Plans (orchestration of resource-sets and sources)
-CREATE TABLE plans (
-  id INTEGER PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,
-  description TEXT,
-  mode TEXT CHECK(mode IN ('oneshot', 'continuous')),
-  status TEXT CHECK(status IN ('active', 'paused', 'disabled')),
-  resource_sets_json TEXT NOT NULL,
-  sources_json TEXT NOT NULL,
-  conditions_json TEXT,
-  outcomes_json TEXT,
-  created_at INTEGER,
-  updated_at INTEGER,
-  last_run_at INTEGER
-)
+-- Orchestration
+plans (name, mode, sources_json, outcomes_json)
+sources (name, type, target_set_name, config_json, status)
+rules (name, condition_json, outcome_json)
+index_jobs (root_path, status, files_found, files_indexed)
 ```
 
 ### Server Endpoints
 
 > **Note**: This system exposes functionality **exclusively via MCP**. No REST or gRPC APIs.
 
-- `POST /mcp` - MCP streamable HTTP transport endpoint (JSON-RPC 2.0)
-- `/web/*` - Static web component microfrontend (uses MCP for data)
+- `POST /mcp` — MCP streamable HTTP transport endpoint (JSON-RPC 2.0)
+- `/web/*` — Static web component microfrontend (uses MCP for data)
 
 ## Development Guidelines
 
@@ -260,6 +160,8 @@ CREATE TABLE plans (
 - Use in-memory SQLite databases (`:memory:`)
 - Run tests with: `GO_ENV=test go test ./...`
 - **Minimum 80% code coverage required**: `go test -v -cover ./...`
+- Tool tests call handler functions directly (MCPServer doesn't expose CallTool)
+- Shared test helpers: `makeRequest()` and `resultJSON()` in `tool_scan_test.go`
 
 #### Dependencies
 - `github.com/mark3labs/mcp-go@v0.43.0`: MCP server
@@ -275,108 +177,63 @@ CREATE TABLE plans (
 - Logger configuration in `pkg/logger/logger.go`
 - Logging levels: trace, debug, info, warn, error
 - Silent during tests (GO_ENV=test)
-- Set custom log level: `LOG_LEVEL=debug ./mcp-space-browser disk-index /path`
+- Set custom log level: `LOG_LEVEL=debug ./mcp-space-browser server`
 - Each module has its own child logger with contextual name
 
 ## MCP Integration
 
-Provides full MCP (Model Context Protocol) integration via **tools** and **resource templates**:
+### 5 MCP Tools
 
-### MCP Tools
+| Tool | Description |
+|------|-------------|
+| `scan` | Index filesystem paths and extract attributes |
+| `query` | Search, filter, aggregate with composable WHERE clause |
+| `manage` | CRUD for resource-sets, plans, and jobs |
+| `batch` | Multi-file operations: attributes, duplicates, move, delete |
+| `watch` | Real-time filesystem monitoring (start, stop, status, list) |
 
-**Resource Navigation (DAG):**
-- `resource-children`: Get child nodes in DAG (downstream)
-- `resource-parent`: Get parent nodes in DAG (upstream, like "..")
+See `docs/MCP_REFERENCE.md` for complete parameter reference and examples.
 
-**Resource Queries:**
-- `resource-sum`: Hierarchical aggregation of a metric (replaces disk-du)
-- `resource-time-range`: Filter by time field range (replaces disk-time-range)
-- `resource-metric-range`: Filter by metric value range
-- `resource-is`: Exact match on a field value (e.g., kind="file")
-- `resource-fuzzy-match`: Fuzzy/pattern matching on text fields (contains, prefix, suffix, regex, glob)
+### 8 Resource Templates
 
-**Resource-Set Management:**
-- `resource-set-create`, `resource-set-list`, `resource-set-get`, `resource-set-modify`, `resource-set-delete`
-- `resource-set-add-child`, `resource-set-remove-child` (DAG edge operations)
+| URI | Description |
+|-----|-------------|
+| `synthesis://entries/{path}` | Entry with attributes |
+| `synthesis://entries/{path}/attributes` | Attributes only |
+| `synthesis://sets` | List resource sets |
+| `synthesis://sets/{name}` | Resource set details |
+| `synthesis://sets/{name}/entries` | Entries in a set |
+| `synthesis://jobs` | List indexing jobs |
+| `synthesis://jobs/{id}` | Job details |
+| `synthesis://projects` | List projects |
 
-**Unified Sources:**
-- `source-create`, `source-start`, `source-stop`, `source-list`, `source-get`, `source-delete`, `source-execute`
-
-**Plans (own indexing):**
-- `plan-create`, `plan-execute`, `plan-list`, `plan-get`, `plan-update`, `plan-delete`
-
-### MCP Resource Templates
-
-Resources are also accessible via declarative URIs:
-```
-synthesis://resource-set/{name}
-synthesis://resource-set/{name}/children
-synthesis://resource-set/{name}/parents
-synthesis://resource-set/{name}/entries
-synthesis://resource-set/{name}/metrics/{metric}
-```
-
-The MCP server exposes tools and resources at `http://localhost:3000/mcp` when running:
-```bash
-go run ./cmd/mcp-space-browser server --port=3000
-```
-
-### Example: Index and Query via Plans
+### Example: Index and Query
 
 ```json
-// Step 1: Create resource-sets (DAG nodes)
-{"tool": "resource-set-create", "params": {"name": "photos"}}
-{"tool": "resource-set-create", "params": {"name": "all-media"}}
-{"tool": "resource-set-add-child", "params": {"parent": "all-media", "child": "photos"}}
+// Scan a directory
+{"tool": "scan", "params": {"paths": ["/home/user/Photos"], "target": "photos"}}
 
-// Step 2: Create and execute a plan to index
-{
-  "tool": "plan-create",
-  "params": {
-    "name": "index-photos",
-    "sources": [
-      {"name": "photos-source", "type": "filesystem.index", "target_set": "photos",
-       "config": {"path": "/home/user/Photos", "recursive": true}}
-    ]
-  }
-}
-{"tool": "plan-execute", "params": {"name": "index-photos"}}
+// Find large files
+{"tool": "query", "params": {"where": {"kind": "file", "size": {">": 100000000}}, "order_by": "-size", "limit": 10}}
 
-// Step 3: Query resources
-{"tool": "resource-sum", "params": {"name": "all-media", "metric": "size"}}
-{"tool": "resource-time-range", "params": {"name": "photos", "field": "mtime", "min": "2024-01-01"}}
-{"tool": "resource-children", "params": {"name": "all-media"}}
+// Aggregate by type
+{"tool": "query", "params": {"from": "photos", "aggregate": "count", "group_by": "mime"}}
+
+// Organize with DAG
+{"tool": "manage", "params": {"entity": "resource-set", "action": "create", "name": "media"}}
+{"tool": "manage", "params": {"entity": "resource-set", "action": "create", "parent": "media", "child": "photos"}}
 ```
 
 ### Live Filesystem Monitoring
 
-For real-time monitoring, use a `filesystem.watch` source in a plan:
 ```json
-{
-  "tool": "plan-create",
-  "params": {
-    "name": "watch-downloads",
-    "mode": "continuous",
-    "sources": [
-      {"name": "downloads-watch", "type": "filesystem.watch", "target_set": "downloads",
-       "config": {"path": "/home/user/Downloads", "recursive": true, "debounce_ms": 500}}
-    ]
-  }
-}
+{"tool": "watch", "params": {"action": "start", "path": "/home/user/Downloads", "name": "dl-watch"}}
+{"tool": "watch", "params": {"action": "list"}}
+{"tool": "watch", "params": {"action": "stop", "name": "dl-watch"}}
 ```
-
-Live sources automatically:
-- Index new files as they're created
-- Update metadata when files are modified
-- Remove entries when files are deleted
-- Execute rules for automatic classification
-- Populate the target resource-set
 
 ### Architecture Documentation
 
-- `docs/ARCHITECTURE_C3.md` - C3 Context/Container views of the system
-- `docs/ENTITY_RELATIONSHIP.md` - Entity-Relationship Diagram of the data model
-- `docs/MCP_REFERENCE.md` - Complete MCP tool and resource template reference
-- `docs/RESOURCE_SET_ARCHITECTURE.md` - Detailed architecture for resource-sets, unified sources, and plans
-- `docs/RESOURCE_SET_IMPLEMENTATION_PLAN.md` - Implementation roadmap with detailed tasks
-- `docs/PLANS_ARCHITECTURE.md` - Plans system architecture
+- `docs/ARCHITECTURE.md` — System architecture and component diagram
+- `docs/MCP_REFERENCE.md` — Complete MCP tool and resource template reference
+- `docs/SCHEMA.md` — Database schema reference
