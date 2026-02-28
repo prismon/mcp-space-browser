@@ -43,7 +43,7 @@ var scanToolDef = mcp.NewTool("scan",
 // registerScanTool registers the scan tool with a direct DiskDB reference (for tests)
 func registerScanTool(s *server.MCPServer, db *database.DiskDB) {
 	s.AddTool(scanToolDef, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return handleScan(ctx, request, db)
+		return handleScan(ctx, request, db, "")
 	})
 }
 
@@ -54,11 +54,11 @@ func registerScanToolMP(s *server.MCPServer, sc *ServerContext) {
 		if errResult != nil {
 			return errResult, nil
 		}
-		return handleScan(ctx, request, db)
+		return handleScan(ctx, request, db, sc.CacheDir)
 	})
 }
 
-func handleScan(ctx context.Context, request mcp.CallToolRequest, db *database.DiskDB) (*mcp.CallToolResult, error) {
+func handleScan(ctx context.Context, request mcp.CallToolRequest, db *database.DiskDB, cacheDir string) (*mcp.CallToolResult, error) {
 	var args struct {
 		Paths      []string `json:"paths"`
 		Attributes []string `json:"attributes,omitempty"`
@@ -104,12 +104,12 @@ func handleScan(ctx context.Context, request mcp.CallToolRequest, db *database.D
 	}
 
 	if asyncMode {
-		return handleScanAsync(db, expandedPaths, opts)
+		return handleScanAsync(db, expandedPaths, opts, cacheDir, args.Attributes)
 	}
-	return handleScanSync(db, expandedPaths, opts)
+	return handleScanSync(db, expandedPaths, opts, cacheDir, args.Attributes)
 }
 
-func handleScanAsync(db *database.DiskDB, paths []string, opts *crawler.IndexOptions) (*mcp.CallToolResult, error) {
+func handleScanAsync(db *database.DiskDB, paths []string, opts *crawler.IndexOptions, cacheDir string, attributes []string) (*mcp.CallToolResult, error) {
 	type jobInfo struct {
 		JobID     int64  `json:"job_id"`
 		Path      string `json:"path"`
@@ -134,10 +134,25 @@ func handleScanAsync(db *database.DiskDB, paths []string, opts *crawler.IndexOpt
 				errMsg := err.Error()
 				db.UpdateIndexJobStatus(id, "failed", &errMsg)
 				log.WithError(err).WithFields(logrus.Fields{"jobID": id, "path": path}).Error("Scan failed")
-			} else {
-				db.UpdateIndexJobStatus(id, "completed", nil)
-				log.WithFields(logrus.Fields{"jobID": id, "path": path}).Info("Scan completed")
+				return
 			}
+
+			// Post-process: extract attributes and generate thumbnails
+			ppResult := PostProcess(&PostProcessConfig{
+				DB:         db,
+				CacheDir:   cacheDir,
+				Attributes: attributes,
+			}, []string{path})
+
+			log.WithFields(logrus.Fields{
+				"jobID":      id,
+				"path":       path,
+				"files":      ppResult.FilesProcessed,
+				"features":   ppResult.FeaturesCreated,
+				"attributes": ppResult.AttributesSet,
+			}).Info("Scan and post-processing completed")
+
+			db.UpdateIndexJobStatus(id, "completed", nil)
 		}(p, jobID)
 
 		jobs = append(jobs, jobInfo{
@@ -155,7 +170,7 @@ func handleScanAsync(db *database.DiskDB, paths []string, opts *crawler.IndexOpt
 	return mcp.NewToolResultText(string(payload)), nil
 }
 
-func handleScanSync(db *database.DiskDB, paths []string, opts *crawler.IndexOptions) (*mcp.CallToolResult, error) {
+func handleScanSync(db *database.DiskDB, paths []string, opts *crawler.IndexOptions, cacheDir string, attributes []string) (*mcp.CallToolResult, error) {
 	type pathResult struct {
 		Path           string `json:"path"`
 		FilesProcessed int    `json:"files_processed"`
@@ -167,6 +182,7 @@ func handleScanSync(db *database.DiskDB, paths []string, opts *crawler.IndexOpti
 
 	startTime := time.Now()
 	results := make([]pathResult, 0, len(paths))
+	successPaths := make([]string, 0, len(paths))
 
 	for _, p := range paths {
 		stats, err := crawler.IndexWithOptions(p, db, nil, 0, nil, opts)
@@ -180,6 +196,27 @@ func handleScanSync(db *database.DiskDB, paths []string, opts *crawler.IndexOpti
 				TotalSize:      stats.TotalSize,
 				Skipped:        stats.Skipped,
 			})
+			if !stats.Skipped {
+				successPaths = append(successPaths, p)
+			}
+		}
+	}
+
+	// Post-process: extract attributes and generate thumbnails
+	var ppStats map[string]interface{}
+	if len(successPaths) > 0 {
+		ppResult := PostProcess(&PostProcessConfig{
+			DB:         db,
+			CacheDir:   cacheDir,
+			Attributes: attributes,
+		}, successPaths)
+
+		ppStats = map[string]interface{}{
+			"files_processed":  ppResult.FilesProcessed,
+			"features_created": ppResult.FeaturesCreated,
+			"attributes_set":   ppResult.AttributesSet,
+			"errors":           ppResult.Errors,
+			"duration_ms":      ppResult.Duration.Milliseconds(),
 		}
 	}
 
@@ -187,6 +224,9 @@ func handleScanSync(db *database.DiskDB, paths []string, opts *crawler.IndexOpti
 		"status":      "completed",
 		"duration_ms": time.Since(startTime).Milliseconds(),
 		"results":     results,
+	}
+	if ppStats != nil {
+		response["post_processing"] = ppStats
 	}
 	payload, _ := json.Marshal(response)
 	return mcp.NewToolResultText(string(payload)), nil

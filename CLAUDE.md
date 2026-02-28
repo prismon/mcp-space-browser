@@ -95,7 +95,7 @@ go test -v -cover ./...              # With coverage
 
 ### Core Components
 1. **5 MCP Tools** (`pkg/server/tool_*.go`):
-   - `scan` — Index filesystem paths, extract attributes
+   - `scan` — Index filesystem paths, extract attributes, auto-generate thumbnails
    - `query` — Search, filter, aggregate with dynamic SQL and cursor pagination
    - `manage` — CRUD for resource-sets, plans, and jobs
    - `batch` — Multi-file operations (attributes, duplicates, move, delete)
@@ -104,12 +104,18 @@ go test -v -cover ./...              # With coverage
    - Extensible key-value pairs per filesystem entry
    - Keys: `mime`, `hash.md5`, `hash.sha256`, `exif.*`, `permissions`, etc.
    - Queryable via the `query` tool's `where` clause (auto-JOINs on non-entry columns)
-3. **Filesystem Crawler**: Stack-based DFS with bottom-up size aggregation
+3. **Post-Processor** (`pkg/server/post_processor.go`):
+   - Runs automatically after scan completes (both sync and async)
+   - Default extractions: `mime`, `permissions`, `thumbnail`, `video.thumbnails`, `metadata`
+   - Opt-in: `hash.md5`, `hash.sha256` (slow for large files)
+   - Concurrent worker pool (capped at 8), error-tolerant per file
+   - `attributes` parameter acts as filter (omit for all defaults)
+4. **Filesystem Crawler**: Stack-based DFS with bottom-up size aggregation
    - Skips re-indexing recent paths (configurable `maxAge`, default 1 hour)
    - Use `force=true` in `scan` tool to override
-4. **Resource-Set DAG**: Named collections with parent-child edges (multiple parents allowed)
-5. **Plans**: Orchestration layer for indexing operations
-6. **8 Resource Templates**: Declarative `synthesis://` URIs for entries, sets, jobs, projects
+5. **Resource-Set DAG**: Named collections with parent-child edges (multiple parents allowed)
+6. **Plans**: Orchestration layer for indexing operations
+7. **8 Resource Templates**: Declarative `synthesis://` URIs for entries, sets, jobs, projects
 
 ### Key Design Patterns
 - **Composable Tool Interface**: 5 tools with structured parameters replace 59 specialized tools
@@ -117,7 +123,7 @@ go test -v -cover ./...              # With coverage
 - **Cursor Pagination**: Base64-encoded offset tokens for stateless pagination
 - **Single Table + Attributes**: Entries table for core data, attributes table for extensible metadata
 - **Bottom-Up Aggregation**: Directory sizes computed after crawling (deepest-first)
-- **In-Memory Testing**: All tests use `:memory:` SQLite
+- **In-Memory Testing**: All tests use `:memory:` SQLite (with `MaxOpenConns(1)` for connection safety)
 
 ### Database Schema
 

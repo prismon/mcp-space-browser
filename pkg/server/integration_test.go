@@ -44,7 +44,7 @@ func TestIntegration_ScanCreateQueryVerify(t *testing.T) {
 		"async": false,
 		"force": true,
 	})
-	result, err = handleScan(ctx, scanReq, db)
+	result, err = handleScan(ctx, scanReq, db, "")
 	require.NoError(t, err)
 	require.False(t, result.IsError, "scan should succeed")
 	resp = resultJSON(t, result)

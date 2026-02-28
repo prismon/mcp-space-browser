@@ -11,15 +11,24 @@ Index filesystem paths and extract attributes.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | paths | string[] | yes | Filesystem paths to scan |
-| attributes | string[] | no | Attributes to extract: mime, hash.md5, hash.sha256, hash.perceptual, exif, permissions, thumbnail, video.thumbnails, media, text |
+| attributes | string[] | no | Filter which attributes to extract. **Default** (when omitted): thumbnail, video.thumbnails, mime, metadata, permissions. **Opt-in only**: hash.md5, hash.sha256 (slow for large files). Acts as a filter — omitting means all defaults run. |
 | depth | number | no | Scan depth: -1=recursive (default), 0=this level, N=N levels |
 | force | boolean | no | Re-index even if recently scanned (default: false) |
 | target | string | no | Resource set name to populate with results |
 | async | boolean | no | Return job ID immediately (default: true) |
 | maxAge | number | no | Max age in seconds before rescan (default: 3600) |
 
+**Sync response** includes a `post_processing` field with stats on attribute extraction and thumbnail generation:
+```json
+{"status": "completed", "duration_ms": 1234, "results": [...], "post_processing": {"files_processed": 50, "features_created": 12, "attributes_set": 100, "errors": 0, "duration_ms": 500}}
+```
+
 ```json
 {"tool": "scan", "params": {"paths": ["/home/user/Photos"], "depth": -1, "target": "photos"}}
+```
+
+```json
+{"tool": "scan", "params": {"paths": ["/data"], "attributes": ["mime", "hash.sha256"], "async": false}}
 ```
 
 ### query

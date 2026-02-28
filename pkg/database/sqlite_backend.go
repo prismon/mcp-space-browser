@@ -323,6 +323,26 @@ func (s *SQLiteBackend) InitSchema() error {
 		return err
 	}
 
+	// Create attributes table - extensible key-value metadata per entry
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS attributes (
+		entry_path TEXT NOT NULL,
+		key TEXT NOT NULL,
+		value TEXT,
+		source TEXT NOT NULL,
+		computed_at INTEGER,
+		PRIMARY KEY (entry_path, key)
+	)`); err != nil {
+		return fmt.Errorf("failed to create attributes table: %w", err)
+	}
+
+	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_attributes_key ON attributes(key)"); err != nil {
+		return err
+	}
+
+	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_attributes_source ON attributes(source)"); err != nil {
+		return err
+	}
+
 	// Create features table - stores generated characteristics of entries
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS features (
 		id INTEGER PRIMARY KEY,

@@ -46,6 +46,12 @@ func NewDiskDB(path string) (*DiskDB, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	// In-memory databases need a single connection to avoid each connection
+	// getting its own empty database with no tables.
+	if path == ":memory:" {
+		db.SetMaxOpenConns(1)
+	}
+
 	// Create and start the write queue
 	writeQueue := NewWriteQueue(db, nil)
 	writeQueue.Start()
@@ -750,6 +756,41 @@ func (d *DiskDB) GetStaleEntries(root string, runID int64) ([]*models.Entry, err
 		FROM entries
 		WHERE (path = ? OR path LIKE ?) AND last_scanned < ?
 	`, root, root+"/%", runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []*models.Entry
+	for rows.Next() {
+		var entry models.Entry
+		var parent sql.NullString
+
+		if err := rows.Scan(&entry.ID, &entry.Path, &parent, &entry.Size, &entry.Blocks, &entry.Kind, &entry.Ctime, &entry.Mtime, &entry.LastScanned); err != nil {
+			return nil, err
+		}
+
+		if parent.Valid {
+			entry.Parent = &parent.String
+		}
+
+		entries = append(entries, &entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
+// GetFilesUnderRoot returns all file entries under the given root path.
+func (d *DiskDB) GetFilesUnderRoot(root string) ([]*models.Entry, error) {
+	rows, err := d.db.Query(`
+		SELECT id, path, parent, size, blocks, kind, ctime, mtime, last_scanned
+		FROM entries
+		WHERE kind = 'file' AND (path = ? OR path LIKE ?)
+	`, root, root+"/%")
 	if err != nil {
 		return nil, err
 	}

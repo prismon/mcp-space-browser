@@ -2318,6 +2318,45 @@ func TestGetEntriesByTimeRangeWithRoot(t *testing.T) {
 	assert.Contains(t, results[0].Path, "/root1")
 }
 
+func TestGetFilesUnderRoot(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now().Unix()
+
+	// Insert a directory, files under it, and a file outside
+	entries := []*models.Entry{
+		{Path: "/root", Kind: "directory", Size: 0, Ctime: now, Mtime: now, LastScanned: now},
+		{Path: "/root/a.txt", Parent: stringPtr("/root"), Kind: "file", Size: 10, Ctime: now, Mtime: now, LastScanned: now},
+		{Path: "/root/sub", Parent: stringPtr("/root"), Kind: "directory", Size: 0, Ctime: now, Mtime: now, LastScanned: now},
+		{Path: "/root/sub/b.txt", Parent: stringPtr("/root/sub"), Kind: "file", Size: 20, Ctime: now, Mtime: now, LastScanned: now},
+		{Path: "/other/c.txt", Parent: stringPtr("/other"), Kind: "file", Size: 30, Ctime: now, Mtime: now, LastScanned: now},
+	}
+
+	for _, e := range entries {
+		require.NoError(t, db.InsertOrUpdate(e))
+	}
+
+	files, err := db.GetFilesUnderRoot("/root")
+	require.NoError(t, err)
+
+	// Should return only files (not directories) under /root
+	assert.Len(t, files, 2)
+
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.Path
+		assert.Equal(t, "file", f.Kind)
+	}
+	assert.Contains(t, paths, "/root/a.txt")
+	assert.Contains(t, paths, "/root/sub/b.txt")
+	// /other/c.txt should NOT be included
+	assert.NotContains(t, paths, "/other/c.txt")
+	// /root (directory) should NOT be included
+	assert.NotContains(t, paths, "/root")
+}
+
 // Helper function
 func stringPtr(s string) *string {
 	return &s

@@ -49,7 +49,7 @@ func TestScanTool_BasicIndex(t *testing.T) {
 		"force": true,
 	})
 
-	result, err := handleScan(context.Background(), request, db)
+	result, err := handleScan(context.Background(), request, db, "")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.IsError, "scan should not return error")
@@ -78,7 +78,7 @@ func TestScanTool_MultiplePaths(t *testing.T) {
 		"force": true,
 	})
 
-	result, err := handleScan(context.Background(), request, db)
+	result, err := handleScan(context.Background(), request, db, "")
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 
@@ -108,7 +108,7 @@ func TestScanTool_AsyncReturnsJobID(t *testing.T) {
 		"force": true,
 	})
 
-	result, err := handleScan(context.Background(), request, db)
+	result, err := handleScan(context.Background(), request, db, "")
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 
@@ -129,7 +129,7 @@ func TestScanTool_MissingPaths(t *testing.T) {
 
 	request := makeRequest("scan", map[string]interface{}{})
 
-	result, err := handleScan(context.Background(), request, db)
+	result, err := handleScan(context.Background(), request, db, "")
 	require.NoError(t, err)
 	assert.True(t, result.IsError, "scan without paths should error")
 }
@@ -144,7 +144,7 @@ func TestScanTool_InvalidPath(t *testing.T) {
 		"async": false,
 	})
 
-	result, err := handleScan(context.Background(), request, db)
+	result, err := handleScan(context.Background(), request, db, "")
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 }
