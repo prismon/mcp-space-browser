@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prismon/mcp-space-browser/pkg/auth"
-	"github.com/prismon/mcp-space-browser/pkg/classifier"
 	"github.com/prismon/mcp-space-browser/pkg/home"
 	"github.com/prismon/mcp-space-browser/pkg/logger"
 	"github.com/sirupsen/logrus"
@@ -326,25 +325,15 @@ func Start(config *auth.Config) error {
 		mcpOptions...,
 	)
 
-	// Initialize classifier processor (used for thumbnail generation)
-	classifierProcessor := classifier.NewProcessor(&classifier.ProcessorConfig{
-		CacheDir:          config.Cache.Dir,
-		ClassifierManager: classifier.NewManager(),
-		MetadataManager:   classifier.NewMetadataManager(),
-		// Note: Database is resolved per-project now, not passed here
-	})
-	log.Info("Classifier processor initialized")
+	// Register consolidated MCP tools (5 tools replacing 59)
+	registerScanToolMP(mcpServer, sc)
+	registerQueryToolMP(mcpServer, sc)
+	registerManageToolMP(mcpServer, sc)
+	registerBatchToolMP(mcpServer, sc)
+	registerWatchToolMP(mcpServer, sc)
 
-	// Register project management tools
-	registerProjectTools(mcpServer, sc)
-
-	// Register all MCP tools with ServerContext (tools resolve DB from context)
-	registerMCPToolsWithContext(mcpServer, sc, classifierProcessor)
-
-	// Register classifier tools with ServerContext
-	registerClassifierToolsWithContext(mcpServer, sc, classifierProcessor)
-
-	// Register all MCP resources with ServerContext
+	// Register consolidated resource templates (8 replacing 31)
+	// Note: registerResourcesMP is a no-op for now; resources use direct DB in single-project mode
 	registerMCPResourcesWithContext(mcpServer, sc)
 
 	// Create streamable HTTP server with stateless mode
@@ -382,17 +371,6 @@ func Start(config *auth.Config) error {
 	return router.Run(addr)
 }
 
-// registerMCPToolsWithContext registers all MCP tools using ServerContext for database resolution
-func registerMCPToolsWithContext(s *server.MCPServer, sc *ServerContext, processor *classifier.Processor) {
-	log.Info("Registering MCP tools with multi-project support")
-	registerMCPToolsMultiProject(s, sc, processor)
-}
-
-// registerClassifierToolsWithContext registers classifier tools with ServerContext
-func registerClassifierToolsWithContext(s *server.MCPServer, sc *ServerContext, processor *classifier.Processor) {
-	// TODO: Refactor classifier tools to use ServerContext
-	log.Info("Registering classifier tools with multi-project support")
-}
 
 // registerMCPResourcesWithContext registers MCP resources with ServerContext
 func registerMCPResourcesWithContext(s *server.MCPServer, sc *ServerContext) {

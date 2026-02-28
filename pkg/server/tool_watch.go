@@ -2,14 +2,43 @@ package server
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/prismon/mcp-space-browser/pkg/classifier"
 	"github.com/prismon/mcp-space-browser/pkg/database"
+	"github.com/prismon/mcp-space-browser/pkg/rules"
 	"github.com/prismon/mcp-space-browser/pkg/sources"
 )
+
+// Global source manager (initialized when server starts)
+var sourceManager *sources.Manager
+
+// InitializeSourceManager initializes the global source manager
+func InitializeSourceManager(db *sql.DB, diskDB *database.DiskDB, clf classifier.Classifier) error {
+	ruleEngine := rules.NewEngine(db, diskDB, clf)
+	sourceManager = sources.NewManager(db, ruleEngine)
+
+	// Restore active sources
+	ctx := context.Background()
+	if err := sourceManager.RestoreActiveSources(ctx); err != nil {
+		log.WithError(err).Warn("Failed to restore some active sources")
+	}
+
+	return nil
+}
+
+// StopSourceManager stops all running sources
+func StopSourceManager() error {
+	if sourceManager == nil {
+		return nil
+	}
+
+	ctx := context.Background()
+	return sourceManager.StopAll(ctx)
+}
 
 var watchToolDef = mcp.NewTool("watch",
 	mcp.WithDescription("Real-time filesystem monitoring. Start, stop, and manage filesystem watchers."),
@@ -245,9 +274,4 @@ func handleWatchList(ctx context.Context) (*mcp.CallToolResult, error) {
 		"watchers": watchers,
 		"total":    len(watchers),
 	})
-}
-
-// Ensure json import is used
-func init() {
-	_ = json.Marshal
 }
