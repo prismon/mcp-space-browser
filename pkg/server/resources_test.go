@@ -1,0 +1,155 @@
+package server
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	mcpserver "github.com/mark3labs/mcp-go/server"
+	"github.com/prismon/mcp-space-browser/internal/models"
+	"github.com/prismon/mcp-space-browser/pkg/database"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func setupResourceTestDB(t *testing.T) *database.DiskDB {
+	t.Helper()
+	db, err := database.NewDiskDB(":memory:")
+	require.NoError(t, err)
+
+	now := time.Now().Unix()
+	root := "/"
+	testDir := "/test"
+	entries := []*models.Entry{
+		{Path: "/test", Parent: &root, Size: 0, Kind: "directory", Ctime: now, Mtime: now, LastScanned: now},
+		{Path: "/test/file.txt", Parent: &testDir, Size: 100, Kind: "file", Ctime: now, Mtime: now, LastScanned: now},
+	}
+	for _, e := range entries {
+		require.NoError(t, db.InsertOrUpdate(e))
+	}
+
+	require.NoError(t, db.SetAttribute(&models.Attribute{
+		EntryPath: "/test/file.txt", Key: "mime", Value: "text/plain", Source: "scan", ComputedAt: now,
+	}))
+
+	return db
+}
+
+func TestResource_Registration(t *testing.T) {
+	db := setupResourceTestDB(t)
+	defer db.Close()
+
+	s := mcpserver.NewMCPServer("test", "1.0")
+	registerResources(s, db)
+	// Verify registration doesn't panic
+	assert.NotNil(t, s)
+}
+
+func TestResource_ExtractURIParam(t *testing.T) {
+	tests := []struct {
+		uri    string
+		prefix string
+		expect string
+	}{
+		{"synthesis://entries//test/file.txt", "synthesis://entries/", "/test/file.txt"},
+		{"synthesis://sets/my-set", "synthesis://sets/", "my-set"},
+		{"synthesis://jobs/42", "synthesis://jobs/", "42"},
+		{"synthesis://wrong/path", "synthesis://entries/", ""},
+	}
+
+	for _, tt := range tests {
+		result := extractURIParam(tt.uri, tt.prefix)
+		assert.Equal(t, tt.expect, result, "URI: %s", tt.uri)
+	}
+}
+
+func TestResource_ResourceJSON(t *testing.T) {
+	data := map[string]string{"key": "value"}
+	result, err := resourceJSON(data, "synthesis://test")
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+
+	textContent, ok := result[0].(*mcp.TextResourceContents)
+	require.True(t, ok)
+	assert.Contains(t, textContent.Text, "key")
+	assert.Equal(t, "application/json", textContent.MIMEType)
+}
+
+func TestResource_EntryData(t *testing.T) {
+	db := setupResourceTestDB(t)
+	defer db.Close()
+
+	// Verify the data that entry resource would return
+	entry, err := db.Get("/test/file.txt")
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	assert.Equal(t, "file", entry.Kind)
+	assert.Equal(t, int64(100), entry.Size)
+
+	attrs, err := db.GetAttributes("/test/file.txt")
+	require.NoError(t, err)
+	assert.Len(t, attrs, 1)
+	assert.Equal(t, "mime", attrs[0].Key)
+	assert.Equal(t, "text/plain", attrs[0].Value)
+}
+
+func TestResource_SetsListData(t *testing.T) {
+	db := setupResourceTestDB(t)
+	defer db.Close()
+
+	_, err := db.CreateResourceSet(&models.ResourceSet{Name: "test-set"})
+	require.NoError(t, err)
+
+	sets, err := db.ListResourceSets()
+	require.NoError(t, err)
+	assert.Len(t, sets, 1)
+	assert.Equal(t, "test-set", sets[0].Name)
+}
+
+func TestResource_SetEntriesData(t *testing.T) {
+	db := setupResourceTestDB(t)
+	defer db.Close()
+
+	_, err := db.CreateResourceSet(&models.ResourceSet{Name: "files"})
+	require.NoError(t, err)
+	require.NoError(t, db.AddToResourceSet("files", []string{"/test/file.txt"}))
+
+	entries, err := db.GetResourceSetEntries("files")
+	require.NoError(t, err)
+	assert.Len(t, entries, 1)
+	assert.Equal(t, "/test/file.txt", entries[0].Path)
+}
+
+func TestResource_JobsListEmpty(t *testing.T) {
+	db := setupResourceTestDB(t)
+	defer db.Close()
+
+	jobs, err := db.ListIndexJobs(nil, 100)
+	require.NoError(t, err)
+	assert.Len(t, jobs, 0)
+}
+
+func TestResource_MarshalEntry(t *testing.T) {
+	db := setupResourceTestDB(t)
+	defer db.Close()
+
+	entry, err := db.Get("/test/file.txt")
+	require.NoError(t, err)
+
+	attrs, err := db.GetAttributes("/test/file.txt")
+	require.NoError(t, err)
+
+	result := map[string]interface{}{
+		"entry":      entry,
+		"attributes": attrs,
+	}
+
+	payload, err := json.Marshal(result)
+	require.NoError(t, err)
+
+	var response map[string]interface{}
+	require.NoError(t, json.Unmarshal(payload, &response))
+	assert.NotNil(t, response["entry"])
+	assert.NotNil(t, response["attributes"])
+}
