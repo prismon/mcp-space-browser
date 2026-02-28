@@ -1,0 +1,1371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP Space Browser - Developer Portal</title>
+  <style>
+    :root {
+      --bg: #f6f8fa;
+      --bg-card: #ffffff;
+      --border: #d0d7de;
+      --border-light: #e1e4e8;
+      --text: #1f2328;
+      --text-muted: #656d76;
+      --text-subtle: #8b949e;
+      --accent: #0969da;
+      --accent-bg: #ddf4ff;
+      --accent-border: #54aeff;
+      --green: #1a7f37;
+      --green-bg: #dafbe1;
+      --purple: #8250df;
+      --purple-bg: #fbefff;
+      --orange: #bc4c00;
+      --orange-bg: #fff8c5;
+      --code-bg: #f6f8fa;
+      --code-border: #d0d7de;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    /* Header */
+    .hero {
+      background: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #0d1117 100%);
+      color: #e6edf3;
+      padding: 48px 24px;
+      text-align: center;
+    }
+
+    .hero h1 {
+      font-size: 36px;
+      font-weight: 700;
+      margin: 0 0 8px 0;
+    }
+
+    .hero .tagline {
+      font-size: 18px;
+      color: #8b949e;
+      margin: 0 0 16px 0;
+    }
+
+    .hero-badges {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .hero-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .hero-badge.mcp { background: #388bfd33; color: #58a6ff; border: 1px solid #388bfd55; }
+    .hero-badge.go { background: #00add833; color: #3fb950; border: 1px solid #00add855; }
+    .hero-badge.sqlite { background: #8b949e33; color: #8b949e; border: 1px solid #8b949e55; }
+
+    /* Navigation */
+    .nav-bar {
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      overflow-x: auto;
+    }
+
+    .nav-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      gap: 0;
+    }
+
+    .nav-link {
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-muted);
+      text-decoration: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .nav-link:hover {
+      color: var(--text);
+      border-bottom-color: var(--border);
+    }
+
+    .nav-link.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    /* Main content */
+    .main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+
+    .section {
+      display: none;
+    }
+
+    .section.active {
+      display: block;
+    }
+
+    /* Cards */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+
+    .card h2 {
+      font-size: 22px;
+      font-weight: 600;
+      margin: 0 0 8px 0;
+    }
+
+    .card h3 {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 24px 0 12px 0;
+    }
+
+    .card h3:first-child { margin-top: 0; }
+
+    .card p {
+      margin: 0 0 16px 0;
+      color: var(--text-muted);
+    }
+
+    .card ul {
+      margin: 0 0 16px 0;
+      padding-left: 20px;
+    }
+
+    .card li {
+      margin-bottom: 6px;
+    }
+
+    /* Badge */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      vertical-align: middle;
+    }
+
+    .badge-blue { background: var(--accent-bg); color: var(--accent); border: 1px solid var(--accent-border); }
+    .badge-green { background: var(--green-bg); color: var(--green); border: 1px solid #4ac26b; }
+    .badge-purple { background: var(--purple-bg); color: var(--purple); border: 1px solid #a371f7; }
+    .badge-orange { background: var(--orange-bg); color: var(--orange); border: 1px solid #d4a72c; }
+
+    /* Inline code */
+    code {
+      background: var(--code-bg);
+      border: 1px solid var(--code-border);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', monospace;
+      font-size: 13px;
+    }
+
+    /* Code blocks */
+    pre {
+      background: #0d1117;
+      color: #e6edf3;
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    pre code {
+      background: none;
+      border: none;
+      padding: 0;
+      color: inherit;
+    }
+
+    /* Mermaid diagram containers */
+    .diagram-container {
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 20px;
+      overflow-x: auto;
+    }
+
+    .diagram-container h3 {
+      margin: 0 0 16px 0;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .diagram-container .mermaid {
+      text-align: center;
+    }
+
+    /* Tables */
+    .tool-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .tool-table th {
+      text-align: left;
+      padding: 10px 12px;
+      background: var(--bg);
+      border-bottom: 2px solid var(--border);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+    }
+
+    .tool-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-light);
+      vertical-align: top;
+    }
+
+    .tool-table tr:hover {
+      background: #f6f8fa;
+    }
+
+    .tool-table td:first-child code {
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    /* Category header rows */
+    .tool-table .category-row td {
+      background: var(--bg);
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text);
+      padding-top: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* Doc index grid */
+    .doc-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 16px;
+    }
+
+    .doc-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      padding: 16px;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .doc-card:hover {
+      border-color: var(--accent);
+      box-shadow: 0 1px 4px rgba(9, 105, 218, 0.15);
+    }
+
+    .doc-card h4 {
+      margin: 0 0 4px 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .doc-card p {
+      margin: 0;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    /* Tech stack grid */
+    .tech-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .tech-item {
+      background: var(--bg);
+      border: 1px solid var(--border-light);
+      border-radius: 6px;
+      padding: 12px 16px;
+    }
+
+    .tech-item strong {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 2px;
+    }
+
+    .tech-item span {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    /* Capability pills */
+    .capabilities {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 16px 0;
+    }
+
+    .cap-pill {
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      background: var(--bg);
+      border: 1px solid var(--border-light);
+    }
+
+    /* Resource template list */
+    .uri-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .uri-list li {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-light);
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+      font-size: 13px;
+    }
+
+    .uri-list li:last-child {
+      border-bottom: none;
+    }
+
+    .uri-list .uri-desc {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: var(--text-muted);
+      font-size: 12px;
+      margin-left: 12px;
+    }
+
+    /* Footer */
+    .footer {
+      text-align: center;
+      padding: 32px 24px;
+      color: var(--text-subtle);
+      font-size: 13px;
+      border-top: 1px solid var(--border-light);
+      margin-top: 40px;
+    }
+
+    .footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .footer a:hover {
+      text-decoration: underline;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .hero { padding: 32px 16px; }
+      .hero h1 { font-size: 28px; }
+      .main { padding: 20px 16px; }
+      .doc-grid { grid-template-columns: 1fr; }
+      .tech-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Hero Header -->
+  <div class="hero">
+    <h1>mcp-space-browser</h1>
+    <p class="tagline">Disk space indexing agent with MCP-native interface</p>
+    <div class="hero-badges">
+      <span class="hero-badge mcp">MCP-Only Interface</span>
+      <span class="hero-badge go">Go 1.21+</span>
+      <span class="hero-badge sqlite">SQLite</span>
+    </div>
+  </div>
+
+  <!-- Sticky Navigation -->
+  <div class="nav-bar">
+    <div class="nav-inner">
+      <a class="nav-link active" data-section="overview">Overview</a>
+      <a class="nav-link" data-section="architecture">Architecture</a>
+      <a class="nav-link" data-section="data-model">Data Model</a>
+      <a class="nav-link" data-section="data-flows">Data Flows</a>
+      <a class="nav-link" data-section="tools">MCP Tools</a>
+      <a class="nav-link" data-section="resources">Resources</a>
+      <a class="nav-link" data-section="docs">Docs Index</a>
+      <a class="nav-link" data-section="tech">Tech Stack</a>
+    </div>
+  </div>
+
+  <div class="main">
+
+    <!-- ==================== OVERVIEW ==================== -->
+    <div class="section active" id="overview">
+      <div class="card">
+        <h2>Project Overview</h2>
+        <p>A filesystem indexing agent that crawls directories, stores metadata in SQLite, and provides tools for exploring disk utilization &mdash; similar to Baobab or WinDirStat, but exposed entirely through the Model Context Protocol (MCP).</p>
+
+        <h3>Design Philosophy</h3>
+        <div class="capabilities">
+          <span class="cap-pill">MCP-Only &mdash; no REST or gRPC</span>
+          <span class="cap-pill">Single static binary</span>
+          <span class="cap-pill">Resource-centric operations</span>
+          <span class="cap-pill">DAG-based resource sets</span>
+          <span class="cap-pill">Plans own indexing</span>
+          <span class="cap-pill">Live filesystem monitoring</span>
+          <span class="cap-pill">Rule-based automation</span>
+        </div>
+
+        <h3>Key Capabilities</h3>
+        <ul>
+          <li><strong>Filesystem Crawling</strong> &mdash; Stack-based DFS traversal with incremental updates and bottom-up size aggregation</li>
+          <li><strong>Resource-Set DAG</strong> &mdash; Named collections forming a directed acyclic graph with multiple parents, enabling content-type and temporal hierarchies simultaneously</li>
+          <li><strong>Unified Sources</strong> &mdash; <code>filesystem.index</code>, <code>filesystem.watch</code>, <code>query</code>, and <code>resource-set</code> sources all feed into resource-sets</li>
+          <li><strong>Plans &amp; Orchestration</strong> &mdash; Plans define what to process, how to filter, and what outcomes to produce. They own the indexing lifecycle.</li>
+          <li><strong>Rule Engine</strong> &mdash; Condition-outcome automation for classifying and routing files based on media type, size, time, and path patterns</li>
+          <li><strong>Live Monitoring</strong> &mdash; Real-time filesystem watching with fsnotify, automatic rule execution on file changes</li>
+          <li><strong>Media Classification</strong> &mdash; Thumbnail generation, metadata extraction, and content-addressed artifact caching with SHA256</li>
+          <li><strong>42+ MCP Tools</strong> &mdash; Full coverage of navigation, querying, resource management, sources, plans, and classification</li>
+        </ul>
+
+        <h3>Universal MCP Access</h3>
+        <p>All tools are designed to work seamlessly for:</p>
+        <ul>
+          <li><strong>Human Users</strong> via MCP client applications</li>
+          <li><strong>AI Models</strong> (Claude, ChatGPT, etc.) via MCP integration</li>
+          <li><strong>Automated Systems</strong> implementing MCP client protocol</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Quick Start</h3>
+<pre><code># Build
+go build -o mcp-space-browser ./cmd/mcp-space-browser
+
+# Run MCP server
+./mcp-space-browser server --port=3000
+# MCP endpoint: http://localhost:3000/mcp
+
+# Index via Plans (MCP JSON-RPC)
+{"tool": "plan-create", "params": {"name": "index-home", "sources": [
+  {"name": "home-src", "type": "filesystem.index", "target_set": "home",
+   "config": {"path": "/home/user", "recursive": true}}
+]}}
+{"tool": "plan-execute", "params": {"name": "index-home"}}
+
+# Query
+{"tool": "resource-sum", "params": {"name": "home", "metric": "size"}}
+</code></pre>
+      </div>
+    </div>
+
+    <!-- ==================== ARCHITECTURE ==================== -->
+    <div class="section" id="architecture">
+
+      <div class="diagram-container">
+        <h3>System Context (C3 Level 1)</h3>
+        <p style="color: var(--text-muted); margin-bottom: 16px;">External actors, the system, and its dependencies</p>
+        <div class="mermaid">
+graph TD
+    HU["Human User<br/><i>via MCP Client App</i>"]
+    LLM["LLM / AI Model<br/><i>Claude, ChatGPT, etc.</i>"]
+    BC["Browser Client<br/><i>Web Components UI</i>"]
+    AUTO["Automated System<br/><i>MCP Client Protocol</i>"]
+
+    MSB["<b>mcp-space-browser</b><br/>Disk space indexing agent<br/>MCP-native interface"]
+
+    SQLite[("SQLite<br/>Database")]
+    FS[("Local<br/>Filesystem")]
+    Cache[("Artifact<br/>Cache")]
+
+    HU -->|"MCP JSON-RPC"| MSB
+    LLM -->|"MCP JSON-RPC"| MSB
+    BC -->|"MCP JSON-RPC"| MSB
+    AUTO -->|"MCP JSON-RPC"| MSB
+
+    MSB -->|"Read/Write"| SQLite
+    MSB -->|"Crawl & Watch"| FS
+    MSB -->|"Store Artifacts"| Cache
+
+    style MSB fill:#0969da,color:#fff,stroke:#0550ae
+    style HU fill:#ddf4ff,stroke:#54aeff,color:#0969da
+    style LLM fill:#ddf4ff,stroke:#54aeff,color:#0969da
+    style BC fill:#ddf4ff,stroke:#54aeff,color:#0969da
+    style AUTO fill:#ddf4ff,stroke:#54aeff,color:#0969da
+    style SQLite fill:#f6f8fa,stroke:#d0d7de,color:#1f2328
+    style FS fill:#f6f8fa,stroke:#d0d7de,color:#1f2328
+    style Cache fill:#f6f8fa,stroke:#d0d7de,color:#1f2328
+        </div>
+      </div>
+
+      <div class="diagram-container">
+        <h3>Container View (C3 Level 2)</h3>
+        <p style="color: var(--text-muted); margin-bottom: 16px;">Layered internal architecture</p>
+        <div class="mermaid">
+graph TB
+    subgraph HTTP["HTTP Server Layer"]
+        direction LR
+        GIN["Gin Router"]
+        MCP_T["MCP Transport<br/><i>POST /mcp</i>"]
+        CONTENT["Content Server<br/><i>/api/content</i>"]
+        INSPECT["Inspect API<br/><i>/api/inspect</i>"]
+        WEB["Static Web<br/><i>/web/*</i>"]
+    end
+
+    subgraph TOOLS["MCP Tools Layer &mdash; 42+ tools"]
+        direction LR
+        NAV["Navigation<br/><i>navigate, inspect<br/>resource-children<br/>resource-parent</i>"]
+        QUERY["Query<br/><i>resource-sum<br/>resource-time-range<br/>resource-metric-range<br/>resource-is<br/>resource-fuzzy-match</i>"]
+        RSET["Resource-Sets<br/><i>create, list, get<br/>modify, delete<br/>add-child, remove-child</i>"]
+        SRC["Sources<br/><i>create, start, stop<br/>list, get, delete<br/>execute, stats</i>"]
+        PLAN["Plans<br/><i>create, execute<br/>list, get, update<br/>delete</i>"]
+        CLASS["Classifier<br/><i>rerun, progress<br/>list-jobs</i>"]
+    end
+
+    subgraph DOMAIN["Domain Layer"]
+        direction LR
+        PM["Plans<br/>Manager"]
+        SM["Sources<br/>Manager"]
+        RE["Rule<br/>Engine"]
+        CL["Classifier<br/>Processor"]
+    end
+
+    subgraph SUPPORT["Support Layer"]
+        direction LR
+        CRAWL["Crawler<br/><i>DFS traversal</i>"]
+        WQ["Write Queue<br/><i>Batch inserts</i>"]
+        PROG["Progress<br/>Tracker"]
+        PATHS["Path<br/>Utils"]
+    end
+
+    subgraph DATA["Data Access Layer"]
+        direction LR
+        DB["Database<br/><i>CRUD for all tables</i>"]
+    end
+
+    subgraph STORAGE["Storage"]
+        direction LR
+        SQLITE[("SQLite")]
+        ACACHE[("Artifact Cache<br/><i>SHA256 content-addressed</i>")]
+    end
+
+    HTTP --> TOOLS
+    TOOLS --> DOMAIN
+    DOMAIN --> SUPPORT
+    SUPPORT --> DATA
+    DATA --> STORAGE
+
+    style HTTP fill:#ddf4ff,stroke:#54aeff,color:#0969da
+    style TOOLS fill:#dafbe1,stroke:#4ac26b,color:#1a7f37
+    style DOMAIN fill:#fbefff,stroke:#a371f7,color:#8250df
+    style SUPPORT fill:#fff8c5,stroke:#d4a72c,color:#bc4c00
+    style DATA fill:#f6f8fa,stroke:#d0d7de,color:#1f2328
+    style STORAGE fill:#f6f8fa,stroke:#d0d7de,color:#1f2328
+        </div>
+      </div>
+
+      <div class="diagram-container">
+        <h3>Resource-Set DAG Structure</h3>
+        <p style="color: var(--text-muted); margin-bottom: 16px;">Multi-parent directed acyclic graph with content-type and temporal hierarchies</p>
+        <div class="mermaid">
+graph TD
+    ALL["all-resources"]
+    MEDIA["media"]
+    DOCS["documents"]
+    BYYEAR["by-year"]
+
+    IMAGES["images"]
+    VIDEOS["videos"]
+    AUDIO["audio"]
+
+    PHOTOS["photos"]
+    SCREENSHOTS["screenshots"]
+
+    Y2023["2023"]
+    Y2024["2024"]
+
+    VACATION["vacation-2024"]
+
+    ALL --> MEDIA
+    ALL --> DOCS
+    ALL --> BYYEAR
+
+    MEDIA --> IMAGES
+    MEDIA --> VIDEOS
+    MEDIA --> AUDIO
+
+    IMAGES --> PHOTOS
+    IMAGES --> SCREENSHOTS
+
+    BYYEAR --> Y2023
+    BYYEAR --> Y2024
+
+    PHOTOS --> VACATION
+    Y2024 --> VACATION
+
+    style ALL fill:#0969da,color:#fff,stroke:#0550ae
+    style MEDIA fill:#ddf4ff,stroke:#54aeff,color:#0969da
+    style DOCS fill:#ddf4ff,stroke:#54aeff,color:#0969da
+    style BYYEAR fill:#ddf4ff,stroke:#54aeff,color:#0969da
+    style VACATION fill:#fbefff,stroke:#a371f7,color:#8250df
+
+    linkStyle 9 stroke:#8250df,stroke-width:2px
+    linkStyle 10 stroke:#8250df,stroke-width:2px
+        </div>
+        <p style="color: var(--text-muted); font-size: 13px; margin-top: 12px;">
+          <strong>vacation-2024</strong> has two parents: <strong>photos</strong> (content hierarchy) and <strong>2024</strong> (temporal hierarchy). This multi-parent capability is the key advantage of the DAG structure over simple trees.
+        </p>
+      </div>
+    </div>
+
+    <!-- ==================== DATA MODEL ==================== -->
+    <div class="section" id="data-model">
+
+      <div class="diagram-container">
+        <h3>Entity-Relationship Diagram</h3>
+        <p style="color: var(--text-muted); margin-bottom: 16px;">Core tables and their relationships (18 tables total)</p>
+        <div class="mermaid">
+erDiagram
+    entries {
+        int id PK
+        text path UK
+        text parent FK
+        int size
+        text kind
+        int ctime
+        int mtime
+        int last_scanned
+        int dirty
+    }
+
+    resource_sets {
+        int id PK
+        text name UK
+        text description
+        int created_at
+        int updated_at
+    }
+
+    resource_set_entries {
+        int set_id FK
+        text entry_path FK
+        int added_at
+    }
+
+    resource_set_edges {
+        int parent_id FK
+        int child_id FK
+        int added_at
+    }
+
+    metadata {
+        int id PK
+        text source_path FK
+        text metadata_type
+        int frame_index
+        text hash UK
+        text artifact_path
+        int created_at
+    }
+
+    sources {
+        int id PK
+        text name UK
+        text type
+        text target_set_name FK
+        text update_mode
+        text config_json
+        text status
+        int enabled
+    }
+
+    plans {
+        int id PK
+        text name UK
+        text mode
+        text status
+        text sources_json
+        text conditions_json
+        text outcomes_json
+    }
+
+    plan_executions {
+        int id PK
+        int plan_id FK
+        text plan_name
+        int entries_processed
+        int entries_matched
+        int outcomes_applied
+        text status
+    }
+
+    rules {
+        int id PK
+        text name UK
+        text condition_json
+        text outcome_json
+        int priority
+        int enabled
+    }
+
+    entries ||--o{ entries : "parent references path"
+    resource_sets ||--o{ resource_set_entries : "contains"
+    entries ||--o{ resource_set_entries : "belongs to"
+    resource_sets ||--o{ resource_set_edges : "parent_id"
+    resource_sets ||--o{ resource_set_edges : "child_id"
+    entries ||--o{ metadata : "source_path"
+    sources ||--|| resource_sets : "target_set_name"
+    plans ||--o{ plan_executions : "plan_id"
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Schema Details</h3>
+        <p>Core database tables organized by domain:</p>
+
+        <h3>Core Data</h3>
+<pre><code>-- Filesystem entries (files and directories)
+CREATE TABLE entries (
+  id INTEGER PRIMARY KEY,
+  path TEXT UNIQUE NOT NULL,     -- absolute filesystem path
+  parent TEXT,                    -- parent directory path
+  size INTEGER,                  -- bytes (aggregated for dirs)
+  kind TEXT CHECK(kind IN ('file', 'directory')),
+  ctime INTEGER,                 -- creation time (unix)
+  mtime INTEGER,                 -- modification time (unix)
+  last_scanned INTEGER,          -- when last indexed
+  dirty INTEGER DEFAULT 0        -- needs recomputation
+);
+
+-- Content-addressed metadata artifacts
+CREATE TABLE metadata (
+  id INTEGER PRIMARY KEY,
+  source_path TEXT NOT NULL,
+  metadata_type TEXT NOT NULL,   -- thumbnail, poster, timeline
+  frame_index INTEGER DEFAULT 0,
+  hash TEXT UNIQUE NOT NULL,     -- SHA256 content hash
+  artifact_path TEXT NOT NULL,
+  created_at INTEGER
+);</code></pre>
+
+        <h3>Resource-Set DAG</h3>
+<pre><code>-- Named collections
+CREATE TABLE resource_sets (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  description TEXT,
+  created_at INTEGER,
+  updated_at INTEGER
+);
+
+-- Set membership (entries to sets)
+CREATE TABLE resource_set_entries (
+  set_id INTEGER NOT NULL,
+  entry_path TEXT NOT NULL,
+  added_at INTEGER,
+  PRIMARY KEY (set_id, entry_path)
+);
+
+-- DAG edges (supports multiple parents)
+CREATE TABLE resource_set_edges (
+  parent_id INTEGER NOT NULL,
+  child_id INTEGER NOT NULL,
+  added_at INTEGER,
+  PRIMARY KEY (parent_id, child_id),
+  CHECK (parent_id != child_id)
+);</code></pre>
+
+        <h3>Plans, Sources, Rules</h3>
+<pre><code>-- Sources feed data into resource-sets
+CREATE TABLE sources (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  type TEXT CHECK(type IN
+    ('filesystem.index','filesystem.watch','query','resource-set')),
+  target_set_name TEXT NOT NULL,
+  update_mode TEXT CHECK(update_mode IN ('replace','append','merge')),
+  config_json TEXT,
+  status TEXT, enabled INTEGER DEFAULT 1,
+  created_at INTEGER, updated_at INTEGER
+);
+
+-- Plans orchestrate sources and outcomes
+CREATE TABLE plans (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  mode TEXT CHECK(mode IN ('oneshot', 'continuous')),
+  status TEXT CHECK(status IN ('active', 'paused', 'disabled')),
+  sources_json TEXT NOT NULL,
+  conditions_json TEXT,
+  outcomes_json TEXT NOT NULL,
+  created_at INTEGER, updated_at INTEGER, last_run_at INTEGER
+);
+
+-- Rules: condition-outcome automation
+CREATE TABLE rules (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  enabled INTEGER DEFAULT 1,
+  priority INTEGER DEFAULT 0,
+  condition_json TEXT NOT NULL,
+  outcome_json TEXT NOT NULL,
+  created_at INTEGER, updated_at INTEGER
+);</code></pre>
+
+        <h3>Metadata Hash Computation</h3>
+        <p>Artifacts are deduplicated using content-addressed storage:</p>
+<pre><code>SHA256(source_path + "|" + mtime + "|" + metadata_type + "|" + frame_index)
+
+Cache layout:
+  ./cache/ab/cd/abcd1234.../
+      thumb.jpg
+      poster.jpg
+      timeline_00.jpg
+      timeline_04.jpg</code></pre>
+      </div>
+    </div>
+
+    <!-- ==================== DATA FLOWS ==================== -->
+    <div class="section" id="data-flows">
+
+      <div class="diagram-container">
+        <h3>Data Flow: Indexing via Plans</h3>
+        <p style="color: var(--text-muted); margin-bottom: 16px;">The 10-step flow from plan execution to indexed data</p>
+        <div class="mermaid">
+sequenceDiagram
+    participant Client as MCP Client
+    participant Plan as Plans Manager
+    participant Exec as Plan Executor
+    participant Src as Sources Manager
+    participant Crawl as Crawler (DFS)
+    participant WQ as Write Queue
+    participant DB as SQLite Database
+    participant Rules as Rule Engine
+    participant Class as Classifier
+
+    Client->>Plan: plan-execute("index-photos")
+    Plan->>Exec: Load plan definition
+    Exec->>Exec: Create execution record
+    Exec->>Src: Resolve sources
+    Src->>Crawl: Start filesystem.index
+    Crawl->>Crawl: Stack-based DFS traversal
+    Crawl->>WQ: Batch file entries
+    WQ->>DB: INSERT/UPDATE entries
+    Exec->>DB: ComputeAggregates (bottom-up)
+    Exec->>Rules: Evaluate conditions
+    Rules->>Class: Apply outcomes (thumbnails)
+    Class->>DB: Store metadata + artifacts
+    Exec-->>Client: Execution complete
+        </div>
+      </div>
+
+      <div class="diagram-container">
+        <h3>Data Flow: Resource Query (Recursive CTE)</h3>
+        <p style="color: var(--text-muted); margin-bottom: 16px;">How resource-sum traverses the DAG to aggregate metrics</p>
+        <div class="mermaid">
+sequenceDiagram
+    participant Client as MCP Client
+    participant Tool as resource-sum Tool
+    participant QB as Query Builder
+    participant SQL as SQL Generator
+    participant DB as SQLite Database
+
+    Client->>Tool: resource-sum("all-media", "size")
+    Tool->>QB: Build ResourceQuery
+    QB->>SQL: Generate recursive CTE
+    Note over SQL: WITH RECURSIVE descendants AS (<br/>  SELECT id FROM resource_sets<br/>  WHERE name = 'all-media'<br/>  UNION ALL<br/>  SELECT e.child_id<br/>  FROM resource_set_edges e<br/>  JOIN descendants d<br/>  ON e.parent_id = d.id<br/>)
+    SQL->>DB: Execute query
+    DB-->>SQL: SUM(size) across all descendants
+    SQL-->>Tool: Aggregated result
+    Tool-->>Client: Total size of all-media tree
+        </div>
+      </div>
+
+      <div class="diagram-container">
+        <h3>Data Flow: Live Filesystem Monitoring</h3>
+        <p style="color: var(--text-muted); margin-bottom: 16px;">Real-time file change detection and automatic processing</p>
+        <div class="mermaid">
+sequenceDiagram
+    participant FS as Filesystem
+    participant Watch as fsnotify Watcher
+    participant Src as Source Manager
+    participant DB as SQLite Database
+    participant Rules as Rule Engine
+    participant RS as Resource Set
+
+    FS->>Watch: File created/modified/deleted
+    Watch->>Src: Debounced event (500ms)
+    alt File Created or Modified
+        Src->>DB: INSERT/UPDATE entry
+        Src->>RS: Add to target resource-set
+        Src->>Rules: Evaluate rules
+        Rules->>RS: Apply outcomes (classify, move)
+    else File Deleted
+        Src->>DB: DELETE entry
+        Src->>RS: Remove from resource-set
+    end
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Space Usage Tree Calculation</h3>
+        <p>The system builds an accurate space usage tree suitable for treemap or radial visualizations using a two-phase algorithm:</p>
+
+        <h3>Phase 1: Filesystem Crawl (DFS)</h3>
+        <ul>
+          <li>Stack-based depth-first traversal of the filesystem</li>
+          <li>Files get their actual size from filesystem metadata</li>
+          <li>Directories are initially inserted with <code>size=0</code></li>
+          <li>Each entry records its parent path for hierarchy navigation</li>
+        </ul>
+
+        <h3>Phase 2: Bottom-Up Aggregation</h3>
+<pre><code>-- Query all directories, deepest first (by path length)
+SELECT path FROM entries
+WHERE kind = 'directory' AND path LIKE root || '%'
+ORDER BY LENGTH(path) DESC;
+
+-- For each directory (deepest to shallowest):
+UPDATE entries SET size = (
+  SELECT COALESCE(SUM(size), 0) FROM entries WHERE parent = ?
+) WHERE path = ?;</code></pre>
+
+        <p><strong>Key invariant:</strong> A directory's size always equals the sum of its direct children's sizes. This bottom-up approach ensures child sizes are computed before their parents, handling any nesting depth.</p>
+      </div>
+    </div>
+
+    <!-- ==================== MCP TOOLS ==================== -->
+    <div class="section" id="tools">
+
+      <div class="card">
+        <h2>MCP Tools Reference <span class="badge badge-blue">42+ tools</span></h2>
+        <p>All tools are accessed via <code>POST /mcp</code> using JSON-RPC 2.0. Organized by category.</p>
+
+        <table class="tool-table">
+          <thead>
+            <tr><th>Tool</th><th>Description</th><th>Key Parameters</th></tr>
+          </thead>
+          <tbody>
+            <!-- Project Management -->
+            <tr class="category-row"><td colspan="3">Project Management <span class="badge badge-blue">6 tools</span></td></tr>
+            <tr><td><code>project-list</code></td><td>List all available projects</td><td>&mdash;</td></tr>
+            <tr><td><code>project-create</code></td><td>Create a new project with its own database</td><td><code>name</code></td></tr>
+            <tr><td><code>project-open</code></td><td>Open a project for the current session</td><td><code>name</code></td></tr>
+            <tr><td><code>project-close</code></td><td>Close the currently active project</td><td>&mdash;</td></tr>
+            <tr><td><code>project-get</code></td><td>Get details about a specific project</td><td><code>name</code></td></tr>
+            <tr><td><code>project-delete</code></td><td>Delete a project and its data</td><td><code>name</code></td></tr>
+
+            <!-- Indexing -->
+            <tr class="category-row"><td colspan="3">Indexing <span class="badge badge-green">4 tools</span></td></tr>
+            <tr><td><code>index</code></td><td>Index filesystem path (skips if recently scanned unless force=true)</td><td><code>path</code>, <code>force</code></td></tr>
+            <tr><td><code>job-progress</code></td><td>Get status and progress for an indexing job</td><td><code>job_id</code></td></tr>
+            <tr><td><code>list-jobs</code></td><td>List indexing jobs with filtering by status</td><td><code>status</code>, <code>active</code></td></tr>
+            <tr><td><code>cancel-job</code></td><td>Cancel a running or pending job</td><td><code>job_id</code></td></tr>
+
+            <!-- Navigation -->
+            <tr class="category-row"><td colspan="3">Navigation <span class="badge badge-green">3 tools</span></td></tr>
+            <tr><td><code>navigate</code></td><td>Shell-like directory navigation (ls/cd-style)</td><td><code>path</code>, <code>sort</code>, <code>limit</code></td></tr>
+            <tr><td><code>inspect</code></td><td>Detailed file/directory metadata with generated artifacts</td><td><code>path</code></td></tr>
+            <tr><td><code>file-operation</code></td><td>Rename, delete, or move files</td><td><code>operation</code>, <code>paths</code></td></tr>
+
+            <!-- Resource Navigation (DAG) -->
+            <tr class="category-row"><td colspan="3">Resource Navigation (DAG) <span class="badge badge-purple">2 tools</span></td></tr>
+            <tr><td><code>resource-children</code></td><td>Get child nodes in DAG (downstream)</td><td><code>name</code></td></tr>
+            <tr><td><code>resource-parent</code></td><td>Get parent nodes in DAG (upstream, like "..")</td><td><code>name</code></td></tr>
+
+            <!-- Resource Queries -->
+            <tr class="category-row"><td colspan="3">Resource Queries <span class="badge badge-purple">6 tools</span></td></tr>
+            <tr><td><code>resource-sum</code></td><td>Hierarchical aggregation of a metric across DAG</td><td><code>name</code>, <code>metric</code></td></tr>
+            <tr><td><code>resource-time-range</code></td><td>Filter entries by time field range</td><td><code>name</code>, <code>field</code>, <code>min</code>, <code>max</code></td></tr>
+            <tr><td><code>resource-metric-range</code></td><td>Filter entries by numeric metric range</td><td><code>name</code>, <code>metric</code>, <code>min</code>, <code>max</code></td></tr>
+            <tr><td><code>resource-is</code></td><td>Exact match on a field value</td><td><code>name</code>, <code>field</code>, <code>value</code></td></tr>
+            <tr><td><code>resource-fuzzy-match</code></td><td>Pattern matching (contains, prefix, suffix, regex, glob)</td><td><code>name</code>, <code>field</code>, <code>pattern</code>, <code>mode</code></td></tr>
+            <tr><td><code>resource-search</code></td><td>Comprehensive multi-criteria search</td><td><code>name</code>, <code>criteria</code></td></tr>
+
+            <!-- Resource-Set Management -->
+            <tr class="category-row"><td colspan="3">Resource-Set Management <span class="badge badge-purple">7 tools</span></td></tr>
+            <tr><td><code>resource-set-create</code></td><td>Create a new named resource set</td><td><code>name</code>, <code>description</code></td></tr>
+            <tr><td><code>resource-set-list</code></td><td>List all resource sets</td><td>&mdash;</td></tr>
+            <tr><td><code>resource-set-get</code></td><td>Get details and entries of a set</td><td><code>name</code></td></tr>
+            <tr><td><code>resource-set-modify</code></td><td>Add or remove entries</td><td><code>name</code>, <code>add</code>, <code>remove</code></td></tr>
+            <tr><td><code>resource-set-delete</code></td><td>Delete a resource set</td><td><code>name</code></td></tr>
+            <tr><td><code>resource-set-add-child</code></td><td>Add a DAG edge (parent &rarr; child)</td><td><code>parent</code>, <code>child</code></td></tr>
+            <tr><td><code>resource-set-remove-child</code></td><td>Remove a DAG edge</td><td><code>parent</code>, <code>child</code></td></tr>
+
+            <!-- Source Management -->
+            <tr class="category-row"><td colspan="3">Source Management <span class="badge badge-orange">8 tools</span></td></tr>
+            <tr><td><code>source-create</code></td><td>Create a new data source</td><td><code>name</code>, <code>type</code>, <code>target_set</code>, <code>config</code></td></tr>
+            <tr><td><code>source-start</code></td><td>Start a source (begin monitoring/indexing)</td><td><code>name</code></td></tr>
+            <tr><td><code>source-stop</code></td><td>Stop a running source</td><td><code>name</code></td></tr>
+            <tr><td><code>source-list</code></td><td>List all sources</td><td>&mdash;</td></tr>
+            <tr><td><code>source-get</code></td><td>Get source details and status</td><td><code>name</code></td></tr>
+            <tr><td><code>source-delete</code></td><td>Delete a source</td><td><code>name</code></td></tr>
+            <tr><td><code>source-execute</code></td><td>Execute a source immediately</td><td><code>name</code></td></tr>
+            <tr><td><code>source-stats</code></td><td>Get source execution statistics</td><td><code>name</code></td></tr>
+
+            <!-- Plan Management -->
+            <tr class="category-row"><td colspan="3">Plan Management <span class="badge badge-orange">6 tools</span></td></tr>
+            <tr><td><code>plan-create</code></td><td>Create a new plan with sources and outcomes</td><td><code>name</code>, <code>sources</code>, <code>outcomes</code></td></tr>
+            <tr><td><code>plan-execute</code></td><td>Execute a plan (triggers indexing)</td><td><code>name</code></td></tr>
+            <tr><td><code>plan-list</code></td><td>List all plans</td><td>&mdash;</td></tr>
+            <tr><td><code>plan-get</code></td><td>Get plan details and execution history</td><td><code>name</code></td></tr>
+            <tr><td><code>plan-update</code></td><td>Update plan configuration</td><td><code>name</code>, <code>...</code></td></tr>
+            <tr><td><code>plan-delete</code></td><td>Delete a plan</td><td><code>name</code></td></tr>
+
+            <!-- Query Management -->
+            <tr class="category-row"><td colspan="3">Query Management <span class="badge badge-green">6 tools</span></td></tr>
+            <tr><td><code>query-create</code></td><td>Create a saved query</td><td><code>name</code>, <code>criteria</code></td></tr>
+            <tr><td><code>query-execute</code></td><td>Execute a saved query</td><td><code>name</code></td></tr>
+            <tr><td><code>query-list</code></td><td>List all saved queries</td><td>&mdash;</td></tr>
+            <tr><td><code>query-get</code></td><td>Get query details</td><td><code>name</code></td></tr>
+            <tr><td><code>query-update</code></td><td>Update a query definition</td><td><code>name</code>, <code>...</code></td></tr>
+            <tr><td><code>query-delete</code></td><td>Delete a saved query</td><td><code>name</code></td></tr>
+
+            <!-- Classifier -->
+            <tr class="category-row"><td colspan="3">Classifier <span class="badge badge-green">3 tools</span></td></tr>
+            <tr><td><code>rerun-classifier</code></td><td>Re-run classification on entries</td><td><code>path</code></td></tr>
+            <tr><td><code>classifier-job-progress</code></td><td>Get classifier job progress</td><td><code>job_id</code></td></tr>
+            <tr><td><code>list-classifier-jobs</code></td><td>List classifier jobs</td><td><code>status</code></td></tr>
+
+            <!-- Database -->
+            <tr class="category-row"><td colspan="3">Database <span class="badge badge-blue">1 tool</span></td></tr>
+            <tr><td><code>db-diagnose</code></td><td>Database integrity checks and statistics</td><td>&mdash;</td></tr>
+
+            <!-- Session -->
+            <tr class="category-row"><td colspan="3">Session <span class="badge badge-blue">2 tools</span></td></tr>
+            <tr><td><code>session-info</code></td><td>Get current session info (project, version, uptime)</td><td>&mdash;</td></tr>
+            <tr><td><code>session-set-preferences</code></td><td>Update user session preferences</td><td><code>preferences</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ==================== RESOURCES ==================== -->
+    <div class="section" id="resources">
+
+      <div class="card">
+        <h2>MCP Resource Templates</h2>
+        <p>Resources are accessible via declarative URIs using the <code>synthesis://</code> scheme. These complement the imperative tool interface.</p>
+
+        <h3>Resource-Set Resources</h3>
+        <ul class="uri-list">
+          <li>synthesis://resource-set/{name} <span class="uri-desc">Get resource-set metadata</span></li>
+          <li>synthesis://resource-set/{name}/entries <span class="uri-desc">List all entries in the set</span></li>
+          <li>synthesis://resource-set/{name}/children <span class="uri-desc">List child resource-sets (DAG downstream)</span></li>
+          <li>synthesis://resource-set/{name}/parents <span class="uri-desc">List parent resource-sets (DAG upstream)</span></li>
+          <li>synthesis://resource-set/{name}/stats <span class="uri-desc">Get set statistics (count, total size)</span></li>
+          <li>synthesis://resource-set/{name}/metrics/{metric} <span class="uri-desc">Aggregate a specific metric</span></li>
+        </ul>
+
+        <h3>Node &amp; Job Resources</h3>
+        <ul class="uri-list">
+          <li>synthesis://nodes/{path} <span class="uri-desc">Get entry metadata by filesystem path</span></li>
+          <li>synthesis://jobs/{id} <span class="uri-desc">Get job status and progress</span></li>
+        </ul>
+
+        <h3>Plan Resources</h3>
+        <ul class="uri-list">
+          <li>synthesis://plans/{name} <span class="uri-desc">Get plan definition</span></li>
+          <li>synthesis://plans/{name}/executions <span class="uri-desc">List plan execution history</span></li>
+        </ul>
+
+        <h3>Metadata Resources</h3>
+        <ul class="uri-list">
+          <li>synthesis://metadata/{hash} <span class="uri-desc">Get content-addressed artifact by SHA256 hash</span></li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Dual Access Pattern</h3>
+        <p>The same data is available through both imperative (tools) and declarative (resources) interfaces:</p>
+<pre><code>// Imperative: MCP Tool call
+{"tool": "resource-set-get", "params": {"name": "photos"}}
+
+// Declarative: MCP Resource URI
+{"resource": "synthesis://resource-set/photos"}
+
+// Both return the same resource-set data.</code></pre>
+        <p>Tools are best for actions and mutations. Resources are best for read-only data access and subscriptions.</p>
+      </div>
+    </div>
+
+    <!-- ==================== DOCS INDEX ==================== -->
+    <div class="section" id="docs">
+
+      <div class="card">
+        <h2>Documentation Index</h2>
+        <p>All documentation files in the <code>docs/</code> directory, organized by category.</p>
+      </div>
+
+      <h3 style="margin: 24px 0 12px 0; font-size: 14px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Architecture &amp; Design</h3>
+      <div class="doc-grid">
+        <a class="doc-card" href="/web/docs-viewer.html?file=ARCHITECTURE_C3.md" target="_blank">
+          <h4>ARCHITECTURE_C3.md</h4>
+          <p>C3 Context and Container views of the system. System-level architecture with actors, layers, and data flows.</p>
+        </a>
+        <a class="doc-card" href="/web/docs-viewer.html?file=ENTITY_RELATIONSHIP.md" target="_blank">
+          <h4>ENTITY_RELATIONSHIP.md</h4>
+          <p>Entity-Relationship diagram of the data model. All 18 tables, relationships, and index strategies.</p>
+        </a>
+        <a class="doc-card" href="/web/docs-viewer.html?file=MODULE_ARCHITECTURE.md" target="_blank">
+          <h4>MODULE_ARCHITECTURE.md</h4>
+          <p>Module dependency graph, data models, crawler algorithm details, and performance characteristics.</p>
+        </a>
+        <a class="doc-card" href="/web/docs-viewer.html?file=RESOURCE_SET_ARCHITECTURE.md" target="_blank">
+          <h4>RESOURCE_SET_ARCHITECTURE.md</h4>
+          <p>DAG-based resource-set architecture, unified search engine, recursive CTE queries, and layering patterns.</p>
+        </a>
+      </div>
+
+      <h3 style="margin: 24px 0 12px 0; font-size: 14px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Plans &amp; Orchestration</h3>
+      <div class="doc-grid">
+        <a class="doc-card" href="/web/docs-viewer.html?file=PLANS_ARCHITECTURE.md" target="_blank">
+          <h4>PLANS_ARCHITECTURE.md</h4>
+          <p>Plans system architecture. Separation of concerns between plans (logic) and resource-sets (storage).</p>
+        </a>
+        <a class="doc-card" href="/web/docs-viewer.html?file=PLANS_IMPLEMENTATION_GUIDE.md" target="_blank">
+          <h4>PLANS_IMPLEMENTATION_GUIDE.md</h4>
+          <p>Step-by-step implementation guide for the plans system with code examples.</p>
+        </a>
+        <a class="doc-card" href="/web/docs-viewer.html?file=PLANS_MIGRATION_GUIDE.md" target="_blank">
+          <h4>PLANS_MIGRATION_GUIDE.md</h4>
+          <p>Migration guide for transitioning to the plans-based indexing model.</p>
+        </a>
+      </div>
+
+      <h3 style="margin: 24px 0 12px 0; font-size: 14px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">API &amp; Reference</h3>
+      <div class="doc-grid">
+        <a class="doc-card" href="/web/docs-viewer.html?file=MCP_REFERENCE.md" target="_blank">
+          <h4>MCP_REFERENCE.md</h4>
+          <p>Complete MCP tool and resource template reference. All 42+ tools with parameters and examples.</p>
+        </a>
+        <a class="doc-card" href="/web/docs-viewer.html?file=mcp_low_context_domain_model.md" target="_blank">
+          <h4>mcp_low_context_domain_model.md</h4>
+          <p>Low-context domain model for MCP integration. Simplified view for AI model consumption.</p>
+        </a>
+        <a class="doc-card" href="/web/docs-viewer.html?file=inspect_enrichment_design.md" target="_blank">
+          <h4>inspect_enrichment_design.md</h4>
+          <p>Design document for file inspection enrichment with metadata and thumbnail support.</p>
+        </a>
+      </div>
+
+      <h3 style="margin: 24px 0 12px 0; font-size: 14px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Implementation &amp; Migration</h3>
+      <div class="doc-grid">
+        <a class="doc-card" href="/web/docs-viewer.html?file=RESOURCE_SET_IMPLEMENTATION_PLAN.md" target="_blank">
+          <h4>RESOURCE_SET_IMPLEMENTATION_PLAN.md</h4>
+          <p>Detailed implementation roadmap for resource-sets with tasks and milestones.</p>
+        </a>
+        <a class="doc-card" href="/web/docs-viewer.html?file=REPLATFORM_ANALYSIS.md" target="_blank">
+          <h4>REPLATFORM_ANALYSIS.md</h4>
+          <p>Analysis of the TypeScript to Go replatform decision with trade-off evaluation.</p>
+        </a>
+        <a class="doc-card" href="/web/docs-viewer.html?file=REPLATFORM_INDEX.md" target="_blank">
+          <h4>REPLATFORM_INDEX.md</h4>
+          <p>Index and tracking document for the replatform effort.</p>
+        </a>
+        <a class="doc-card" href="/web/docs-viewer.html?file=REPLATFORM_SUMMARY.md" target="_blank">
+          <h4>REPLATFORM_SUMMARY.md</h4>
+          <p>Executive summary of the completed replatform from TypeScript to Go.</p>
+        </a>
+      </div>
+
+      <h3 style="margin: 24px 0 12px 0; font-size: 14px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Testing &amp; Quality</h3>
+      <div class="doc-grid">
+        <a class="doc-card" href="/web/docs-viewer.html?file=TEST_COVERAGE.md" target="_blank">
+          <h4>TEST_COVERAGE.md</h4>
+          <p>Test coverage report and tracking. Minimum 80% coverage required for all packages.</p>
+        </a>
+      </div>
+    </div>
+
+    <!-- ==================== TECH STACK ==================== -->
+    <div class="section" id="tech">
+
+      <div class="card">
+        <h2>Technology Stack</h2>
+        <p>Single static binary deployment with no runtime dependencies.</p>
+      </div>
+
+      <div class="tech-grid">
+        <div class="tech-item">
+          <strong>Go 1.21+</strong>
+          <span>Core language. Fast compilation, static binaries, excellent concurrency.</span>
+        </div>
+        <div class="tech-item">
+          <strong>SQLite (go-sqlite3)</strong>
+          <span>Embedded database via mattn/go-sqlite3. Zero-config, file-based storage.</span>
+        </div>
+        <div class="tech-item">
+          <strong>mcp-go v0.43.0</strong>
+          <span>MCP server framework by mark3labs. Streamable HTTP transport.</span>
+        </div>
+        <div class="tech-item">
+          <strong>Gin</strong>
+          <span>HTTP server framework. Handles routing, CORS, middleware.</span>
+        </div>
+        <div class="tech-item">
+          <strong>fsnotify</strong>
+          <span>Cross-platform filesystem monitoring for live sources.</span>
+        </div>
+        <div class="tech-item">
+          <strong>Cobra</strong>
+          <span>CLI framework by spf13. Subcommands, flags, help generation.</span>
+        </div>
+        <div class="tech-item">
+          <strong>Logrus</strong>
+          <span>Structured logging with colors. Per-module child loggers.</span>
+        </div>
+        <div class="tech-item">
+          <strong>Testify</strong>
+          <span>Testing utilities. Assertions, mocks, test suites.</span>
+        </div>
+        <div class="tech-item">
+          <strong>Mermaid.js</strong>
+          <span>Diagram rendering (this page). Flowcharts, ER diagrams, sequence diagrams.</span>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 20px;">
+        <h3>Project Structure</h3>
+<pre><code>.
+├── cmd/
+│   └── mcp-space-browser/     # CLI entry point + server command
+├── pkg/
+│   ├── logger/                 # Structured logging (logrus)
+│   ├── database/               # SQLite abstraction (18 tables)
+│   ├── crawler/                # Filesystem DFS traversal
+│   ├── sources/                # Source abstraction + live monitoring
+│   ├── rules/                  # Rule execution engine
+│   ├── classifier/             # Media classification + thumbnails
+│   ├── server/                 # MCP server + HTTP transport
+│   ├── auth/                   # OAuth/OIDC authentication
+│   └── home/                   # Home directory + project management
+├── internal/
+│   └── models/                 # Shared data structures
+├── web/                        # Static web components
+│   ├── index.html              # Web components demo
+│   ├── dev.html                # Developer portal (this page)
+│   └── *.js                    # MCP web components
+└── docs/                       # Architecture & reference docs (15+ files)
+</code></pre>
+      </div>
+
+      <div class="card">
+        <h3>Development Commands</h3>
+<pre><code># Build
+go build -o mcp-space-browser ./cmd/mcp-space-browser
+
+# Run server
+go run ./cmd/mcp-space-browser server --port=3000
+
+# Run tests (minimum 80% coverage required)
+go test ./...
+go test -v -cover ./...
+
+# Run specific package tests
+go test ./pkg/crawler/...
+go test ./pkg/database/...
+
+# Debug logging
+LOG_LEVEL=debug ./mcp-space-browser server --port=3000
+</code></pre>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="footer">
+    <p>
+      <a href="https://github.com/prismon/mcp-space-browser" target="_blank">mcp-space-browser</a> &mdash;
+      Disk space indexing agent with MCP-native interface<br>
+      42+ MCP Tools &middot; 18 Database Tables &middot; 15+ Documentation Files
+    </p>
+    <p><a href="/web/index.html">Web Components Demo</a></p>
+  </div>
+
+  <!-- Mermaid.js -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'default',
+      flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' },
+      sequence: { useMaxWidth: true, showSequenceNumbers: false },
+      er: { useMaxWidth: true }
+    });
+  </script>
+
+  <!-- Tab navigation -->
+  <script>
+    const navLinks = document.querySelectorAll('.nav-link');
+    const sections = document.querySelectorAll('.section');
+
+    navLinks.forEach(link => {
+      link.addEventListener('click', () => {
+        const targetId = link.dataset.section;
+
+        navLinks.forEach(l => l.classList.remove('active'));
+        link.classList.add('active');
+
+        sections.forEach(s => {
+          s.classList.remove('active');
+          if (s.id === targetId) {
+            s.classList.add('active');
+          }
+        });
+
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    });
+
+    // Handle hash-based navigation
+    function navigateToHash() {
+      const hash = window.location.hash.replace('#', '');
+      if (hash) {
+        const link = document.querySelector(`.nav-link[data-section="${hash}"]`);
+        if (link) link.click();
+      }
+    }
+
+    window.addEventListener('hashchange', navigateToHash);
+    navigateToHash();
+  </script>
+
+</body>
+</html>

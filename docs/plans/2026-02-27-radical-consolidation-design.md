@@ -51,7 +51,8 @@ Unified search, filter, and aggregation. Replaces all `resource-*` tools and que
     "aggregate": "size",
     "group_by": "mime",
     "order_by": "-size",
-    "limit": 100
+    "limit": 100,
+    "cursor": "base64-encoded-next-page-token"
   }
 }
 ```
@@ -64,6 +65,7 @@ Parameters:
 - `group_by` (string): Group aggregation results by this field.
 - `order_by` (string): Sort field. Prefix `-` for descending.
 - `limit` (int): Max results. Default 100.
+- `cursor` (string): Opaque token for pagination. Responses over limit will return a `next_cursor`.
 
 ### `manage`
 
@@ -84,6 +86,8 @@ CRUD for organizational entities.
 Parameters:
 - `entity` (string, required): `resource-set`, `plan`, `source`, `project`, `job`.
 - `action` (string, required): `create`, `get`, `list`, `update`, `delete`.
+- `limit` (int): Pagination limit for list actions. Default 100.
+- `cursor` (string): Pagination cursor for list actions.
 - Remaining parameters are entity-specific.
 
 Entity-specific parameters:

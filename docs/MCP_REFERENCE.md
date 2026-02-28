@@ -52,12 +52,12 @@ Search, filter, and aggregate across entries and attributes.
 
 ### manage
 
-CRUD for organizational entities: resource-sets, plans, and jobs.
+CRUD for organizational entities: resource-sets, plans, jobs, and projects.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| entity | string | yes | Entity type: resource-set, plan, job |
-| action | string | yes | Action: create, get, list, update, delete |
+| entity | string | yes | Entity type: resource-set, plan, job, project |
+| action | string | yes | Action: create, get, list, update, delete, open (project only) |
 | name | string | no | Entity name |
 | description | string | no | Entity description |
 | parent | string | no | Parent resource-set name (DAG edges) |
@@ -78,6 +78,14 @@ CRUD for organizational entities: resource-sets, plans, and jobs.
 
 ```json
 {"tool": "manage", "params": {"entity": "plan", "action": "list", "limit": 10}}
+```
+
+```json
+{"tool": "manage", "params": {"entity": "project", "action": "list"}}
+```
+
+```json
+{"tool": "manage", "params": {"entity": "project", "action": "open", "name": "my-project"}}
 ```
 
 ### batch

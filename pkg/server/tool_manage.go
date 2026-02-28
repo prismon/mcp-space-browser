@@ -15,13 +15,13 @@ var manageToolDef = mcp.NewTool("manage",
 	mcp.WithDescription("CRUD operations for organizational entities: resource-sets, plans, sources, and jobs."),
 	mcp.WithString("entity",
 		mcp.Required(),
-		mcp.Description("Entity type: resource-set, plan, job"),
-		mcp.Enum("resource-set", "plan", "job"),
+		mcp.Description("Entity type: resource-set, plan, job, project"),
+		mcp.Enum("resource-set", "plan", "job", "project"),
 	),
 	mcp.WithString("action",
 		mcp.Required(),
-		mcp.Description("Action: create, get, list, update, delete"),
-		mcp.Enum("create", "get", "list", "update", "delete"),
+		mcp.Description("Action: create, get, list, update, delete, open (project only)"),
+		mcp.Enum("create", "get", "list", "update", "delete", "open"),
 	),
 	mcp.WithString("name",
 		mcp.Description("Entity name (for create, get, update, delete)"),
@@ -60,6 +60,14 @@ func registerManageTool(s *server.MCPServer, db *database.DiskDB) {
 
 func registerManageToolMP(s *server.MCPServer, sc *ServerContext) {
 	s.AddTool(manageToolDef, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// Project entity doesn't require an active project DB
+		var args struct {
+			Entity string `json:"entity"`
+		}
+		if err := unmarshalArgs(request.Params.Arguments, &args); err == nil && args.Entity == "project" {
+			return handleManageProject(ctx, request, sc)
+		}
+
 		db, errResult := requireProjectDB(ctx, sc)
 		if errResult != nil {
 			return errResult, nil
@@ -364,6 +372,96 @@ func jsonResult(data interface{}) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultError(fmt.Sprintf("JSON marshal error: %v", err)), nil
 	}
 	return mcp.NewToolResultText(string(payload)), nil
+}
+
+func handleManageProject(ctx context.Context, request mcp.CallToolRequest, sc *ServerContext) (*mcp.CallToolResult, error) {
+	var args struct {
+		Action      string  `json:"action"`
+		Name        string  `json:"name,omitempty"`
+		Description *string `json:"description,omitempty"`
+	}
+
+	if err := unmarshalArgs(request.Params.Arguments, &args); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Invalid arguments: %v", err)), nil
+	}
+
+	switch args.Action {
+	case "create":
+		if args.Name == "" {
+			return mcp.NewToolResultError("name is required for create"), nil
+		}
+		desc := ""
+		if args.Description != nil {
+			desc = *args.Description
+		}
+		proj, err := sc.ProjectManager.CreateProject(args.Name, desc)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to create project: %v", err)), nil
+		}
+		return jsonResult(map[string]interface{}{
+			"name":        proj.Name,
+			"description": proj.Description,
+			"status":      "created",
+		})
+
+	case "list":
+		projects, err := sc.ProjectManager.ListProjects()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to list projects: %v", err)), nil
+		}
+		items := make([]map[string]interface{}, len(projects))
+		for i, p := range projects {
+			items[i] = map[string]interface{}{
+				"name":        p.Name,
+				"description": p.Description,
+			}
+		}
+		return jsonResult(map[string]interface{}{
+			"items": items,
+			"total": len(items),
+		})
+
+	case "get":
+		if args.Name == "" {
+			return mcp.NewToolResultError("name is required for get"), nil
+		}
+		proj, err := sc.ProjectManager.GetProject(args.Name)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Project not found: %v", err)), nil
+		}
+		return jsonResult(map[string]interface{}{
+			"name":        proj.Name,
+			"description": proj.Description,
+			"path":        proj.Path,
+		})
+
+	case "delete":
+		if args.Name == "" {
+			return mcp.NewToolResultError("name is required for delete"), nil
+		}
+		if err := sc.ProjectManager.DeleteProject(args.Name); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to delete project: %v", err)), nil
+		}
+		return jsonResult(map[string]interface{}{
+			"name":   args.Name,
+			"status": "deleted",
+		})
+
+	case "open":
+		if args.Name == "" {
+			return mcp.NewToolResultError("name is required for open"), nil
+		}
+		if err := sc.SetActiveProject(ctx, args.Name); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to open project: %v", err)), nil
+		}
+		return jsonResult(map[string]interface{}{
+			"name":   args.Name,
+			"status": "opened",
+		})
+
+	default:
+		return mcp.NewToolResultError(fmt.Sprintf("Unknown action %q for project (supported: create, list, get, delete, open)", args.Action)), nil
+	}
 }
 
 func decodeCursorOffset(cursor string) int {

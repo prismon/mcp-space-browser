@@ -1149,10 +1149,10 @@ Expected: FAIL — `registerQueryTool` undefined
 Create `pkg/server/tool_query.go`. This is the most complex tool — it builds SQL dynamically from the `where` clause.
 
 The implementer should:
-1. Register `query` tool with parameters: `from`, `where`, `select`, `aggregate`, `field`, `group_by`, `order_by`, `limit`
+1. Register `query` tool with parameters: `from`, `where`, `select`, `aggregate`, `field`, `group_by`, `order_by`, `limit`, `cursor`
 2. Parse `where` object into SQL WHERE clauses. Support operators: exact match (string value), `>`, `<`, `>=`, `<=`, `like`, `after`/`before` (parse dates to unix timestamps)
 3. For `aggregate` mode: run `SELECT {aggregate}({field}) FROM entries WHERE ...` and return `{"value": N}`
-4. For normal mode: run `SELECT * FROM entries WHERE ... ORDER BY ... LIMIT ...` and return `{"entries": [...]}`
+4. For normal mode: run `SELECT * FROM entries WHERE ... ORDER BY ... LIMIT ...` and return `{"entries": [...], "next_cursor": "..."}` to support robust LLM pagination.
 5. Support `from` parameter to filter by resource set membership (JOIN with `resource_set_entries`)
 6. Support attribute-based filters by JOINing with `attributes` table when filter keys aren't base entry columns
 
@@ -1188,7 +1188,7 @@ Create `pkg/server/tool_manage_test.go` with tests for resource-set CRUD, plan C
 
 Key test cases:
 - `TestManageTool_ResourceSetCreate` — create a set, verify it exists
-- `TestManageTool_ResourceSetList` — create 2 sets, list returns both
+- `TestManageTool_ResourceSetList` — create 2 sets, list returns both, test pagination with limit=1
 - `TestManageTool_ResourceSetDelete` — create then delete, verify gone
 - `TestManageTool_PlanCreate` — create a plan with sources
 - `TestManageTool_PlanList` — list plans
@@ -1217,6 +1217,7 @@ entity=job, action=get             → db.GetIndexJobStatus(id)
 ```
 
 Follow the `registerManageTool(s, db)` / `registerManageToolMP(s, sc)` / `handleManage(...)` pattern.
+Ensure that all `list` actions accept `limit` and `cursor` parameters and return a `next_cursor` in the response for LLM steerability.
 
 **Step 3: Run tests, verify pass**
 

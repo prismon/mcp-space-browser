@@ -138,6 +138,16 @@ func Start(config *auth.Config) error {
 	}
 	defer sc.Close()
 
+	// Auto-create default project if none exist
+	projects, _ := sc.ProjectManager.ListProjects()
+	if len(projects) == 0 {
+		if _, err := sc.ProjectManager.CreateProject("default", "Default workspace"); err != nil {
+			log.WithError(err).Warn("Failed to auto-create default project")
+		} else {
+			log.Info("Auto-created default project")
+		}
+	}
+
 	router := gin.Default()
 
 	// Add CORS middleware first to handle preflight requests before any other processing
@@ -297,6 +307,11 @@ func Start(config *auth.Config) error {
 	// Serve web component microfrontend (public, no auth required)
 	router.Static("/web", "./web")
 
+	// Redirect /dev to the developer portal
+	router.GET("/dev", func(c *gin.Context) {
+		c.Redirect(http.StatusMovedPermanently, "/web/dev.html")
+	})
+
 	// Register API endpoints for content serving and file inspection
 	// These endpoints require an active project, resolved from session
 	router.GET("/api/content", func(c *gin.Context) {
@@ -423,6 +438,14 @@ func wrapWithSessionContext(handler http.Handler, sc *ServerContext) http.Handle
 
 		// Ensure session exists in session manager
 		sc.SessionManager.GetOrCreate(sessionID)
+
+		// Auto-select first available project if session has no active project
+		if _, err := sc.SessionManager.GetActiveProject(sessionID); err != nil {
+			projects, _ := sc.ProjectManager.ListProjects()
+			if len(projects) > 0 {
+				_ = sc.SessionManager.SetActiveProject(sessionID, projects[0].Name)
+			}
+		}
 
 		// Set session ID in response header
 		w.Header().Set("Mcp-Session-Id", sessionID)
