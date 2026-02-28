@@ -89,6 +89,12 @@ func NewDiskDB(path string) (*DiskDB, error) {
 		return nil, fmt.Errorf("failed to initialize classifier job tables: %w", err)
 	}
 
+	if err := diskDB.initAttributesTable(); err != nil {
+		writeQueue.Stop()
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize attributes table: %w", err)
+	}
+
 	if err := diskDB.prepareStatements(); err != nil {
 		writeQueue.Stop()
 		db.Close()
