@@ -60,8 +60,8 @@ func registerScanToolMP(s *server.MCPServer, sc *ServerContext) {
 
 func handleScan(ctx context.Context, request mcp.CallToolRequest, db *database.DiskDB, cacheDir string) (*mcp.CallToolResult, error) {
 	var args struct {
-		Paths      []string `json:"paths"`
-		Attributes []string `json:"attributes,omitempty"`
+		Paths      StringOrStrings `json:"paths"`
+		Attributes StringOrStrings `json:"attributes,omitempty"`
 		Depth      *int     `json:"depth,omitempty"`
 		Force      *bool    `json:"force,omitempty"`
 		Target     *string  `json:"target,omitempty"`

@@ -14,6 +14,26 @@ import (
 	"github.com/prismon/mcp-space-browser/pkg/database"
 )
 
+// StringOrStrings is a []string that also accepts a single string in JSON.
+// MCP clients (especially LLMs) often send "paths": "/foo" instead of "paths": ["/foo"].
+type StringOrStrings []string
+
+func (s *StringOrStrings) UnmarshalJSON(data []byte) error {
+	// Try as array first (common case)
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*s = arr
+		return nil
+	}
+	// Try as single string
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		*s = []string{str}
+		return nil
+	}
+	return fmt.Errorf("expected string or array of strings")
+}
+
 // unmarshalArgs converts MCP tool arguments into a typed struct
 func unmarshalArgs(arguments interface{}, v interface{}) error {
 	data, err := json.Marshal(arguments)

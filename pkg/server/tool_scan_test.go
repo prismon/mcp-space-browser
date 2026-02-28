@@ -122,6 +122,30 @@ func TestScanTool_AsyncReturnsJobID(t *testing.T) {
 	assert.Contains(t, job, "status_url")
 }
 
+func TestScanTool_SingleStringPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("hello"), 0644))
+
+	db, err := database.NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Send paths as a single string instead of an array — this is what many MCP clients do
+	request := makeRequest("scan", map[string]interface{}{
+		"paths": tmpDir,
+		"async": false,
+		"force": true,
+	})
+
+	result, err := handleScan(context.Background(), request, db, "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.IsError, "scan with single string path should not error")
+
+	response := resultJSON(t, result)
+	assert.Equal(t, "completed", response["status"])
+}
+
 func TestScanTool_MissingPaths(t *testing.T) {
 	db, err := database.NewDiskDB(":memory:")
 	require.NoError(t, err)

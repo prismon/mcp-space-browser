@@ -62,8 +62,8 @@ func handleBatch(ctx context.Context, request mcp.CallToolRequest, db *database.
 	var args struct {
 		Operation   string   `json:"operation"`
 		From        string   `json:"from,omitempty"`
-		Paths       []string `json:"paths,omitempty"`
-		Keys        []string `json:"keys,omitempty"`
+		Paths       StringOrStrings `json:"paths,omitempty"`
+		Keys        StringOrStrings `json:"keys,omitempty"`
 		Method      string   `json:"method,omitempty"`
 		Threshold   *int     `json:"threshold,omitempty"`
 		Destination string   `json:"destination,omitempty"`

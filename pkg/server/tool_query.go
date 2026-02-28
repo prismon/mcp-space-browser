@@ -70,7 +70,7 @@ func registerQueryToolMP(s *server.MCPServer, sc *ServerContext) {
 type queryArgs struct {
 	From      *string                `json:"from,omitempty"`
 	Where     map[string]interface{} `json:"where,omitempty"`
-	Select    []string               `json:"select,omitempty"`
+	Select    StringOrStrings         `json:"select,omitempty"`
 	Aggregate *string                `json:"aggregate,omitempty"`
 	Field     *string                `json:"field,omitempty"`
 	GroupBy   *string                `json:"group_by,omitempty"`
