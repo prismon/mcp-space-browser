@@ -21,8 +21,8 @@ const (
 	batchSize = 1000
 
 	// DefaultMaxAge is the default maximum age (in seconds) before a path is considered stale
-	// and needs to be re-indexed. Default: 1 hour (3600 seconds)
-	DefaultMaxAge = 3600
+	// and needs to be re-indexed. Default: 10 days (864000 seconds)
+	DefaultMaxAge = 864000
 )
 
 func init() {
@@ -85,7 +85,7 @@ func Index(root string, db *database.DiskDB, src sources.DataSource, jobID int64
 }
 
 // IndexWithOptions performs indexing with configurable options
-// If opts is nil, default options will be used (skip if scanned within 1 hour)
+// If opts is nil, default options will be used (skip if scanned within 10 days)
 func IndexWithOptions(root string, db *database.DiskDB, src sources.DataSource, jobID int64, progressCallback ProgressCallback, opts *IndexOptions) (*IndexStats, error) {
 	startTime := time.Now()
 	ctx := context.Background()

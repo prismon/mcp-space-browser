@@ -16,7 +16,7 @@ Index filesystem paths and extract attributes.
 | force | boolean | no | Re-index even if recently scanned (default: false) |
 | target | string | no | Resource set name to populate with results |
 | async | boolean | no | Return job ID immediately (default: true) |
-| maxAge | number | no | Max age in seconds before rescan (default: 3600) |
+| maxAge | number | no | Max age in seconds before rescan (default: 864000 / 10 days) |
 
 ```json
 {"tool": "scan", "params": {"paths": ["/home/user/Photos"], "depth": -1, "target": "photos"}}

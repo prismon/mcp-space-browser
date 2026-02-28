@@ -144,7 +144,7 @@ func TestIndexSkipsRecentScans(t *testing.T) {
 	// First index with default options (should complete normally)
 	opts := &IndexOptions{
 		Force:  false,
-		MaxAge: 3600, // 1 hour
+		MaxAge: DefaultMaxAge,
 	}
 	stats, err := IndexWithOptions(tempDir, db, nil, 0, nil, opts)
 	assert.NoError(t, err)
@@ -181,7 +181,7 @@ func TestIndexForceOverridesSkip(t *testing.T) {
 	// First index
 	opts := &IndexOptions{
 		Force:  false,
-		MaxAge: 3600,
+		MaxAge: DefaultMaxAge,
 	}
 	stats, err := IndexWithOptions(tempDir, db, nil, 0, nil, opts)
 	assert.NoError(t, err)
@@ -190,7 +190,7 @@ func TestIndexForceOverridesSkip(t *testing.T) {
 	// Second index with force=true should NOT be skipped
 	forceOpts := &IndexOptions{
 		Force:  true,
-		MaxAge: 3600,
+		MaxAge: DefaultMaxAge,
 	}
 	stats2, err := IndexWithOptions(tempDir, db, nil, 0, nil, forceOpts)
 	assert.NoError(t, err)
@@ -236,6 +236,13 @@ func TestDefaultIndexOptions(t *testing.T) {
 	assert.NotNil(t, opts)
 	assert.False(t, opts.Force)
 	assert.Equal(t, int64(DefaultMaxAge), opts.MaxAge)
+}
+
+func TestDefaultMaxAgeIsTenDays(t *testing.T) {
+	// DefaultMaxAge should be 10 days (864000 seconds) to avoid
+	// unnecessary re-indexing of recently scanned paths
+	tenDaysInSeconds := int64(10 * 24 * 60 * 60) // 864000
+	assert.Equal(t, tenDaysInSeconds, int64(DefaultMaxAge))
 }
 
 func TestGetPathScanInfo(t *testing.T) {

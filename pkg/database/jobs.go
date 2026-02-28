@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -56,7 +57,8 @@ func (d *DiskDB) InitJobTables() error {
 	return err
 }
 
-// CreateIndexJob creates a new indexing job
+// CreateIndexJob creates a new indexing job.
+// Routes through the WriteQueue to avoid "database is locked" errors from concurrent writes.
 func (d *DiskDB) CreateIndexJob(rootPath string, metadata *IndexJobMetadata) (int64, error) {
 	var metadataJSON *string
 	if metadata != nil {
@@ -66,6 +68,31 @@ func (d *DiskDB) CreateIndexJob(rootPath string, metadata *IndexJobMetadata) (in
 		}
 		str := string(bytes)
 		metadataJSON = &str
+	}
+
+	if d.writeQueue != nil && d.writeQueue.IsStarted() {
+		var id int64
+		err := d.writeQueue.Submit(context.Background(), func(db *sql.DB) error {
+			result, err := db.Exec(`
+				INSERT INTO index_jobs (root_path, metadata)
+				VALUES (?, ?)
+			`, rootPath, metadataJSON)
+			if err != nil {
+				return err
+			}
+			id, err = result.LastInsertId()
+			return err
+		})
+		if err != nil {
+			return 0, err
+		}
+
+		log.WithFields(map[string]interface{}{
+			"jobID":    id,
+			"rootPath": rootPath,
+		}).Info("Created indexing job")
+
+		return id, nil
 	}
 
 	result, err := d.db.Exec(`
@@ -129,8 +156,18 @@ func (d *DiskDB) GetIndexJob(id int64) (*IndexJob, error) {
 	return &job, nil
 }
 
-// UpdateIndexJobStatus updates the status of an indexing job
+// UpdateIndexJobStatus updates the status of an indexing job.
+// Routes through the WriteQueue to avoid "database is locked" errors from concurrent writes.
 func (d *DiskDB) UpdateIndexJobStatus(id int64, status string, errorMsg *string) error {
+	if d.writeQueue != nil && d.writeQueue.IsStarted() {
+		return d.writeQueue.Submit(context.Background(), func(db *sql.DB) error {
+			return d.updateIndexJobStatusDirect(db, id, status, errorMsg)
+		})
+	}
+	return d.updateIndexJobStatusDirect(d.db, id, status, errorMsg)
+}
+
+func (d *DiskDB) updateIndexJobStatusDirect(db *sql.DB, id int64, status string, errorMsg *string) error {
 	now := time.Now().Unix()
 
 	var completedAt *int64
@@ -138,7 +175,7 @@ func (d *DiskDB) UpdateIndexJobStatus(id int64, status string, errorMsg *string)
 		completedAt = &now
 	}
 
-	_, err := d.db.Exec(`
+	_, err := db.Exec(`
 		UPDATE index_jobs
 		SET status = ?, error = ?, completed_at = ?, updated_at = ?
 		WHERE id = ?
@@ -156,7 +193,8 @@ func (d *DiskDB) UpdateIndexJobStatus(id int64, status string, errorMsg *string)
 	return nil
 }
 
-// UpdateIndexJobProgress updates the progress and metadata of an indexing job
+// UpdateIndexJobProgress updates the progress and metadata of an indexing job.
+// Routes through the WriteQueue to avoid "database is locked" errors from concurrent writes.
 func (d *DiskDB) UpdateIndexJobProgress(id int64, progress int, metadata *IndexJobMetadata) error {
 	var metadataJSON *string
 	if metadata != nil {
@@ -168,22 +206,42 @@ func (d *DiskDB) UpdateIndexJobProgress(id int64, progress int, metadata *IndexJ
 		metadataJSON = &str
 	}
 
-	now := time.Now().Unix()
+	if d.writeQueue != nil && d.writeQueue.IsStarted() {
+		return d.writeQueue.Submit(context.Background(), func(db *sql.DB) error {
+			now := time.Now().Unix()
+			_, err := db.Exec(`
+				UPDATE index_jobs
+				SET progress = ?, metadata = ?, updated_at = ?
+				WHERE id = ?
+			`, progress, metadataJSON, now, id)
+			return err
+		})
+	}
 
+	now := time.Now().Unix()
 	_, err := d.db.Exec(`
 		UPDATE index_jobs
 		SET progress = ?, metadata = ?, updated_at = ?
 		WHERE id = ?
 	`, progress, metadataJSON, now, id)
-
 	return err
 }
 
-// StartIndexJob marks a job as started
+// StartIndexJob marks a job as started.
+// Routes through the WriteQueue to avoid "database is locked" errors from concurrent writes.
 func (d *DiskDB) StartIndexJob(id int64) error {
+	if d.writeQueue != nil && d.writeQueue.IsStarted() {
+		return d.writeQueue.Submit(context.Background(), func(db *sql.DB) error {
+			return d.startIndexJobDirect(db, id)
+		})
+	}
+	return d.startIndexJobDirect(d.db, id)
+}
+
+func (d *DiskDB) startIndexJobDirect(db *sql.DB, id int64) error {
 	now := time.Now().Unix()
 
-	_, err := d.db.Exec(`
+	_, err := db.Exec(`
 		UPDATE index_jobs
 		SET status = 'running', started_at = ?, updated_at = ?
 		WHERE id = ?
@@ -258,8 +316,20 @@ func (d *DiskDB) ListIndexJobs(status *string, limit int) ([]*IndexJob, error) {
 	return jobs, rows.Err()
 }
 
-// DeleteIndexJob deletes an indexing job
+// DeleteIndexJob deletes an indexing job.
+// Routes through the WriteQueue to avoid "database is locked" errors from concurrent writes.
 func (d *DiskDB) DeleteIndexJob(id int64) error {
+	if d.writeQueue != nil && d.writeQueue.IsStarted() {
+		return d.writeQueue.Submit(context.Background(), func(db *sql.DB) error {
+			_, err := db.Exec("DELETE FROM index_jobs WHERE id = ?", id)
+			if err != nil {
+				return err
+			}
+			log.WithField("jobID", id).Info("Deleted indexing job")
+			return nil
+		})
+	}
+
 	_, err := d.db.Exec("DELETE FROM index_jobs WHERE id = ?", id)
 	if err != nil {
 		return err
@@ -330,11 +400,36 @@ func (d *DiskDB) InitClassifierJobTables() error {
 	return err
 }
 
-// CreateClassifierJob creates a new classifier job
+// CreateClassifierJob creates a new classifier job.
+// Routes through the WriteQueue to avoid "database is locked" errors from concurrent writes.
 func (d *DiskDB) CreateClassifierJob(resourceURL, localPath string, artifactTypes []string) (int64, error) {
 	artifactTypesJSON, err := json.Marshal(artifactTypes)
 	if err != nil {
 		return 0, fmt.Errorf("failed to marshal artifact types: %w", err)
+	}
+
+	if d.writeQueue != nil && d.writeQueue.IsStarted() {
+		var id int64
+		err := d.writeQueue.Submit(context.Background(), func(db *sql.DB) error {
+			result, err := db.Exec(`
+				INSERT INTO classifier_jobs (resource_url, local_path, artifact_types)
+				VALUES (?, ?, ?)
+			`, resourceURL, localPath, string(artifactTypesJSON))
+			if err != nil {
+				return err
+			}
+			id, err = result.LastInsertId()
+			return err
+		})
+		if err != nil {
+			return 0, err
+		}
+		log.WithFields(map[string]interface{}{
+			"jobID":       id,
+			"resourceURL": resourceURL,
+			"localPath":   localPath,
+		}).Info("Created classifier job")
+		return id, nil
 	}
 
 	result, err := d.db.Exec(`
@@ -404,8 +499,18 @@ func (d *DiskDB) GetClassifierJob(id int64) (*ClassifierJob, error) {
 	return &job, nil
 }
 
-// UpdateClassifierJobStatus updates the status of a classifier job
+// UpdateClassifierJobStatus updates the status of a classifier job.
+// Routes through the WriteQueue to avoid "database is locked" errors from concurrent writes.
 func (d *DiskDB) UpdateClassifierJobStatus(id int64, status string, errorMsg *string) error {
+	if d.writeQueue != nil && d.writeQueue.IsStarted() {
+		return d.writeQueue.Submit(context.Background(), func(db *sql.DB) error {
+			return d.updateClassifierJobStatusDirect(db, id, status, errorMsg)
+		})
+	}
+	return d.updateClassifierJobStatusDirect(d.db, id, status, errorMsg)
+}
+
+func (d *DiskDB) updateClassifierJobStatusDirect(db *sql.DB, id int64, status string, errorMsg *string) error {
 	now := time.Now().Unix()
 
 	var completedAt *int64
@@ -413,7 +518,7 @@ func (d *DiskDB) UpdateClassifierJobStatus(id int64, status string, errorMsg *st
 		completedAt = &now
 	}
 
-	_, err := d.db.Exec(`
+	_, err := db.Exec(`
 		UPDATE classifier_jobs
 		SET status = ?, error = ?, completed_at = ?, updated_at = ?
 		WHERE id = ?
@@ -431,42 +536,80 @@ func (d *DiskDB) UpdateClassifierJobStatus(id int64, status string, errorMsg *st
 	return nil
 }
 
-// UpdateClassifierJobProgress updates the progress of a classifier job
+// UpdateClassifierJobProgress updates the progress of a classifier job.
+// Routes through the WriteQueue to avoid "database is locked" errors from concurrent writes.
 func (d *DiskDB) UpdateClassifierJobProgress(id int64, progress int) error {
-	now := time.Now().Unix()
+	if d.writeQueue != nil && d.writeQueue.IsStarted() {
+		return d.writeQueue.Submit(context.Background(), func(db *sql.DB) error {
+			now := time.Now().Unix()
+			_, err := db.Exec(`
+				UPDATE classifier_jobs
+				SET progress = ?, updated_at = ?
+				WHERE id = ?
+			`, progress, now, id)
+			return err
+		})
+	}
 
+	now := time.Now().Unix()
 	_, err := d.db.Exec(`
 		UPDATE classifier_jobs
 		SET progress = ?, updated_at = ?
 		WHERE id = ?
 	`, progress, now, id)
-
 	return err
 }
 
-// UpdateClassifierJobResult updates the result of a classifier job
+// UpdateClassifierJobResult updates the result of a classifier job.
+// Routes through the WriteQueue to avoid "database is locked" errors from concurrent writes.
 func (d *DiskDB) UpdateClassifierJobResult(id int64, result *ClassifierJobResult) error {
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("failed to marshal result: %w", err)
 	}
-
-	now := time.Now().Unix()
 	resultStr := string(resultJSON)
 
+	if d.writeQueue != nil && d.writeQueue.IsStarted() {
+		return d.writeQueue.Submit(context.Background(), func(db *sql.DB) error {
+			now := time.Now().Unix()
+			_, err := db.Exec(`
+				UPDATE classifier_jobs
+				SET result = ?, updated_at = ?
+				WHERE id = ?
+			`, resultStr, now, id)
+			return err
+		})
+	}
+
+	now := time.Now().Unix()
 	_, err = d.db.Exec(`
 		UPDATE classifier_jobs
 		SET result = ?, updated_at = ?
 		WHERE id = ?
 	`, resultStr, now, id)
-
 	return err
 }
 
-// StartClassifierJob marks a classifier job as started
+// StartClassifierJob marks a classifier job as started.
+// Routes through the WriteQueue to avoid "database is locked" errors from concurrent writes.
 func (d *DiskDB) StartClassifierJob(id int64) error {
-	now := time.Now().Unix()
+	if d.writeQueue != nil && d.writeQueue.IsStarted() {
+		return d.writeQueue.Submit(context.Background(), func(db *sql.DB) error {
+			now := time.Now().Unix()
+			_, err := db.Exec(`
+				UPDATE classifier_jobs
+				SET status = 'running', started_at = ?, updated_at = ?
+				WHERE id = ?
+			`, now, now, id)
+			if err != nil {
+				return err
+			}
+			log.WithField("jobID", id).Info("Started classifier job")
+			return nil
+		})
+	}
 
+	now := time.Now().Unix()
 	_, err := d.db.Exec(`
 		UPDATE classifier_jobs
 		SET status = 'running', started_at = ?, updated_at = ?

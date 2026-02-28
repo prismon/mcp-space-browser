@@ -1,7 +1,10 @@
 package database
 
 import (
+	"context"
+	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -500,6 +503,163 @@ func TestListClassifierJobsByStatus(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, jobs, 1)
 	assert.Equal(t, id2, jobs[0].ID)
+}
+
+// TestUpdateIndexJobStatusUsesWriteQueue verifies that UpdateIndexJobStatus routes
+// through the WriteQueue to avoid "database is locked" errors from concurrent writes.
+func TestUpdateIndexJobStatusUsesWriteQueue(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	jobID, err := db.CreateIndexJob("/test", nil)
+	require.NoError(t, err)
+
+	// Block the write queue with a slow operation
+	blocked := make(chan struct{})
+	unblock := make(chan struct{})
+
+	go func() {
+		db.WriteQueue().Submit(context.Background(), func(sqlDB *sql.DB) error {
+			close(blocked) // Signal that we're holding the queue
+			<-unblock      // Wait until told to release
+			return nil
+		})
+	}()
+
+	// Wait until the write queue is blocked
+	<-blocked
+
+	// Try to update job status - if it uses WriteQueue, it will block
+	updateDone := make(chan error, 1)
+	go func() {
+		updateDone <- db.UpdateIndexJobStatus(jobID, "running", nil)
+	}()
+
+	// Give the update a moment to either complete or block
+	select {
+	case <-updateDone:
+		// If we get here immediately, the update bypassed the WriteQueue
+		t.Fatal("UpdateIndexJobStatus should route through WriteQueue but completed immediately")
+	case <-time.After(200 * time.Millisecond):
+		// Good - the update is blocked, meaning it's waiting in the WriteQueue
+	}
+
+	// Unblock the write queue
+	close(unblock)
+
+	// Now the update should complete
+	select {
+	case err := <-updateDone:
+		assert.NoError(t, err, "UpdateIndexJobStatus should succeed after queue unblocks")
+	case <-time.After(5 * time.Second):
+		t.Fatal("UpdateIndexJobStatus timed out after queue was unblocked")
+	}
+
+	// Verify the status was actually updated
+	job, err := db.GetIndexJob(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, "running", job.Status)
+}
+
+// TestUpdateIndexJobProgressUsesWriteQueue verifies that UpdateIndexJobProgress
+// routes through the WriteQueue.
+func TestUpdateIndexJobProgressUsesWriteQueue(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	jobID, err := db.CreateIndexJob("/test", nil)
+	require.NoError(t, err)
+
+	blocked := make(chan struct{})
+	unblock := make(chan struct{})
+
+	go func() {
+		db.WriteQueue().Submit(context.Background(), func(sqlDB *sql.DB) error {
+			close(blocked)
+			<-unblock
+			return nil
+		})
+	}()
+
+	<-blocked
+
+	updateDone := make(chan error, 1)
+	go func() {
+		updateDone <- db.UpdateIndexJobProgress(jobID, 50, &IndexJobMetadata{
+			FilesProcessed: 100,
+		})
+	}()
+
+	select {
+	case <-updateDone:
+		t.Fatal("UpdateIndexJobProgress should route through WriteQueue but completed immediately")
+	case <-time.After(200 * time.Millisecond):
+		// Good - blocked in WriteQueue
+	}
+
+	close(unblock)
+
+	select {
+	case err := <-updateDone:
+		assert.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("UpdateIndexJobProgress timed out")
+	}
+
+	job, err := db.GetIndexJob(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, 50, job.Progress)
+}
+
+// TestStartIndexJobUsesWriteQueue verifies that StartIndexJob routes through the WriteQueue.
+func TestStartIndexJobUsesWriteQueue(t *testing.T) {
+	db, err := NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	jobID, err := db.CreateIndexJob("/test", nil)
+	require.NoError(t, err)
+
+	blocked := make(chan struct{})
+	unblock := make(chan struct{})
+
+	go func() {
+		db.WriteQueue().Submit(context.Background(), func(sqlDB *sql.DB) error {
+			close(blocked)
+			<-unblock
+			return nil
+		})
+	}()
+
+	<-blocked
+
+	updateDone := make(chan error, 1)
+	go func() {
+		updateDone <- db.StartIndexJob(jobID)
+	}()
+
+	select {
+	case <-updateDone:
+		t.Fatal("StartIndexJob should route through WriteQueue but completed immediately")
+	case <-time.After(200 * time.Millisecond):
+		// Good - blocked in WriteQueue
+	}
+
+	close(unblock)
+
+	select {
+	case err := <-updateDone:
+		assert.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("StartIndexJob timed out")
+	}
+
+	job, err := db.GetIndexJob(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, "running", job.Status)
+	assert.NotNil(t, job.StartedAt)
 }
 
 func TestClassifierJobLifecycle(t *testing.T) {

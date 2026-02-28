@@ -105,7 +105,7 @@ go test -v -cover ./...              # With coverage
    - Keys: `mime`, `hash.md5`, `hash.sha256`, `exif.*`, `permissions`, etc.
    - Queryable via the `query` tool's `where` clause (auto-JOINs on non-entry columns)
 3. **Filesystem Crawler**: Stack-based DFS with bottom-up size aggregation
-   - Skips re-indexing recent paths (configurable `maxAge`, default 1 hour)
+   - Skips re-indexing recent paths (configurable `maxAge`, default 10 days)
    - Use `force=true` in `scan` tool to override
 4. **Resource-Set DAG**: Named collections with parent-child edges (multiple parents allowed)
 5. **Plans**: Orchestration layer for indexing operations

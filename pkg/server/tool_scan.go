@@ -36,7 +36,7 @@ var scanToolDef = mcp.NewTool("scan",
 		mcp.Description("Return job ID immediately (default: true)"),
 	),
 	mcp.WithNumber("maxAge",
-		mcp.Description("Max age in seconds before rescan (default: 3600)"),
+		mcp.Description("Max age in seconds before rescan (default: 864000 / 10 days)"),
 	),
 )
 
@@ -132,10 +132,14 @@ func handleScanAsync(db *database.DiskDB, paths []string, opts *crawler.IndexOpt
 			_, err := crawler.IndexWithOptions(path, db, nil, id, nil, opts)
 			if err != nil {
 				errMsg := err.Error()
-				db.UpdateIndexJobStatus(id, "failed", &errMsg)
+				if statusErr := db.UpdateIndexJobStatus(id, "failed", &errMsg); statusErr != nil {
+					log.WithError(statusErr).WithFields(logrus.Fields{"jobID": id, "path": path}).Error("Failed to write 'failed' status to database")
+				}
 				log.WithError(err).WithFields(logrus.Fields{"jobID": id, "path": path}).Error("Scan failed")
 			} else {
-				db.UpdateIndexJobStatus(id, "completed", nil)
+				if statusErr := db.UpdateIndexJobStatus(id, "completed", nil); statusErr != nil {
+					log.WithError(statusErr).WithFields(logrus.Fields{"jobID": id, "path": path}).Error("Failed to write 'completed' status to database")
+				}
 				log.WithFields(logrus.Fields{"jobID": id, "path": path}).Info("Scan completed")
 			}
 		}(p, jobID)

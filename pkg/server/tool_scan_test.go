@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/prismon/mcp-space-browser/pkg/database"
@@ -120,6 +121,49 @@ func TestScanTool_AsyncReturnsJobID(t *testing.T) {
 	job := jobs[0].(map[string]interface{})
 	assert.Contains(t, job, "job_id")
 	assert.Contains(t, job, "status_url")
+}
+
+func TestScanTool_AsyncCompletesAndUpdatesJobStatus(t *testing.T) {
+	tmpDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("hello"), 0644))
+
+	db, err := database.NewDiskDB(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	request := makeRequest("scan", map[string]interface{}{
+		"paths": []interface{}{tmpDir},
+		"async": true,
+		"force": true,
+	})
+
+	result, err := handleScan(context.Background(), request, db)
+	require.NoError(t, err)
+
+	response := resultJSON(t, result)
+	jobs := response["jobs"].([]interface{})
+	job := jobs[0].(map[string]interface{})
+	jobID := int64(job["job_id"].(float64))
+
+	// Wait for the async scan to complete (poll job status)
+	var finalStatus string
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		jobRecord, err := db.GetIndexJob(jobID)
+		require.NoError(t, err)
+		require.NotNil(t, jobRecord)
+		if jobRecord.Status == "completed" || jobRecord.Status == "failed" {
+			finalStatus = jobRecord.Status
+			break
+		}
+	}
+
+	assert.Equal(t, "completed", finalStatus, "Async scan job should reach 'completed' status")
+
+	// Verify the job has completedAt set
+	jobRecord, err := db.GetIndexJob(jobID)
+	require.NoError(t, err)
+	assert.NotNil(t, jobRecord.CompletedAt, "Completed job should have completedAt timestamp")
 }
 
 func TestScanTool_MissingPaths(t *testing.T) {
