@@ -133,7 +133,7 @@ func (p *Processor) ProcessResource(req *ProcessRequest) (*ProcessResult, error)
 		}
 	}
 
-	// Store artifacts as features in database for discovery via MCP resources
+	// Store artifacts as metadata records in database for discovery via MCP resources
 	if p.config.Database != nil {
 		for _, artifact := range result.Artifacts {
 			// Get file size of cached artifact
@@ -151,20 +151,21 @@ func (p *Processor) ProcessResource(req *ProcessRequest) (*ProcessResult, error)
 				}
 			}
 
-			// Create Feature from artifact
-			feature := &models.Feature{
-				EntryPath:   localPath,
-				FeatureType: artifact.Type,
-				Hash:        artifact.Hash,
-				MimeType:    &artifact.MimeType,
-				CachePath:   &artifact.CachePath,
-				DataJson:    dataJson,
-				FileSize:    fileSize,
-				Generator:   artifact.Generator,
+			// Create MetadataRecord from artifact
+			m := &models.MetadataRecord{
+				EntryPath: localPath,
+				Key:       artifact.Type,
+				Source:    models.MetadataSourceClassifier,
+				Hash:      &artifact.Hash,
+				MimeType:  &artifact.MimeType,
+				CachePath: &artifact.CachePath,
+				DataJson:  dataJson,
+				FileSize:  fileSize,
+				Generator: &artifact.Generator,
 			}
 
-			if err := p.config.Database.CreateOrUpdateFeature(feature); err != nil {
-				processorLog.WithError(err).WithField("hash", artifact.Hash).Warn("Failed to store feature in database")
+			if err := p.config.Database.SetMetadata(m); err != nil {
+				processorLog.WithError(err).WithField("hash", artifact.Hash).Warn("Failed to store metadata in database")
 			}
 		}
 	}
@@ -291,11 +292,11 @@ func (p *Processor) resolveSynthesisResource(resourceURL string) (string, func()
 	case "metadata":
 		// Resolve metadata hash to source path
 		if p.config.Database != nil {
-			metadata, err := p.config.Database.GetMetadata(resourcePath)
-			if err != nil || metadata == nil {
+			md, err := p.config.Database.GetMetadataByHash(resourcePath)
+			if err != nil || md == nil {
 				return "", nil, fmt.Errorf("metadata not found for hash: %s", resourcePath)
 			}
-			return metadata.SourcePath, nil, nil
+			return md.EntryPath, nil, nil
 		}
 		return "", nil, fmt.Errorf("database not available for metadata lookup")
 

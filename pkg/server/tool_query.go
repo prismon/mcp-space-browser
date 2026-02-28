@@ -183,7 +183,7 @@ func handleGroupedAggregate(db *database.DiskDB, aggExpr, groupBy, fromJoin, att
 		groupExpr = "e." + groupBy
 	} else {
 		// Group by attribute value — need a join
-		attrJoins += fmt.Sprintf(` LEFT JOIN attributes grp_attr ON grp_attr.entry_path = e.path AND grp_attr.key = '%s'`, groupBy)
+		attrJoins += fmt.Sprintf(` LEFT JOIN metadata grp_attr ON grp_attr.entry_path = e.path AND grp_attr.key = '%s' AND grp_attr.hash IS NULL`, groupBy)
 		groupExpr = "grp_attr.value"
 	}
 
@@ -319,7 +319,7 @@ func buildWhere(where map[string]interface{}) (string, []interface{}, string, er
 		} else {
 			alias := fmt.Sprintf("a%d", attrIdx)
 			attrIdx++
-			joinClauses = append(joinClauses, fmt.Sprintf("JOIN attributes %s ON %s.entry_path = e.path AND %s.key = ?", alias, alias, alias))
+			joinClauses = append(joinClauses, fmt.Sprintf("JOIN metadata %s ON %s.entry_path = e.path AND %s.key = ? AND %s.hash IS NULL", alias, alias, alias, alias))
 			joinParams = append(joinParams, key)
 
 			c, p, err := buildColumnFilter(alias+".value", key, value)

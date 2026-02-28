@@ -54,22 +54,23 @@ func TestBatchTool_Attributes(t *testing.T) {
 	results := response["results"].([]interface{})
 	assert.Len(t, results, 2)
 
-	// Verify attributes were stored in DB
-	attr, err := db.GetAttribute("/test/a.txt", "kind")
+	// Verify metadata were stored in DB
+	m, err := db.GetMetadataByKey("/test/a.txt", "kind")
 	require.NoError(t, err)
-	require.NotNil(t, attr)
-	assert.Equal(t, "file", attr.Value)
+	require.NotNil(t, m)
+	assert.Equal(t, "file", *m.Value)
 }
 
 func TestBatchTool_Duplicates_Exact(t *testing.T) {
 	db := setupBatchTestDB(t)
 	defer db.Close()
 
-	now := time.Now().Unix()
 	// Set same hash for a.txt and b.txt
-	require.NoError(t, db.SetAttribute(&models.Attribute{EntryPath: "/test/a.txt", Key: "hash.md5", Value: "abc123", Source: "scan", ComputedAt: now}))
-	require.NoError(t, db.SetAttribute(&models.Attribute{EntryPath: "/test/b.txt", Key: "hash.md5", Value: "abc123", Source: "scan", ComputedAt: now}))
-	require.NoError(t, db.SetAttribute(&models.Attribute{EntryPath: "/test/c.txt", Key: "hash.md5", Value: "def456", Source: "scan", ComputedAt: now}))
+	hashAbc := "abc123"
+	hashDef := "def456"
+	require.NoError(t, db.SetMetadata(&models.MetadataRecord{EntryPath: "/test/a.txt", Key: "hash.md5", Value: &hashAbc, Source: "scan"}))
+	require.NoError(t, db.SetMetadata(&models.MetadataRecord{EntryPath: "/test/b.txt", Key: "hash.md5", Value: &hashAbc, Source: "scan"}))
+	require.NoError(t, db.SetMetadata(&models.MetadataRecord{EntryPath: "/test/c.txt", Key: "hash.md5", Value: &hashDef, Source: "scan"}))
 
 	request := makeRequest("batch", map[string]interface{}{
 		"operation": "duplicates",

@@ -42,9 +42,8 @@ type PostProcessConfig struct {
 // PostProcessResult contains stats from post-processing.
 type PostProcessResult struct {
 	FilesProcessed int64         `json:"files_processed"`
-	FeaturesCreated int64       `json:"features_created"`
-	AttributesSet  int64        `json:"attributes_set"`
-	Errors         int64        `json:"errors"`
+	MetadataSet    int64         `json:"metadata_set"`
+	Errors         int64         `json:"errors"`
 	Duration       time.Duration `json:"duration_ms"`
 }
 
@@ -120,9 +119,8 @@ func PostProcess(config *PostProcessConfig, roots []string) *PostProcessResult {
 		go func() {
 			defer wg.Done()
 			for entry := range fileCh {
-				fc, ac, errs := processFile(entry, attrSet, config, proc, needsClassifier)
-				atomic.AddInt64(&result.FeaturesCreated, int64(fc))
-				atomic.AddInt64(&result.AttributesSet, int64(ac))
+				mc, errs := processFile(entry, attrSet, config, proc, needsClassifier)
+				atomic.AddInt64(&result.MetadataSet, int64(mc))
 				atomic.AddInt64(&result.Errors, int64(errs))
 				atomic.AddInt64(&result.FilesProcessed, 1)
 			}
@@ -138,23 +136,20 @@ func PostProcess(config *PostProcessConfig, roots []string) *PostProcessResult {
 	result.Duration = time.Since(start)
 
 	ppLog.WithFields(map[string]interface{}{
-		"files":      result.FilesProcessed,
-		"features":   result.FeaturesCreated,
-		"attributes": result.AttributesSet,
-		"errors":     result.Errors,
-		"duration":   result.Duration.String(),
+		"files":    result.FilesProcessed,
+		"metadata": result.MetadataSet,
+		"errors":   result.Errors,
+		"duration": result.Duration.String(),
 	}).Info("Post-processing complete")
 
 	return result
 }
 
-// processFile extracts attributes for a single file.
-// Returns (features created, attributes set, error count).
-func processFile(entry *models.Entry, attrSet map[string]bool, config *PostProcessConfig, proc *classifier.Processor, needsClassifier bool) (int, int, int) {
-	featuresCreated := 0
-	attributesSet := 0
+// processFile extracts metadata for a single file.
+// Returns (metadata set count, error count).
+func processFile(entry *models.Entry, attrSet map[string]bool, config *PostProcessConfig, proc *classifier.Processor, needsClassifier bool) (int, int) {
+	metadataSet := 0
 	errors := 0
-	now := time.Now().Unix()
 
 	// MIME detection
 	if attrSet["mime"] {
@@ -163,17 +158,16 @@ func processFile(entry *models.Entry, attrSet map[string]bool, config *PostProce
 			ppLog.WithError(err).WithField("path", entry.Path).Debug("Failed to detect MIME type")
 			errors++
 		} else {
-			if err := config.DB.SetAttribute(&models.Attribute{
-				EntryPath:  entry.Path,
-				Key:        "mime",
-				Value:      mimeType,
-				Source:     models.AttributeSourceScan,
-				ComputedAt: now,
+			if err := config.DB.SetMetadata(&models.MetadataRecord{
+				EntryPath: entry.Path,
+				Key:       models.MetadataKeyMime,
+				Value:     &mimeType,
+				Source:    models.MetadataSourceScan,
 			}); err != nil {
-				ppLog.WithError(err).WithField("path", entry.Path).Debug("Failed to set mime attribute")
+				ppLog.WithError(err).WithField("path", entry.Path).Debug("Failed to set mime metadata")
 				errors++
 			} else {
-				attributesSet++
+				metadataSet++
 			}
 		}
 	}
@@ -186,17 +180,16 @@ func processFile(entry *models.Entry, attrSet map[string]bool, config *PostProce
 			errors++
 		} else {
 			perm := fmt.Sprintf("%04o", info.Mode().Perm())
-			if err := config.DB.SetAttribute(&models.Attribute{
-				EntryPath:  entry.Path,
-				Key:        "permissions",
-				Value:      perm,
-				Source:     models.AttributeSourceScan,
-				ComputedAt: now,
+			if err := config.DB.SetMetadata(&models.MetadataRecord{
+				EntryPath: entry.Path,
+				Key:       models.MetadataKeyPermissions,
+				Value:     &perm,
+				Source:    models.MetadataSourceScan,
 			}); err != nil {
-				ppLog.WithError(err).WithField("path", entry.Path).Debug("Failed to set permissions attribute")
+				ppLog.WithError(err).WithField("path", entry.Path).Debug("Failed to set permissions metadata")
 				errors++
 			} else {
-				attributesSet++
+				metadataSet++
 			}
 		}
 	}
@@ -213,7 +206,7 @@ func processFile(entry *models.Entry, attrSet map[string]bool, config *PostProce
 				ppLog.WithError(err).WithField("path", entry.Path).Debug("Failed to generate thumbnail")
 				errors++
 			} else {
-				featuresCreated += len(res.Artifacts)
+				metadataSet += len(res.Artifacts)
 				errors += len(res.Errors)
 			}
 		}
@@ -231,7 +224,7 @@ func processFile(entry *models.Entry, attrSet map[string]bool, config *PostProce
 				ppLog.WithError(err).WithField("path", entry.Path).Debug("Failed to generate video thumbnails")
 				errors++
 			} else {
-				featuresCreated += len(res.Artifacts)
+				metadataSet += len(res.Artifacts)
 				errors += len(res.Errors)
 			}
 		}
@@ -248,7 +241,7 @@ func processFile(entry *models.Entry, attrSet map[string]bool, config *PostProce
 				ppLog.WithError(err).WithField("path", entry.Path).Debug("Failed to extract metadata")
 				errors++
 			} else {
-				featuresCreated += len(res.Artifacts)
+				metadataSet += len(res.Artifacts)
 				errors += len(res.Errors)
 			}
 		}
@@ -261,16 +254,15 @@ func processFile(entry *models.Entry, attrSet map[string]bool, config *PostProce
 			ppLog.WithError(err).WithField("path", entry.Path).Debug("Failed to compute MD5 hash")
 			errors++
 		} else {
-			if err := config.DB.SetAttribute(&models.Attribute{
-				EntryPath:  entry.Path,
-				Key:        "hash.md5",
-				Value:      hash,
-				Source:     models.AttributeSourceScan,
-				ComputedAt: now,
+			if err := config.DB.SetMetadata(&models.MetadataRecord{
+				EntryPath: entry.Path,
+				Key:       models.MetadataKeyHashMD5,
+				Value:     &hash,
+				Source:    models.MetadataSourceScan,
 			}); err != nil {
 				errors++
 			} else {
-				attributesSet++
+				metadataSet++
 			}
 		}
 	}
@@ -282,21 +274,20 @@ func processFile(entry *models.Entry, attrSet map[string]bool, config *PostProce
 			ppLog.WithError(err).WithField("path", entry.Path).Debug("Failed to compute SHA256 hash")
 			errors++
 		} else {
-			if err := config.DB.SetAttribute(&models.Attribute{
-				EntryPath:  entry.Path,
-				Key:        "hash.sha256",
-				Value:      hash,
-				Source:     models.AttributeSourceScan,
-				ComputedAt: now,
+			if err := config.DB.SetMetadata(&models.MetadataRecord{
+				EntryPath: entry.Path,
+				Key:       models.MetadataKeyHashSHA256,
+				Value:     &hash,
+				Source:    models.MetadataSourceScan,
 			}); err != nil {
 				errors++
 			} else {
-				attributesSet++
+				metadataSet++
 			}
 		}
 	}
 
-	return featuresCreated, attributesSet, errors
+	return metadataSet, errors
 }
 
 // detectMIME reads the first 512 bytes of a file and detects MIME type.

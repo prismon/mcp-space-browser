@@ -31,9 +31,12 @@ func setupQueryTestDB(t *testing.T) *database.DiskDB {
 		require.NoError(t, db.InsertOrUpdate(e))
 	}
 
-	require.NoError(t, db.SetAttribute(&models.Attribute{EntryPath: "/photos/a.jpg", Key: "mime", Value: "image/jpeg", Source: "scan", ComputedAt: now}))
-	require.NoError(t, db.SetAttribute(&models.Attribute{EntryPath: "/photos/b.png", Key: "mime", Value: "image/png", Source: "scan", ComputedAt: now}))
-	require.NoError(t, db.SetAttribute(&models.Attribute{EntryPath: "/photos/c.txt", Key: "mime", Value: "text/plain", Source: "scan", ComputedAt: now}))
+	mimeJpeg := "image/jpeg"
+	mimePng := "image/png"
+	mimeText := "text/plain"
+	require.NoError(t, db.SetMetadata(&models.MetadataRecord{EntryPath: "/photos/a.jpg", Key: "mime", Value: &mimeJpeg, Source: "scan"}))
+	require.NoError(t, db.SetMetadata(&models.MetadataRecord{EntryPath: "/photos/b.png", Key: "mime", Value: &mimePng, Source: "scan"}))
+	require.NoError(t, db.SetMetadata(&models.MetadataRecord{EntryPath: "/photos/c.txt", Key: "mime", Value: &mimeText, Source: "scan"}))
 
 	return db
 }

@@ -125,7 +125,6 @@ func TestSQLiteBackend_InitSchema(t *testing.T) {
 		db := backend.DB()
 		tables := []string{
 			"entries",
-			"attributes",
 			"resource_sets",
 			"resource_set_entries",
 			"resource_set_edges",

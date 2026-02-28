@@ -18,9 +18,9 @@ Index filesystem paths and extract attributes.
 | async | boolean | no | Return job ID immediately (default: true) |
 | maxAge | number | no | Max age in seconds before rescan (default: 3600) |
 
-**Sync response** includes a `post_processing` field with stats on attribute extraction and thumbnail generation:
+**Sync response** includes a `post_processing` field with stats on metadata extraction and thumbnail generation:
 ```json
-{"status": "completed", "duration_ms": 1234, "results": [...], "post_processing": {"files_processed": 50, "features_created": 12, "attributes_set": 100, "errors": 0, "duration_ms": 500}}
+{"status": "completed", "duration_ms": 1234, "results": [...], "post_processing": {"files_processed": 50, "metadata_set": 100, "errors": 0, "duration_ms": 500}}
 ```
 
 ```json
@@ -33,7 +33,7 @@ Index filesystem paths and extract attributes.
 
 ### query
 
-Search, filter, and aggregate across entries and attributes.
+Search, filter, and aggregate across entries and metadata.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -145,8 +145,8 @@ Real-time filesystem monitoring via fsnotify.
 
 | URI | Description |
 |-----|-------------|
-| `synthesis://entries/{path}` | Entry with attributes |
-| `synthesis://entries/{path}/attributes` | Attributes only |
+| `synthesis://entries/{path}` | Entry with all metadata |
+| `synthesis://entries/{path}/attributes` | Simple metadata only (key-value pairs) |
 | `synthesis://sets` | List all resource sets |
 | `synthesis://sets/{name}` | Resource set details |
 | `synthesis://sets/{name}/entries` | Entries in a set |

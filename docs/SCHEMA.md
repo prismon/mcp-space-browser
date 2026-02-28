@@ -29,26 +29,40 @@ CREATE INDEX idx_mtime ON entries(mtime);
 - `last_scanned`: Unix timestamp of last scan. Used to skip re-indexing recent paths.
 - `dirty`: Flag for incremental update tracking.
 
-### attributes
+### metadata
 
-Extensible key-value metadata per entry. Multiple attributes per entry, identified by `(entry_path, key)`.
+Unified metadata table storing both simple key-value pairs (mime, permissions, hashes) and classifier artifacts (thumbnails, timelines). Replaces the former `attributes` and `features` tables.
 
 ```sql
-CREATE TABLE attributes (
+CREATE TABLE metadata (
   entry_path TEXT NOT NULL,
   key TEXT NOT NULL,
   value TEXT,
-  source TEXT NOT NULL,
-  computed_at INTEGER,
-  PRIMARY KEY (entry_path, key)
+  source TEXT NOT NULL DEFAULT 'scan',
+  cache_path TEXT,
+  data_json TEXT,
+  mime_type TEXT,
+  file_size INTEGER DEFAULT 0,
+  generator TEXT,
+  hash TEXT UNIQUE,
+  created_at INTEGER DEFAULT (strftime('%s', 'now')),
+  updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+  FOREIGN KEY (entry_path) REFERENCES entries(path) ON DELETE CASCADE
 );
-CREATE INDEX idx_attributes_key ON attributes(key);
-CREATE INDEX idx_attributes_source ON attributes(source);
+CREATE UNIQUE INDEX idx_metadata_simple ON metadata(entry_path, key) WHERE hash IS NULL;
+CREATE INDEX idx_metadata_entry ON metadata(entry_path);
+CREATE INDEX idx_metadata_key ON metadata(key);
+CREATE INDEX idx_metadata_source ON metadata(source);
 ```
 
-- `key`: Attribute name (e.g. `mime`, `hash.md5`, `exif.camera`, `permissions`).
-- `source`: How the attribute was computed (e.g. `scan`, `classifier`, `rule`).
-- Queryable via the `query` tool's `where` clause. Non-entry-column keys automatically JOIN on this table.
+- **Simple metadata** (`hash = NULL`): Key-value pairs like `mime`, `permissions`, `hash.md5`. Unique on `(entry_path, key)` via partial index.
+- **Artifact metadata** (`hash != NULL`): Thumbnails, video timelines, extracted metadata. Deduplicated by the `UNIQUE(hash)` constraint. Multiple artifacts per `(entry_path, key)` are allowed (e.g. 5 timeline frames).
+- `key`: Metadata name (e.g. `mime`, `hash.md5`, `thumbnail`, `video-timeline`, `permissions`).
+- `source`: How the metadata was computed (`scan`, `classifier`, `enrichment`, `derived`).
+- `cache_path`: Filesystem path to cached artifact file (for thumbnails, timelines).
+- `data_json`: Structured JSON data (e.g. `{"frame": 0}` for timeline frames).
+- `generator`: Tool that produced the artifact (e.g. `go-image`, `ffmpeg`).
+- Queryable via the `query` tool's `where` clause. Non-entry-column keys automatically JOIN on this table (filtering only simple metadata where `hash IS NULL`).
 
 ### resource_sets
 

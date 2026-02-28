@@ -259,20 +259,21 @@ func buildArtifact(artifactType, mimeType, cachePath, sourcePath, hash string, m
 	}
 
 	// Persist artifact metadata to database (fire and forget)
-	// We do this asynchronously to avoid slowing down artifact generation
 	go func() {
 		if artifactDB != nil {
-			metadata := &models.Metadata{
-				Hash:         hash,
-				SourcePath:   sourcePath,
-				MetadataType: artifactType,
-				MimeType:     mimeType,
-				CachePath:    cachePath,
-				FileSize:     fileSize,
-				MetadataJson: metadataJSON,
-				CreatedAt:    time.Now().Unix(),
+			m := &models.MetadataRecord{
+				EntryPath: sourcePath,
+				Key:       artifactType,
+				Source:    models.MetadataSourceClassifier,
+				Hash:      &hash,
+				MimeType:  &mimeType,
+				CachePath: &cachePath,
+				FileSize:  fileSize,
 			}
-			if err := artifactDB.CreateOrUpdateMetadata(metadata); err != nil {
+			if metadataJSON != "" {
+				m.DataJson = &metadataJSON
+			}
+			if err := artifactDB.SetMetadata(m); err != nil {
 				inspectLog.WithError(err).WithField("hash", hash).Warn("Failed to persist artifact metadata")
 			}
 		}
@@ -342,9 +343,9 @@ func serveContent(c *gin.Context, db *database.DiskDB) {
 
 		// Check if path is in metadata table (validates it's a known artifact)
 		if !isValidArtifact && db != nil {
-			metadata, err := db.GetMetadataByCachePath(path)
-			inspectLog.WithField("path", path).WithField("found", metadata != nil).WithField("err", err).Debug("Checking metadata table")
-			if metadata != nil {
+			md, err := db.GetMetadataByCachePath(path)
+			inspectLog.WithField("path", path).WithField("found", md != nil).WithField("err", err).Debug("Checking metadata table")
+			if md != nil {
 				isValidArtifact = true
 				inspectLog.Debug("Valid artifact via metadata table")
 			}
@@ -596,24 +597,24 @@ func createVideoTimeline(path string, mtime int64, hashKey string, frames int) (
 func extractFileMetadata(path string, mtime int64, hashKey string) (*inspectArtifact, error) {
 	// Check if metadata already exists in database
 	if artifactDB != nil {
-		existing, err := artifactDB.GetMetadata(hashKey)
+		existing, err := artifactDB.GetMetadataByHash(hashKey)
 		if err != nil {
 			inspectLog.WithError(err).Debug("Failed to check existing metadata")
 		}
 		if existing != nil {
 			// Metadata already extracted, return it
 			var metadataMap map[string]interface{}
-			if existing.MetadataJson != "" {
-				if err := json.Unmarshal([]byte(existing.MetadataJson), &metadataMap); err != nil {
+			if existing.DataJson != nil && *existing.DataJson != "" {
+				if err := json.Unmarshal([]byte(*existing.DataJson), &metadataMap); err != nil {
 					inspectLog.WithError(err).Warn("Failed to unmarshal existing metadata")
 				}
 			}
 
 			return &inspectArtifact{
-				Type:        existing.MetadataType,
+				Type:        existing.Key,
 				MimeType:    "application/json",
 				Url:         fmt.Sprintf("%s/api/content?path=%s", contentBaseURL, url.QueryEscape(path)),
-				ResourceUri: fmt.Sprintf("synthesis://nodes/%s/metadata/%s", path, existing.MetadataType),
+				ResourceUri: fmt.Sprintf("synthesis://nodes/%s/metadata/%s", path, existing.Key),
 				Metadata:    metadataMap,
 			}, nil
 		}
@@ -639,18 +640,20 @@ func extractFileMetadata(path string, mtime int64, hashKey string) (*inspectArti
 
 	// Store metadata in database asynchronously
 	if artifactDB != nil {
-		metadata := &models.Metadata{
-			Hash:         hashKey,
-			SourcePath:   path,
-			MetadataType: result.MetadataType,
-			MimeType:     "application/json",
-			CachePath:    path, // No cache file for metadata, use source path
-			FileSize:     stat.Size(),
-			MetadataJson: metadataJSON,
+		appJson := "application/json"
+		m := &models.MetadataRecord{
+			EntryPath: path,
+			Key:       result.MetadataType,
+			Source:    models.MetadataSourceClassifier,
+			Hash:      &hashKey,
+			MimeType:  &appJson,
+			CachePath: &path,
+			FileSize:  stat.Size(),
+			DataJson:  &metadataJSON,
 		}
 
 		go func() {
-			if err := artifactDB.CreateOrUpdateMetadata(metadata); err != nil {
+			if err := artifactDB.SetMetadata(m); err != nil {
 				inspectLog.WithError(err).Warn("Failed to persist metadata")
 			} else {
 				inspectLog.WithFields(map[string]interface{}{

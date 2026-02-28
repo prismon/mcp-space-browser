@@ -133,50 +133,6 @@ type DiskUsageSummary struct {
 	NewestFileTime   int64  `json:"newest_file_time"`
 }
 
-// Metadata represents generated file metadata (thumbnail, video timeline, etc.)
-// DEPRECATED: Use Feature instead for new code
-type Metadata struct {
-	ID           int64  `db:"id" json:"id,omitempty"`
-	Hash         string `db:"hash" json:"hash"`                     // SHA256 hash for deduplication
-	SourcePath   string `db:"source_path" json:"source_path"`       // Original file path
-	MetadataType string `db:"metadata_type" json:"metadata_type"`   // "thumbnail", "video-timeline", etc.
-	MimeType     string `db:"mime_type" json:"mime_type"`           // "image/jpeg", etc.
-	CachePath    string `db:"cache_path" json:"cache_path"`         // Path to cached metadata file
-	FileSize     int64  `db:"file_size" json:"file_size"`           // Size of metadata file in bytes
-	MetadataJson string `db:"metadata_json" json:"metadata_json,omitempty"` // JSON metadata (frame number, etc.)
-	CreatedAt    int64  `db:"created_at" json:"created_at"`         // Unix timestamp
-	ResourceUri  string `db:"-" json:"resource_uri,omitempty"`      // MCP resource URI (computed)
-	HttpUrl      string `db:"-" json:"http_url,omitempty"`          // HTTP URL for fetching (computed)
-}
-
-// Feature represents a generated characteristic of an entry that requires
-// external processing (thumbnail generation, EXIF extraction, video timeline, etc.)
-// Features are linked to entries and can be either file-based (with CachePath) or data-based (with DataJson)
-type Feature struct {
-	ID               int64   `db:"id" json:"id,omitempty"`
-	EntryPath        string  `db:"entry_path" json:"entry_path"`                    // Path to the source entry
-	FeatureType      string  `db:"feature_type" json:"feature_type"`                // "thumbnail", "video-timeline", "exif", etc.
-	Hash             string  `db:"hash" json:"hash"`                                // SHA256 hash for deduplication
-	MimeType         *string `db:"mime_type" json:"mime_type,omitempty"`            // "image/jpeg", etc. (for file-based features)
-	CachePath        *string `db:"cache_path" json:"cache_path,omitempty"`          // Path to cached file (for binary features)
-	DataJson         *string `db:"data_json" json:"data_json,omitempty"`            // JSON data (for structured features like EXIF)
-	FileSize         int64   `db:"file_size" json:"file_size"`                      // Size of cached file (0 for data-only features)
-	Generator        string  `db:"generator" json:"generator"`                      // Generator identifier (e.g., "ffmpeg", "exiftool")
-	GeneratorVersion *string `db:"generator_version" json:"generator_version,omitempty"` // Version of the generator
-	CreatedAt        int64   `db:"created_at" json:"created_at"`                    // Unix timestamp
-	UpdatedAt        int64   `db:"updated_at" json:"updated_at"`                    // Unix timestamp
-
-	// Computed fields (not stored in DB)
-	HttpUrl string `db:"-" json:"http_url,omitempty"` // HTTP URL for fetching file-based features
-}
-
-// FeatureType constants
-const (
-	FeatureTypeThumbnail     = "thumbnail"
-	FeatureTypeVideoTimeline = "video-timeline"
-	FeatureTypeExif          = "exif"
-	FeatureTypeMediaInfo     = "media-info"
-)
 
 // Rule represents a rule definition
 type Rule struct {

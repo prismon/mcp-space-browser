@@ -32,8 +32,9 @@ func setupResourceTestDB(t *testing.T) *database.DiskDB {
 		require.NoError(t, db.InsertOrUpdate(e))
 	}
 
-	require.NoError(t, db.SetAttribute(&models.Attribute{
-		EntryPath: "/test/file.txt", Key: "mime", Value: "text/plain", Source: "scan", ComputedAt: now,
+	mimeVal := "text/plain"
+	require.NoError(t, db.SetMetadata(&models.MetadataRecord{
+		EntryPath: "/test/file.txt", Key: "mime", Value: &mimeVal, Source: "scan",
 	}))
 
 	return db
@@ -59,6 +60,10 @@ func TestResource_ExtractURIParam(t *testing.T) {
 		{"synthesis://sets/my-set", "synthesis://sets/", "my-set"},
 		{"synthesis://jobs/42", "synthesis://jobs/", "42"},
 		{"synthesis://wrong/path", "synthesis://entries/", ""},
+		// URL-encoded paths
+		{"synthesis://entries/%2FVolumes%2FArchive", "synthesis://entries/", "/Volumes/Archive"},
+		{"synthesis://entries/%2Fhome%2Fuser%2FMy%20Documents", "synthesis://entries/", "/home/user/My Documents"},
+		{"synthesis://entries/%2Ftest%2Ffile%20with%20spaces.txt", "synthesis://entries/", "/test/file with spaces.txt"},
 	}
 
 	for _, tt := range tests {
@@ -90,11 +95,11 @@ func TestResource_EntryData(t *testing.T) {
 	assert.Equal(t, "file", entry.Kind)
 	assert.Equal(t, int64(100), entry.Size)
 
-	attrs, err := db.GetAttributes("/test/file.txt")
+	attrs, err := db.GetSimpleMetadata("/test/file.txt")
 	require.NoError(t, err)
 	assert.Len(t, attrs, 1)
 	assert.Equal(t, "mime", attrs[0].Key)
-	assert.Equal(t, "text/plain", attrs[0].Value)
+	assert.Equal(t, "text/plain", *attrs[0].Value)
 }
 
 func TestResource_SetsListData(t *testing.T) {
@@ -140,12 +145,12 @@ func TestResource_MarshalEntry(t *testing.T) {
 	entry, err := db.Get("/test/file.txt")
 	require.NoError(t, err)
 
-	attrs, err := db.GetAttributes("/test/file.txt")
+	metadata, err := db.GetAllMetadata("/test/file.txt")
 	require.NoError(t, err)
 
 	result := map[string]interface{}{
-		"entry":      entry,
-		"attributes": attrs,
+		"entry":    entry,
+		"metadata": metadata,
 	}
 
 	payload, err := json.Marshal(result)
@@ -154,7 +159,66 @@ func TestResource_MarshalEntry(t *testing.T) {
 	var response map[string]interface{}
 	require.NoError(t, json.Unmarshal(payload, &response))
 	assert.NotNil(t, response["entry"])
-	assert.NotNil(t, response["attributes"])
+	assert.NotNil(t, response["metadata"])
+}
+
+func TestResource_EntryIncludesMetadata(t *testing.T) {
+	db := setupResourceTestDB(t)
+	defer db.Close()
+
+	cachePath := "/cache/ab/cd/abcd1234/thumb.jpg"
+	thumbHash := "abcd1234test"
+	mimeType := "image/jpeg"
+	generator := "go-image"
+	require.NoError(t, db.SetMetadata(&models.MetadataRecord{
+		EntryPath: "/test/file.txt",
+		Key:       "thumbnail",
+		Source:    models.MetadataSourceClassifier,
+		Hash:      &thumbHash,
+		MimeType:  &mimeType,
+		CachePath: &cachePath,
+		FileSize:  5000,
+		Generator: &generator,
+	}))
+
+	// Verify all metadata returned for entry
+	entry, err := db.Get("/test/file.txt")
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+
+	allMeta, err := db.GetAllMetadata("/test/file.txt")
+	require.NoError(t, err)
+	require.Len(t, allMeta, 2) // mime (simple) + thumbnail (artifact)
+
+	// Marshal the combined result (same shape as registerEntryResource returns)
+	result := map[string]interface{}{
+		"entry":    entry,
+		"metadata": allMeta,
+	}
+
+	payload, err := json.Marshal(result)
+	require.NoError(t, err)
+
+	var response map[string]interface{}
+	require.NoError(t, json.Unmarshal(payload, &response))
+	assert.NotNil(t, response["entry"])
+	assert.NotNil(t, response["metadata"])
+
+	metadataList, ok := response["metadata"].([]interface{})
+	require.True(t, ok)
+	assert.Len(t, metadataList, 2)
+
+	// Find the thumbnail metadata record
+	var thumbFound bool
+	for _, m := range metadataList {
+		rec := m.(map[string]interface{})
+		if rec["key"] == "thumbnail" {
+			thumbFound = true
+			assert.Equal(t, cachePath, rec["cache_path"])
+			break
+		}
+	}
+	assert.True(t, thumbFound, "thumbnail metadata should be present")
 }
 
 func TestRegisterMCPResourcesWithContext_RegistersAllTemplates(t *testing.T) {

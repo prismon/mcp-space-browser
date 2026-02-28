@@ -48,7 +48,7 @@ Run coverage: `go test -v -cover ./...`
 
 This is a **Go implementation** providing:
 - **5 composable MCP tools** replacing 59 specialized ones (scan, query, manage, batch, watch)
-- **Extensible attribute system** with key-value metadata per entry
+- **Unified metadata system** with key-value pairs and classifier artifacts per entry
 - **Single static binary** deployment (no runtime dependencies)
 - **MCP server** with streamable HTTP transport
 - **Live filesystem monitoring** with real-time updates using fsnotify
@@ -83,26 +83,27 @@ go test -v -cover ./...              # With coverage
 │   └── mcp-space-browser/    # CLI application and MCP server
 ├── pkg/
 │   ├── server/                # MCP server: 5 tools + 8 resource templates
-│   ├── database/              # SQLite abstraction (entries, attributes, sets, plans)
+│   ├── database/              # SQLite abstraction (entries, metadata, sets, plans)
 │   ├── crawler/               # Filesystem traversal (stack-based DFS)
 │   ├── sources/               # Source abstraction and live monitoring (fsnotify)
 │   ├── rules/                 # Rule execution engine for automation
 │   ├── classifier/            # Media file classification and thumbnails
 │   └── logger/                # Structured logging (logrus)
 └── internal/
-    └── models/                # Shared data structures (Entry, Attribute, Plan, etc.)
+    └── models/                # Shared data structures (Entry, MetadataRecord, Plan, etc.)
 ```
 
 ### Core Components
 1. **5 MCP Tools** (`pkg/server/tool_*.go`):
-   - `scan` — Index filesystem paths, extract attributes, auto-generate thumbnails
+   - `scan` — Index filesystem paths, extract metadata, auto-generate thumbnails
    - `query` — Search, filter, aggregate with dynamic SQL and cursor pagination
    - `manage` — CRUD for resource-sets, plans, and jobs
    - `batch` — Multi-file operations (attributes, duplicates, move, delete)
    - `watch` — Real-time filesystem monitoring via fsnotify
-2. **Attribute System** (`pkg/database/attributes.go`, `internal/models/attribute.go`):
-   - Extensible key-value pairs per filesystem entry
-   - Keys: `mime`, `hash.md5`, `hash.sha256`, `exif.*`, `permissions`, etc.
+2. **Metadata System** (`pkg/database/metadata.go`, `internal/models/metadata.go`):
+   - Unified table for simple key-value pairs and classifier artifacts
+   - Simple metadata keys: `mime`, `hash.md5`, `hash.sha256`, `permissions`, etc.
+   - Artifact metadata: `thumbnail`, `video-timeline`, `metadata` (with hash-based dedup)
    - Queryable via the `query` tool's `where` clause (auto-JOINs on non-entry columns)
 3. **Post-Processor** (`pkg/server/post_processor.go`):
    - Runs automatically after scan completes (both sync and async)
@@ -119,9 +120,9 @@ go test -v -cover ./...              # With coverage
 
 ### Key Design Patterns
 - **Composable Tool Interface**: 5 tools with structured parameters replace 59 specialized tools
-- **Attribute-Based Filtering**: `query` WHERE clause handles both entry columns and attributes transparently
+- **Metadata-Based Filtering**: `query` WHERE clause handles both entry columns and metadata transparently
 - **Cursor Pagination**: Base64-encoded offset tokens for stateless pagination
-- **Single Table + Attributes**: Entries table for core data, attributes table for extensible metadata
+- **Entries + Metadata**: Entries table for core data, unified metadata table for key-value pairs and classifier artifacts
 - **Bottom-Up Aggregation**: Directory sizes computed after crawling (deepest-first)
 - **In-Memory Testing**: All tests use `:memory:` SQLite (with `MaxOpenConns(1)` for connection safety)
 
@@ -132,7 +133,7 @@ See `docs/SCHEMA.md` for complete schema. Key tables:
 ```sql
 -- Core data
 entries (path, parent, size, kind, ctime, mtime, last_scanned)
-attributes (entry_path, key, value, source, computed_at)  -- extensible metadata
+metadata (entry_path, key, value, source, cache_path, data_json, mime_type, file_size, generator, hash)  -- unified metadata
 
 -- Organization
 resource_sets (name, description)

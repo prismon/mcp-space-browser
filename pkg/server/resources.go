@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -53,14 +54,24 @@ func registerEntryResourceMP(s *server.MCPServer, sc *ServerContext) {
 			return nil, fmt.Errorf("entry not found: %s", path)
 		}
 
-		attrs, err := db.GetAttributes(path)
+		metadata, err := db.GetAllMetadata(path)
 		if err != nil {
-			attrs = nil
+			metadata = nil
+		}
+		// Compute HTTP URLs for metadata with cache paths
+		for _, m := range metadata {
+			if m.CachePath != nil && *m.CachePath != "" {
+				baseURL := contentBaseURL
+				if baseURL == "" {
+					baseURL = "http://localhost:3000"
+				}
+				m.HttpUrl = fmt.Sprintf("%s/api/content?path=%s", baseURL, url.QueryEscape(*m.CachePath))
+			}
 		}
 
 		result := map[string]interface{}{
-			"entry":      entry,
-			"attributes": attrs,
+			"entry":    entry,
+			"metadata": metadata,
 		}
 
 		return resourceJSON(result, request.Params.URI)
@@ -72,7 +83,7 @@ func registerEntryAttributesResourceMP(s *server.MCPServer, sc *ServerContext) {
 	template := mcp.NewResourceTemplate(
 		"synthesis://entries/{path}/attributes",
 		"Entry Attributes",
-		mcp.WithTemplateDescription("Attributes for a filesystem entry"),
+		mcp.WithTemplateDescription("Simple metadata for a filesystem entry"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
@@ -89,12 +100,12 @@ func registerEntryAttributesResourceMP(s *server.MCPServer, sc *ServerContext) {
 			return nil, fmt.Errorf("path parameter is required")
 		}
 
-		attrs, err := db.GetAttributes(path)
+		metadata, err := db.GetSimpleMetadata(path)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get attributes: %w", err)
+			return nil, fmt.Errorf("failed to get metadata: %w", err)
 		}
 
-		return resourceJSON(attrs, uri)
+		return resourceJSON(metadata, uri)
 	})
 }
 
@@ -293,26 +304,36 @@ func registerEntryResource(s *server.MCPServer, db *database.DiskDB) {
 			return nil, fmt.Errorf("entry not found: %s", path)
 		}
 
-		attrs, err := db.GetAttributes(path)
+		metadata, err := db.GetAllMetadata(path)
 		if err != nil {
-			attrs = nil
+			metadata = nil
+		}
+		// Compute HTTP URLs for metadata with cache paths
+		for _, m := range metadata {
+			if m.CachePath != nil && *m.CachePath != "" {
+				baseURL := contentBaseURL
+				if baseURL == "" {
+					baseURL = "http://localhost:3000"
+				}
+				m.HttpUrl = fmt.Sprintf("%s/api/content?path=%s", baseURL, url.QueryEscape(*m.CachePath))
+			}
 		}
 
 		result := map[string]interface{}{
-			"entry":      entry,
-			"attributes": attrs,
+			"entry":    entry,
+			"metadata": metadata,
 		}
 
 		return resourceJSON(result, request.Params.URI)
 	})
 }
 
-// 2. synthesis://entries/{path}/attributes — just attributes
+// 2. synthesis://entries/{path}/attributes — simple metadata
 func registerEntryAttributesResource(s *server.MCPServer, db *database.DiskDB) {
 	template := mcp.NewResourceTemplate(
 		"synthesis://entries/{path}/attributes",
 		"Entry Attributes",
-		mcp.WithTemplateDescription("Attributes for a filesystem entry"),
+		mcp.WithTemplateDescription("Simple metadata for a filesystem entry"),
 		mcp.WithTemplateMIMEType("application/json"),
 	)
 
@@ -325,12 +346,12 @@ func registerEntryAttributesResource(s *server.MCPServer, db *database.DiskDB) {
 			return nil, fmt.Errorf("path parameter is required")
 		}
 
-		attrs, err := db.GetAttributes(path)
+		metadata, err := db.GetSimpleMetadata(path)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get attributes: %w", err)
+			return nil, fmt.Errorf("failed to get metadata: %w", err)
 		}
 
-		return resourceJSON(attrs, uri)
+		return resourceJSON(metadata, uri)
 	})
 }
 
@@ -472,5 +493,10 @@ func extractURIParam(uri, prefix string) string {
 	if !strings.HasPrefix(uri, prefix) {
 		return ""
 	}
-	return strings.TrimPrefix(uri, prefix)
+	raw := strings.TrimPrefix(uri, prefix)
+	decoded, err := url.QueryUnescape(raw)
+	if err != nil {
+		return raw
+	}
+	return decoded
 }

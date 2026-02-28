@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -130,7 +129,6 @@ func handleBatchAttributes(db *database.DiskDB, paths []string, keys []string) (
 		return mcp.NewToolResultError("keys is required for attributes operation"), nil
 	}
 
-	now := time.Now().Unix()
 	results := make([]map[string]interface{}, 0, len(paths))
 
 	for _, path := range paths {
@@ -145,18 +143,14 @@ func handleBatchAttributes(db *database.DiskDB, paths []string, keys []string) (
 
 		attrs := make(map[string]string)
 		for _, key := range keys {
-			// For now, set a placeholder value. In production this would
-			// call actual extractors (mime detection, hashing, etc.)
 			value := computeAttribute(entry, key)
 			if value != "" {
-				attr := &models.Attribute{
-					EntryPath:  path,
-					Key:        key,
-					Value:      value,
-					Source:     "enrichment",
-					ComputedAt: now,
-				}
-				if err := db.SetAttribute(attr); err != nil {
+				if err := db.SetMetadata(&models.MetadataRecord{
+					EntryPath: path,
+					Key:       key,
+					Value:     &value,
+					Source:    models.MetadataSourceEnrichment,
+				}); err != nil {
 					results = append(results, map[string]interface{}{
 						"path":  path,
 						"error": fmt.Sprintf("failed to set %s: %v", key, err),
@@ -204,11 +198,11 @@ func handleBatchDuplicates(db *database.DiskDB, paths []string, method string, t
 	// Build hash -> paths map
 	hashGroups := make(map[string][]string)
 	for _, path := range paths {
-		attr, err := db.GetAttribute(path, hashKey)
-		if err != nil || attr == nil {
+		m, err := db.GetMetadataByKey(path, hashKey)
+		if err != nil || m == nil || m.Value == nil {
 			continue
 		}
-		hashGroups[attr.Value] = append(hashGroups[attr.Value], path)
+		hashGroups[*m.Value] = append(hashGroups[*m.Value], path)
 	}
 
 	// Filter to groups with duplicates

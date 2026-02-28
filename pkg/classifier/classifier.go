@@ -73,7 +73,7 @@ func DetectMediaType(path string) MediaType {
 	switch ext {
 	case ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp":
 		return MediaTypeImage
-	case ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".flv":
+	case ".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".flv", ".wmv", ".mpg", ".mpeg", ".ts", ".3gp", ".asf":
 		return MediaTypeVideo
 	default:
 		return MediaTypeUnknown

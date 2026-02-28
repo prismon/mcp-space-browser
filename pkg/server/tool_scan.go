@@ -145,11 +145,10 @@ func handleScanAsync(db *database.DiskDB, paths []string, opts *crawler.IndexOpt
 			}, []string{path})
 
 			log.WithFields(logrus.Fields{
-				"jobID":      id,
-				"path":       path,
-				"files":      ppResult.FilesProcessed,
-				"features":   ppResult.FeaturesCreated,
-				"attributes": ppResult.AttributesSet,
+				"jobID":    id,
+				"path":     path,
+				"files":    ppResult.FilesProcessed,
+				"metadata": ppResult.MetadataSet,
 			}).Info("Scan and post-processing completed")
 
 			db.UpdateIndexJobStatus(id, "completed", nil)
@@ -212,11 +211,10 @@ func handleScanSync(db *database.DiskDB, paths []string, opts *crawler.IndexOpti
 		}, successPaths)
 
 		ppStats = map[string]interface{}{
-			"files_processed":  ppResult.FilesProcessed,
-			"features_created": ppResult.FeaturesCreated,
-			"attributes_set":   ppResult.AttributesSet,
-			"errors":           ppResult.Errors,
-			"duration_ms":      ppResult.Duration.Milliseconds(),
+			"files_processed": ppResult.FilesProcessed,
+			"metadata_set":    ppResult.MetadataSet,
+			"errors":          ppResult.Errors,
+			"duration_ms":     ppResult.Duration.Milliseconds(),
 		}
 	}
 

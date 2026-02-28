@@ -278,24 +278,24 @@ func (ti *ToolInvoker) invokeIndex(args map[string]interface{}) error {
 	return nil
 }
 
-// invokeFeatureCleanup handles feature-cleanup tool - deletes all features for an entry
+// invokeFeatureCleanup handles feature-cleanup tool - deletes all metadata for an entry
 func (ti *ToolInvoker) invokeFeatureCleanup(args map[string]interface{}, entry *models.Entry) error {
 	path, _ := args["path"].(string)
 	if path == "" {
 		path = entry.Path
 	}
 
-	// Delete all features for this entry path
-	count, err := ti.db.DeleteFeaturesByPath(path)
+	// Delete all metadata for this entry path
+	count, err := ti.db.DeleteMetadataByEntry(path)
 	if err != nil {
-		return fmt.Errorf("failed to delete features for %s: %w", path, err)
+		return fmt.Errorf("failed to delete metadata for %s: %w", path, err)
 	}
 
 	if count > 0 {
 		ti.logger.WithFields(logrus.Fields{
 			"path":    path,
 			"deleted": count,
-		}).Info("Cleaned up features for entry")
+		}).Info("Cleaned up metadata for entry")
 	}
 
 	return nil

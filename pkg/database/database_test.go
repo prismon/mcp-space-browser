@@ -521,36 +521,40 @@ func TestMetadataOperations(t *testing.T) {
 	require.NoError(t, err)
 
 	testHash := "abc123hash"
+	mimeType := "image/jpeg"
+	cachePath := "/cache/abc123.jpg"
+	generator := "go-image"
 
-	t.Run("CreateOrUpdateMetadata", func(t *testing.T) {
-		meta := &models.Metadata{
-			Hash:         testHash,
-			SourcePath:   "/test/file.txt",
-			MetadataType: "thumbnail",
-			MimeType:     "image/jpeg",
-			CachePath:    "/cache/abc123.jpg",
-			FileSize:     1024,
-			CreatedAt:    time.Now().Unix(),
+	t.Run("SetMetadata_Artifact", func(t *testing.T) {
+		meta := &models.MetadataRecord{
+			EntryPath: "/test/file.txt",
+			Key:       models.MetadataKeyThumbnail,
+			Source:    models.MetadataSourceClassifier,
+			Hash:      &testHash,
+			MimeType:  &mimeType,
+			CachePath: &cachePath,
+			FileSize:  1024,
+			Generator: &generator,
 		}
-		err := db.CreateOrUpdateMetadata(meta)
+		err := db.SetMetadata(meta)
 		assert.NoError(t, err)
 	})
 
-	t.Run("GetMetadata", func(t *testing.T) {
-		retrieved, err := db.GetMetadata(testHash)
+	t.Run("GetMetadataByHash", func(t *testing.T) {
+		retrieved, err := db.GetMetadataByHash(testHash)
 		assert.NoError(t, err)
 		assert.NotNil(t, retrieved)
-		assert.Equal(t, "thumbnail", retrieved.MetadataType)
+		assert.Equal(t, "thumbnail", retrieved.Key)
 	})
 
-	t.Run("GetMetadataByPath", func(t *testing.T) {
-		metas, err := db.GetMetadataByPath("/test/file.txt")
+	t.Run("GetAllMetadata", func(t *testing.T) {
+		metas, err := db.GetAllMetadata("/test/file.txt")
 		assert.NoError(t, err)
 		assert.NotEmpty(t, metas)
-		assert.Equal(t, "/test/file.txt", metas[0].SourcePath)
+		assert.Equal(t, "/test/file.txt", metas[0].EntryPath)
 	})
 
-	t.Run("ListMetadata", func(t *testing.T) {
+	t.Run("QueryMetadataByKey", func(t *testing.T) {
 		// Add another entry and metadata
 		entry2 := &models.Entry{
 			Path: "/test/file2.txt",
@@ -559,29 +563,31 @@ func TestMetadataOperations(t *testing.T) {
 		}
 		db.InsertOrUpdate(entry2)
 
-		meta2 := &models.Metadata{
-			Hash:         "xyz789hash",
-			SourcePath:   "/test/file2.txt",
-			MetadataType: "thumbnail",
-			MimeType:     "image/jpeg",
-			CachePath:    "/cache/xyz789.jpg",
-			FileSize:     2048,
-			CreatedAt:    time.Now().Unix(),
+		testHash2 := "xyz789hash"
+		cachePath2 := "/cache/xyz789.jpg"
+		meta2 := &models.MetadataRecord{
+			EntryPath: "/test/file2.txt",
+			Key:       models.MetadataKeyThumbnail,
+			Source:    models.MetadataSourceClassifier,
+			Hash:      &testHash2,
+			MimeType:  &mimeType,
+			CachePath: &cachePath2,
+			FileSize:  2048,
+			Generator: &generator,
 		}
-		db.CreateOrUpdateMetadata(meta2)
+		db.SetMetadata(meta2)
 
-		metaType := "thumbnail"
-		list, err := db.ListMetadata(&metaType)
+		list, err := db.QueryMetadataByKey("thumbnail")
 		assert.NoError(t, err)
 		assert.GreaterOrEqual(t, len(list), 2)
 	})
 
-	t.Run("DeleteMetadata", func(t *testing.T) {
-		err := db.DeleteMetadata(testHash)
+	t.Run("DeleteMetadataByHash", func(t *testing.T) {
+		err := db.DeleteMetadataByHash(testHash)
 		assert.NoError(t, err)
 
 		// Verify deleted
-		retrieved, err := db.GetMetadata(testHash)
+		retrieved, err := db.GetMetadataByHash(testHash)
 		assert.NoError(t, err)
 		assert.Nil(t, retrieved)
 	})
@@ -1556,18 +1562,18 @@ func TestUpdateEntryPathNonexistent(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
-func TestGetMetadataNonexistent(t *testing.T) {
+func TestGetMetadataByHashNonexistent(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
 	// Get nonexistent metadata
-	meta, err := db.GetMetadata("nonexistent-hash")
+	meta, err := db.GetMetadataByHash("nonexistent-hash")
 	assert.NoError(t, err)
 	assert.Nil(t, meta)
 }
 
-func TestListMetadataNilFilter(t *testing.T) {
+func TestQueryMetadataByKeyAll(t *testing.T) {
 	db, err := NewDiskDB(":memory:")
 	require.NoError(t, err)
 	defer db.Close()
@@ -1578,16 +1584,22 @@ func TestListMetadataNilFilter(t *testing.T) {
 	}
 	db.InsertOrUpdate(entry)
 
-	meta := &models.Metadata{
-		Hash:         "test-hash",
-		SourcePath:   "/test.txt",
-		MetadataType: "thumbnail",
-		CreatedAt:    time.Now().Unix(),
-	}
-	db.CreateOrUpdateMetadata(meta)
+	hash := "test-hash"
+	mimeType := "image/jpeg"
+	cachePath := "/cache/thumb.jpg"
+	generator := "go-image"
+	db.SetMetadata(&models.MetadataRecord{
+		EntryPath: "/test.txt",
+		Key:       models.MetadataKeyThumbnail,
+		Source:    models.MetadataSourceClassifier,
+		Hash:      &hash,
+		MimeType:  &mimeType,
+		CachePath: &cachePath,
+		Generator: &generator,
+	})
 
-	// List with nil filter
-	metas, err := db.ListMetadata(nil)
+	// Query all with key "thumbnail"
+	metas, err := db.QueryMetadataByKey("thumbnail")
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, len(metas), 1)
 }

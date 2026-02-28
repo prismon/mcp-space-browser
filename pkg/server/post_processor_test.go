@@ -45,14 +45,14 @@ func TestPostProcess_MimeDetection(t *testing.T) {
 	}, []string{tmpDir})
 
 	assert.Equal(t, int64(1), result.FilesProcessed)
-	assert.Equal(t, int64(1), result.AttributesSet)
+	assert.Equal(t, int64(1), result.MetadataSet)
 	assert.Equal(t, int64(0), result.Errors)
 
-	attr, err := db.GetAttribute(filepath.Join(tmpDir, "hello.txt"), "mime")
+	m, err := db.GetMetadataByKey(filepath.Join(tmpDir, "hello.txt"), "mime")
 	require.NoError(t, err)
-	require.NotNil(t, attr)
-	assert.Equal(t, "text/plain; charset=utf-8", attr.Value)
-	assert.Equal(t, "scan", attr.Source)
+	require.NotNil(t, m)
+	assert.Equal(t, "text/plain; charset=utf-8", *m.Value)
+	assert.Equal(t, "scan", m.Source)
 }
 
 func TestPostProcess_PermissionsExtracted(t *testing.T) {
@@ -66,12 +66,12 @@ func TestPostProcess_PermissionsExtracted(t *testing.T) {
 	}, []string{tmpDir})
 
 	assert.Equal(t, int64(1), result.FilesProcessed)
-	assert.Equal(t, int64(1), result.AttributesSet)
+	assert.Equal(t, int64(1), result.MetadataSet)
 
-	attr, err := db.GetAttribute(filepath.Join(tmpDir, "test.txt"), "permissions")
+	m, err := db.GetMetadataByKey(filepath.Join(tmpDir, "test.txt"), "permissions")
 	require.NoError(t, err)
-	require.NotNil(t, attr)
-	assert.Equal(t, "0644", attr.Value)
+	require.NotNil(t, m)
+	assert.Equal(t, "0644", *m.Value)
 }
 
 func TestPostProcess_ThumbnailGeneration(t *testing.T) {
@@ -96,7 +96,7 @@ func TestPostProcess_ThumbnailGeneration(t *testing.T) {
 	assert.Equal(t, int64(1), result.FilesProcessed)
 	// Thumbnail generation may succeed or fail depending on environment,
 	// but there should be no panics and processing should complete
-	assert.True(t, result.FeaturesCreated >= 0)
+	assert.True(t, result.MetadataSet >= 0)
 }
 
 func TestPostProcess_DefaultAttributes(t *testing.T) {
@@ -112,13 +112,13 @@ func TestPostProcess_DefaultAttributes(t *testing.T) {
 	assert.Equal(t, int64(1), result.FilesProcessed)
 
 	// At minimum, mime and permissions should be set (they don't need classifier infra)
-	mimeAttr, err := db.GetAttribute(filepath.Join(tmpDir, "readme.txt"), "mime")
+	mimeM, err := db.GetMetadataByKey(filepath.Join(tmpDir, "readme.txt"), "mime")
 	require.NoError(t, err)
-	require.NotNil(t, mimeAttr, "mime attribute should be set with default attributes")
+	require.NotNil(t, mimeM, "mime metadata should be set with default attributes")
 
-	permAttr, err := db.GetAttribute(filepath.Join(tmpDir, "readme.txt"), "permissions")
+	permM, err := db.GetMetadataByKey(filepath.Join(tmpDir, "readme.txt"), "permissions")
 	require.NoError(t, err)
-	require.NotNil(t, permAttr, "permissions attribute should be set with default attributes")
+	require.NotNil(t, permM, "permissions metadata should be set with default attributes")
 }
 
 func TestPostProcess_FilteredAttributes(t *testing.T) {
@@ -133,15 +133,15 @@ func TestPostProcess_FilteredAttributes(t *testing.T) {
 	}, []string{tmpDir})
 
 	assert.Equal(t, int64(1), result.FilesProcessed)
-	assert.Equal(t, int64(1), result.AttributesSet)
+	assert.Equal(t, int64(1), result.MetadataSet)
 
-	mimeAttr, err := db.GetAttribute(filepath.Join(tmpDir, "data.txt"), "mime")
+	mimeM, err := db.GetMetadataByKey(filepath.Join(tmpDir, "data.txt"), "mime")
 	require.NoError(t, err)
-	require.NotNil(t, mimeAttr, "mime should be extracted")
+	require.NotNil(t, mimeM, "mime should be extracted")
 
-	permAttr, err := db.GetAttribute(filepath.Join(tmpDir, "data.txt"), "permissions")
+	permM, err := db.GetMetadataByKey(filepath.Join(tmpDir, "data.txt"), "permissions")
 	require.NoError(t, err)
-	assert.Nil(t, permAttr, "permissions should NOT be extracted when filtered out")
+	assert.Nil(t, permM, "permissions should NOT be extracted when filtered out")
 }
 
 func TestPostProcess_ErrorTolerance(t *testing.T) {
@@ -161,11 +161,11 @@ func TestPostProcess_ErrorTolerance(t *testing.T) {
 	// b.txt should still be processed
 	assert.Equal(t, int64(2), result.FilesProcessed)
 	assert.True(t, result.Errors > 0, "should have errors from deleted file")
-	assert.True(t, result.AttributesSet > 0, "surviving file should have attributes set")
+	assert.True(t, result.MetadataSet > 0, "surviving file should have metadata set")
 
-	attr, err := db.GetAttribute(filepath.Join(tmpDir, "b.txt"), "mime")
+	m, err := db.GetMetadataByKey(filepath.Join(tmpDir, "b.txt"), "mime")
 	require.NoError(t, err)
-	require.NotNil(t, attr, "b.txt should have mime attribute")
+	require.NotNil(t, m, "b.txt should have mime metadata")
 }
 
 func TestPostProcess_NoFilesSkipsProcessing(t *testing.T) {
@@ -177,7 +177,7 @@ func TestPostProcess_NoFilesSkipsProcessing(t *testing.T) {
 	}, []string{tmpDir})
 
 	assert.Equal(t, int64(0), result.FilesProcessed)
-	assert.Equal(t, int64(0), result.AttributesSet)
+	assert.Equal(t, int64(0), result.MetadataSet)
 	assert.Equal(t, int64(0), result.Errors)
 }
 
@@ -192,12 +192,12 @@ func TestPostProcess_HashMD5(t *testing.T) {
 	}, []string{tmpDir})
 
 	assert.Equal(t, int64(1), result.FilesProcessed)
-	assert.Equal(t, int64(1), result.AttributesSet)
+	assert.Equal(t, int64(1), result.MetadataSet)
 
-	attr, err := db.GetAttribute(filepath.Join(tmpDir, "hash_test.txt"), "hash.md5")
+	m, err := db.GetMetadataByKey(filepath.Join(tmpDir, "hash_test.txt"), "hash.md5")
 	require.NoError(t, err)
-	require.NotNil(t, attr)
-	assert.Len(t, attr.Value, 32) // MD5 hex length
+	require.NotNil(t, m)
+	assert.Len(t, *m.Value, 32) // MD5 hex length
 }
 
 func TestPostProcess_HashSHA256(t *testing.T) {
@@ -211,12 +211,12 @@ func TestPostProcess_HashSHA256(t *testing.T) {
 	}, []string{tmpDir})
 
 	assert.Equal(t, int64(1), result.FilesProcessed)
-	assert.Equal(t, int64(1), result.AttributesSet)
+	assert.Equal(t, int64(1), result.MetadataSet)
 
-	attr, err := db.GetAttribute(filepath.Join(tmpDir, "hash_test.txt"), "hash.sha256")
+	m, err := db.GetMetadataByKey(filepath.Join(tmpDir, "hash_test.txt"), "hash.sha256")
 	require.NoError(t, err)
-	require.NotNil(t, attr)
-	assert.Len(t, attr.Value, 64) // SHA256 hex length
+	require.NotNil(t, m)
+	assert.Len(t, *m.Value, 64) // SHA256 hex length
 }
 
 func TestPostProcess_NilDB(t *testing.T) {

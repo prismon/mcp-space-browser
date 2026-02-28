@@ -299,78 +299,38 @@ func (s *SQLiteBackend) InitSchema() error {
 		return err
 	}
 
-	// Create metadata table
+	// Create unified metadata table
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS metadata (
-		id INTEGER PRIMARY KEY,
-		hash TEXT UNIQUE NOT NULL,
-		source_path TEXT NOT NULL,
-		metadata_type TEXT NOT NULL,
-		mime_type TEXT NOT NULL,
-		cache_path TEXT NOT NULL,
-		file_size INTEGER DEFAULT 0,
-		metadata_json TEXT,
-		created_at INTEGER DEFAULT (strftime('%s', 'now')),
-		FOREIGN KEY (source_path) REFERENCES entries(path) ON DELETE CASCADE
-	)`); err != nil {
-		return fmt.Errorf("failed to create metadata table: %w", err)
-	}
-
-	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_metadata_source ON metadata(source_path)"); err != nil {
-		return err
-	}
-
-	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_metadata_type ON metadata(metadata_type)"); err != nil {
-		return err
-	}
-
-	// Create attributes table - extensible key-value metadata per entry
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS attributes (
 		entry_path TEXT NOT NULL,
 		key TEXT NOT NULL,
 		value TEXT,
-		source TEXT NOT NULL,
-		computed_at INTEGER,
-		PRIMARY KEY (entry_path, key)
-	)`); err != nil {
-		return fmt.Errorf("failed to create attributes table: %w", err)
-	}
-
-	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_attributes_key ON attributes(key)"); err != nil {
-		return err
-	}
-
-	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_attributes_source ON attributes(source)"); err != nil {
-		return err
-	}
-
-	// Create features table - stores generated characteristics of entries
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS features (
-		id INTEGER PRIMARY KEY,
-		entry_path TEXT NOT NULL,
-		feature_type TEXT NOT NULL,
-		hash TEXT UNIQUE NOT NULL,
-		mime_type TEXT,
+		source TEXT NOT NULL DEFAULT 'scan',
 		cache_path TEXT,
 		data_json TEXT,
+		mime_type TEXT,
 		file_size INTEGER DEFAULT 0,
-		generator TEXT NOT NULL,
-		generator_version TEXT,
+		generator TEXT,
+		hash TEXT UNIQUE,
 		created_at INTEGER DEFAULT (strftime('%s', 'now')),
 		updated_at INTEGER DEFAULT (strftime('%s', 'now')),
 		FOREIGN KEY (entry_path) REFERENCES entries(path) ON DELETE CASCADE
 	)`); err != nil {
-		return fmt.Errorf("failed to create features table: %w", err)
+		return fmt.Errorf("failed to create metadata table: %w", err)
 	}
 
-	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_features_entry ON features(entry_path)"); err != nil {
+	if _, err := s.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_metadata_simple ON metadata(entry_path, key) WHERE hash IS NULL"); err != nil {
 		return err
 	}
 
-	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_features_type ON features(feature_type)"); err != nil {
+	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_metadata_entry ON metadata(entry_path)"); err != nil {
 		return err
 	}
 
-	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_features_entry_type ON features(entry_path, feature_type)"); err != nil {
+	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_metadata_key ON metadata(key)"); err != nil {
+		return err
+	}
+
+	if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_metadata_source ON metadata(source)"); err != nil {
 		return err
 	}
 

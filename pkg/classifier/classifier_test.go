@@ -31,7 +31,14 @@ func TestDetectMediaType(t *testing.T) {
 		{"test.webm", MediaTypeVideo},
 		{"test.m4v", MediaTypeVideo},
 		{"test.flv", MediaTypeVideo},
+		{"test.wmv", MediaTypeVideo},
+		{"test.mpg", MediaTypeVideo},
+		{"test.mpeg", MediaTypeVideo},
+		{"test.ts", MediaTypeVideo},
+		{"test.3gp", MediaTypeVideo},
+		{"test.asf", MediaTypeVideo},
 		{"test.MP4", MediaTypeVideo}, // Test case insensitivity
+		{"test.WMV", MediaTypeVideo}, // Test case insensitivity
 		{"test.txt", MediaTypeUnknown},
 		{"test.pdf", MediaTypeUnknown},
 		{"test", MediaTypeUnknown},
