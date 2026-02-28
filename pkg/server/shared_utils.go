@@ -1,13 +1,81 @@
 package server
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"time"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/prismon/mcp-space-browser/internal/models"
+	"github.com/prismon/mcp-space-browser/pkg/database"
 )
+
+// unmarshalArgs converts MCP tool arguments into a typed struct
+func unmarshalArgs(arguments interface{}, v interface{}) error {
+	data, err := json.Marshal(arguments)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, v)
+}
+
+func getBoolOrDefault(ptr *bool, defaultVal bool) bool {
+	if ptr != nil {
+		return *ptr
+	}
+	return defaultVal
+}
+
+func getIntOrDefault(ptr *int, defaultVal int) int {
+	if ptr != nil {
+		return *ptr
+	}
+	return defaultVal
+}
+
+func getInt64OrDefault(ptr *int64, defaultVal int64) int64 {
+	if ptr != nil {
+		return *ptr
+	}
+	return defaultVal
+}
+
+func getStringOrDefault(ptr *string, defaultVal string) string {
+	if ptr != nil {
+		return *ptr
+	}
+	return defaultVal
+}
+
+func parseJobID(jobIDStr string) (int64, error) {
+	return strconv.ParseInt(jobIDStr, 10, 64)
+}
+
+// requireProjectDB resolves the DiskDB for the current session's active project
+func requireProjectDB(ctx context.Context, sc *ServerContext) (*database.DiskDB, *mcp.CallToolResult) {
+	backend, err := sc.GetProjectDB(ctx)
+	if err != nil {
+		return nil, mcp.NewToolResultError(fmt.Sprintf("No active project: %v. Use manage to open a project.", err))
+	}
+
+	if sqliteBackend, ok := backend.(*database.SQLiteBackend); ok {
+		db, err := sqliteBackend.DiskDB()
+		if err != nil {
+			return nil, mcp.NewToolResultError(fmt.Sprintf("Failed to get database: %v", err))
+		}
+		return db, nil
+	}
+
+	if db, ok := backend.(*database.DiskDB); ok {
+		return db, nil
+	}
+
+	return nil, mcp.NewToolResultError("Unsupported database backend.")
+}
 
 // PaginatedTreeResponse represents a paginated tree structure with summary statistics
 type PaginatedTreeResponse struct {

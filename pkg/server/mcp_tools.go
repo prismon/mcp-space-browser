@@ -179,30 +179,7 @@ func getProjectDB(ctx context.Context, sc *ServerContext) (database.Backend, err
 	return sc.GetProjectDB(ctx)
 }
 
-// requireProjectDB gets the project database or returns an MCP error
-// This is a convenience helper for tool handlers
-func requireProjectDB(ctx context.Context, sc *ServerContext) (*database.DiskDB, *mcp.CallToolResult) {
-	backend, err := sc.GetProjectDB(ctx)
-	if err != nil {
-		return nil, mcp.NewToolResultError(fmt.Sprintf("No active project: %v. Use project-open to select a project.", err))
-	}
-
-	// Handle SQLiteBackend - get the DiskDB wrapper
-	if sqliteBackend, ok := backend.(*database.SQLiteBackend); ok {
-		db, err := sqliteBackend.DiskDB()
-		if err != nil {
-			return nil, mcp.NewToolResultError(fmt.Sprintf("Failed to get database: %v", err))
-		}
-		return db, nil
-	}
-
-	// Also support direct DiskDB (for backwards compatibility)
-	if db, ok := backend.(*database.DiskDB); ok {
-		return db, nil
-	}
-
-	return nil, mcp.NewToolResultError("Unsupported database backend. Only SQLite is currently supported.")
-}
+// requireProjectDB is now in shared_utils.go
 
 // Tree compression utilities
 
@@ -1735,42 +1712,8 @@ func registerSessionSetPreferences(s *server.MCPServer, db *database.DiskDB) {
 
 // Helper functions
 
-func unmarshalArgs(arguments interface{}, v interface{}) error {
-	// Convert arguments to JSON bytes
-	data, err := json.Marshal(arguments)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, v)
-}
-
-func getIntOrDefault(ptr *int, defaultVal int) int {
-	if ptr != nil {
-		return *ptr
-	}
-	return defaultVal
-}
-
-func getInt64OrDefault(ptr *int64, defaultVal int64) int64 {
-	if ptr != nil {
-		return *ptr
-	}
-	return defaultVal
-}
-
-func getStringOrDefault(ptr *string, defaultVal string) string {
-	if ptr != nil {
-		return *ptr
-	}
-	return defaultVal
-}
-
-func getBoolOrDefault(ptr *bool, defaultVal bool) bool {
-	if ptr != nil {
-		return *ptr
-	}
-	return defaultVal
-}
+// unmarshalArgs, getIntOrDefault, getInt64OrDefault, getStringOrDefault, getBoolOrDefault
+// are now in shared_utils.go
 
 func getIntPtrOrDefault(ptr *int, defaultVal int) *int {
 	if ptr != nil {
@@ -1799,9 +1742,7 @@ func splitPaths(pathsStr string) []string {
 	return paths
 }
 
-func parseJobID(jobIDStr string) (int64, error) {
-	return strconv.ParseInt(jobIDStr, 10, 64)
-}
+// parseJobID is now in shared_utils.go
 
 // checkIfHasMetadata checks if a file would have metadata/artifacts generated
 func checkIfHasMetadata(path string, kind string, mtime int64) bool {
