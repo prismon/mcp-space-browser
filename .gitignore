@@ -141,6 +141,7 @@ vite.config.ts.timestamp-*
 disk.db
 
 .claude/
+.worktrees/
 
 # Go build artifacts
 mcp-space-browser
